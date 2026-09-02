@@ -6,6 +6,13 @@ FROM ghcr.io/puppeteer/puppeteer:25.9.0@sha256:5c341215d78353c3416b6c92aae9fac66
 USER root
 WORKDIR /app
 
+# Express/finalhandler default to verbose "development" mode (returning a
+# raw stack trace as the response body on an unhandled error) whenever
+# NODE_ENV isn't exactly "production". server.js also carries its own
+# error-handling middleware that never sends err.stack regardless of this
+# setting - this is a second, independent layer, not the only guard.
+ENV NODE_ENV=production
+
 # Patches only the two packages actually flagged by Trivy and confirmed
 # needed to stay installed - deliberately NOT a blanket `apt-get
 # upgrade`, which would pull in the newest available version of every
@@ -25,19 +32,29 @@ WORKDIR /app
 # Then: the base image ships build-time tooling this service never needs
 # at runtime - a PostgreSQL client (we talk to no database), Subversion
 # and its whole dependency chain (no source-control tooling runs here),
-# -dev packages (compiler headers, meaningless once nothing here compiles
-# anything), and unzip (no code path here ever extracts an archive).
-# Confirmed via `apt-cache rdepends` that nothing else installed depends
-# on any of these (subversion has zero reverse-dependents of its own;
-# libsvn1/libserf-1-1/libaprutil1 only depend on each other or on
-# subversion; the rest are -dev variants of things this app doesn't
+# and -dev packages (compiler headers, meaningless once nothing here
+# compiles anything). Confirmed via `apt-cache rdepends` that nothing else
+# installed depends on any of these (subversion has zero reverse-dependents
+# of its own; libsvn1/libserf-1-1/libaprutil1 only depend on each other or
+# on subversion; the rest are -dev variants of things this app doesn't
 # build) - so purging them doesn't risk breaking Chrome, unlike libexpat1
 # (kept, patched above instead: real reverse-dependents include
 # libfontconfig1/libgbm1, which Chrome's rendering does need).
+#
+# `unzip` is deliberately NOT purged, despite nothing in this Dockerfile
+# ever invoking it directly: `critical`'s own puppeteer dependency version
+# (resolved by npm, independent of whatever Chrome build happens to be
+# pre-cached in this base image) can require downloading and extracting a
+# different Chrome/chrome-headless-shell build at `npm ci` time below -
+# `@puppeteer/browsers`' extractor needs a real `unzip` binary on Linux and
+# fails outright without one. This was purged once already and broke every
+# from-scratch build (a `docker build --no-cache` reproduces it) - CI's
+# layer cache silently kept passing on a stale pre-purge layer the whole
+# time, which is exactly why this needs a comment, not just a diff.
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends --only-upgrade libexpat1 ca-certificates \
 	&& apt-get purge -y --auto-remove \
-		libpq5 libpq-dev libexpat1-dev unzip \
+		libpq5 libpq-dev libexpat1-dev \
 		subversion libsvn1 libserf-1-1 libaprutil1 \
 	&& rm -rf /var/lib/apt/lists/*
 
@@ -67,4 +84,20 @@ COPY --chown=pptruser:pptruser server.js lib.js ./
 USER pptruser
 
 EXPOSE 3939
+
+# Baked into the image itself, not left as an opt-in stanza in the example
+# compose file - a plain `docker run` or an orchestrator that doesn't carry
+# that file's healthcheck: block forward would otherwise have no Health
+# field on `docker inspect` at all, silently defeating anything (Portainer
+# restart-on-unhealthy, Swarm health-based rescheduling) tied to it -
+# including this image's own `restart: always` policy, which assumes
+# something external notices a hung/broken instance.
+#
+# Reads $PORT (falling back to 3939, server.js's own default) rather than
+# hardcoding the port - a deployment that overrides PORT in .env would
+# otherwise have server.js listening somewhere this check never checks,
+# permanently "unhealthy" despite working fine.
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+	CMD wget -qO- "http://localhost:${PORT:-3939}/health" || exit 1
+
 CMD ["node", "server.js"]

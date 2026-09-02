@@ -1,6 +1,15 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidSecret, isAllowedUrl, logSafe, extractUrlsFromUrlset } from './lib.js';
+import {
+	isValidSecret,
+	isAllowedUrl,
+	logSafe,
+	extractUrlsFromUrlset,
+	isPrivateOrReservedIpv4,
+	isPrivateOrReservedIpv6,
+	isPrivateOrReservedAddress,
+	isBlockedLiteralAddress,
+} from './lib.js';
 
 describe('isValidSecret', () => {
 	const SECRET = 'a'.repeat(64);
@@ -81,6 +90,133 @@ describe('isAllowedUrl', () => {
 		assert.equal(isAllowedUrl('http://169.254.169.254/', HOST), false);
 		assert.equal(isAllowedUrl('http://127.0.0.1/', HOST), false);
 	});
+});
+
+describe('isPrivateOrReservedIpv4', () => {
+	const cases = [
+		['rejects an RFC1918 10/8 address', '10.1.2.3', true],
+		['rejects an RFC1918 172.16/12 address', '172.20.0.1', true],
+		['accepts the address just below the 172.16/12 block', '172.15.255.255', false],
+		['accepts the address just above the 172.16/12 block', '172.32.0.1', false],
+		['rejects an RFC1918 192.168/16 address', '192.168.1.1', true],
+		['rejects loopback', '127.0.0.1', true],
+		['rejects the cloud metadata address', '169.254.169.254', true],
+		['rejects the wider link-local block, not just the metadata address', '169.254.1.1', true],
+		['rejects carrier-grade NAT (100.64/10)', '100.64.0.1', true],
+		['accepts a real public address', '93.184.216.34', false], // example.com's old IP, kept as a plain public-address fixture
+		['accepts another real public address', '8.8.8.8', false],
+		['rejects garbage instead of throwing (fail closed)', 'not-an-ip', true],
+		['rejects a 5-octet string instead of throwing (fail closed)', '1.2.3.4.5', true],
+		['rejects an out-of-range octet instead of throwing (fail closed)', '999.1.1.1', true],
+		['rejects a non-numeric octet instead of throwing (fail closed)', '1.2.3.abc', true],
+	];
+
+	for (const [description, ip, expected] of cases) {
+		test(description, () => {
+			assert.equal(isPrivateOrReservedIpv4(ip), expected);
+		});
+	}
+
+	test('does not wrongly match a non-octet-aligned lookalike via string prefixing', () => {
+		// A naive `ip.startsWith('192.168.')` check would still get this right,
+		// but a naive `ip.startsWith('172.16.')` would wrongly flag
+		// 172.160.0.1 (not in 172.16.0.0/12) as private - this is the real
+		// regression case for that class of bug.
+		assert.equal(isPrivateOrReservedIpv4('172.160.0.1'), false);
+	});
+});
+
+describe('isPrivateOrReservedIpv6', () => {
+	// Every mechanism below embeds a plain IPv4 address after a fixed
+	// prefix - IPv4-*mapped* (::ffff:0:0/96), the deprecated IPv4-
+	// *compatible* form (::0:0/96, no "ffff:"), and the NAT64 well-known
+	// prefix (64:ff9b::/96, RFC 6052 - what a real DNS64/NAT64 gateway uses
+	// so an IPv6-only host can still reach IPv4, not hypothetical). WHATWG
+	// URL parsing (and Node's dns.lookup) canonicalizes the dotted-decimal
+	// form a human would write into two plain hex groups - e.g. `new
+	// URL('http://[::ffff:127.0.0.1]/').hostname` is `[::ffff:7f00:1]`,
+	// never the dotted form - so both forms need covering per mechanism.
+	// Generated from one shared table instead of hand-duplicating the same
+	// loopback/metadata/public triple three times (an earlier, hand-written
+	// version of exactly this block was a real SonarCloud duplication
+	// finding).
+	const EMBEDDED_IPV4_MECHANISMS = [
+		['IPv4-mapped', '::ffff:'],
+		['IPv4-compatible (deprecated)', '::'],
+		['NAT64-embedded', '64:ff9b::'],
+	];
+	const EMBEDDED_IPV4_ADDRESSES = [
+		['loopback', 'rejects', '7f00:1'],
+		['cloud metadata', 'rejects', 'a9fe:a9fe'],
+		['public', 'accepts', '808:808'],
+	];
+	const embeddedIpv4Cases = EMBEDDED_IPV4_MECHANISMS.flatMap(([mechName, prefix]) => [
+		...EMBEDDED_IPV4_ADDRESSES.map(([addrName, verb, hex]) => [
+			`${verb} ${mechName} ${addrName} address (canonical hex form)`,
+			`${prefix}${hex}`,
+			verb === 'rejects',
+		]),
+		[`rejects ${mechName} loopback address (dotted form)`, `${prefix}127.0.0.1`, true],
+	]);
+
+	const cases = [
+		['rejects loopback', '::1', true],
+		['rejects unspecified', '::', true],
+		['rejects a link-local address (fe80::/10)', 'fe80::1', true],
+		['rejects the top of the link-local range', 'febf::1', true],
+		['rejects a deprecated site-local address (fec0::/10)', 'fec0::1', true],
+		['rejects the top of the deprecated site-local range', 'feff::1', true],
+		['accepts just above the deprecated site-local range', 'ff00::1', false],
+		['rejects a unique-local address (fc00::/7)', 'fd12:3456:789a::1', true],
+		['rejects the bottom of the unique-local range', 'fc00::1', true],
+		['accepts just below the unique-local range', 'fbff::1', false],
+		['strips a zone ID before classifying', 'fe80::1%eth0', true],
+		['strips a zone ID before classifying an IPv4-mapped hex-form address', '::ffff:7f00:1%eth0', true],
+		...embeddedIpv4Cases,
+		['accepts a real public IPv6 address', '2606:4700:4700::1111', false],
+		['rejects garbage instead of throwing (fail closed)', 'not-an-ipv6-address', true],
+	];
+
+	for (const [description, ip, expected] of cases) {
+		test(description, () => {
+			assert.equal(isPrivateOrReservedIpv6(ip), expected);
+		});
+	}
+});
+
+describe('isPrivateOrReservedAddress', () => {
+	test('dispatches to the IPv4 check for family 4', () => {
+		assert.equal(isPrivateOrReservedAddress('127.0.0.1', 4), true);
+		assert.equal(isPrivateOrReservedAddress('8.8.8.8', 4), false);
+	});
+
+	test('dispatches to the IPv6 check for family 6', () => {
+		assert.equal(isPrivateOrReservedAddress('::1', 6), true);
+		assert.equal(isPrivateOrReservedAddress('2606:4700:4700::1111', 6), false);
+	});
+
+	test('defaults to the IPv4 check when family is omitted', () => {
+		assert.equal(isPrivateOrReservedAddress('127.0.0.1'), true);
+	});
+});
+
+describe('isBlockedLiteralAddress', () => {
+	const cases = [
+		['blocks the cloud metadata address as a bare literal', '169.254.169.254', true],
+		['blocks a loopback literal', '127.0.0.1', true],
+		['blocks an RFC1918 literal', '192.168.1.1', true],
+		['accepts a public IPv4 literal', '8.8.8.8', false],
+		['blocks a bracketed IPv6 loopback literal (URL.hostname format)', '[::1]', true],
+		['accepts a public IPv6 literal', '[2606:4700:4700::1111]', false],
+		['does not treat a real hostname as blocked - nothing for this check to do', 'example.com', false],
+		['does not treat a lookalike hostname as an IP literal', '169.254.169.254.evil.example', false],
+	];
+
+	for (const [description, hostname, expected] of cases) {
+		test(description, () => {
+			assert.equal(isBlockedLiteralAddress(hostname), expected);
+		});
+	}
 });
 
 describe('logSafe', () => {

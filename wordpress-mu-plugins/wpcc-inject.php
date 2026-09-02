@@ -2,8 +2,8 @@
 /**
  * MU-Plugin: Inline stored critical CSS and defer the full stylesheets.
  *
- * Part of a 3-file set (trigger / receiver / inject) - see the repo's
- * README for the full architecture.
+ * Part of a 4-file set (trigger / receiver / inject / shared) - see the
+ * repo's README for the full architecture.
  *
  * Mobile and desktop critical CSS are both inlined, each wrapped in its own
  * matching media query, so the browser picks the right one natively - no
@@ -23,22 +23,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+require_once __DIR__ . '/wpcc-shared.php';
+
 if ( ! defined( 'WPCC_BREAKPOINT' ) ) {
 	define( 'WPCC_BREAKPOINT', 782 );
-}
-
-if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
-	/**
-	 * Same stripping applied in wpcc-receiver.php at write time - duplicated
-	 * here deliberately so this file is safe standing alone, not relying on
-	 * the receiver having already cleaned the stored value.
-	 *
-	 * @param string $css
-	 * @return string
-	 */
-	function wpcc_sanitize_css( $css ) {
-		return preg_replace( '#</\s*style#i', '', (string) $css );
-	}
 }
 
 add_action( 'wp_head', 'wpcc_inline_critical_css', 1 );
