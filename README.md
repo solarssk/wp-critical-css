@@ -40,7 +40,7 @@ local build), then copy `wordpress-mu-plugins/*.php` into
   WordPress `docker-compose.yml`.
 - `wordpress-mu-plugins/` - drop these into `wp-content/mu-plugins/` on
   your WordPress install: `wpcc-trigger.php`, `wpcc-receiver.php`,
-  `wpcc-inject.php`.
+  `wpcc-inject.php`, `wpcc-shared.php`.
 - `.github/workflows/` - CI, CodeQL and Semgrep SAST, and the
   scan-then-publish pipeline that builds and ships the image to GHCR. See
   [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) for what each one
