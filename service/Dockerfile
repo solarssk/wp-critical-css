@@ -23,9 +23,8 @@ COPY --chown=pptruser:pptruser package.json package-lock.json ./
 # all (confirmed by actually launching a page render against the
 # --ignore-scripts build, not just assumed). See "Known, investigated
 # build warning" in the README for why the script itself is otherwise
-# safe to run. NOSONAR docker:S6505 - accepted, not overlooked.
-RUN npm ci --omit=dev \
-	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+# safe to run.
+RUN npm ci --omit=dev && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx # NOSONAR docker:S6505 - see comment above, accepted not overlooked
 COPY --chown=pptruser:pptruser server.js ./
 
 USER pptruser

@@ -95,7 +95,7 @@ function logSafe(url) {
 
 function enqueue(url) {
 	if (!isAllowedUrl(url)) {
-		console.warn(`[critical-css] refusing to queue disallowed URL: ${logSafe(url)}`);
+		console.warn(`[critical-css] refusing to queue disallowed URL: ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
 		return;
 	}
 	if (queue.includes(url)) {
@@ -115,7 +115,7 @@ async function processQueue() {
 		try {
 			await generateAndSubmit(url);
 		} catch (err) {
-			console.error(`[critical-css] failed for ${logSafe(url)}:`, err.message);
+			console.error(`[critical-css] failed for ${logSafe(url)}:`, err.message); // NOSONAR jssecurity:S5145 - see logSafe() above
 		}
 	}
 	processing = false;

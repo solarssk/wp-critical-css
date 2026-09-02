@@ -91,11 +91,7 @@ jobs:
 
       - name: Smoke test - HTTP server responds
         run: |
-          docker run -d --rm --name wpcc-smoke -p 3939:3939 \
-            -e SHARED_SECRET=ci-smoke-test \
-            -e WP_RECEIVER_URL=http://example.invalid/ \
-            -e ALLOWED_HOSTNAME=example.com \
-            wp-critical-css:ci
+          docker run -d --rm --name wpcc-smoke -p 3939:3939 -e SHARED_SECRET=ci-smoke-test -e WP_RECEIVER_URL=http://example.invalid/ -e ALLOWED_HOSTNAME=example.com wp-critical-css:ci # NOSONAR githubactions:S5332 - example.invalid is an RFC 2606 reserved non-resolving placeholder, and this smoke test never actually calls it
           for i in $(seq 1 10); do
             echo "health check attempt $i"
             if curl -sf http://localhost:3939/health; then break; fi
