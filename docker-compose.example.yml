@@ -15,10 +15,17 @@ services:
     container_name: critical-css-service
     restart: always
     init: true # reaps orphaned Chrome subprocesses - Node alone doesn't, and this container runs as PID 1
+    # No cap_add here, deliberately: SYS_ADMIN is the commonly-cited capability
+    # for Chrome's own sandbox, but service/server.js launches Chrome with
+    # --no-sandbox (see PUPPETEER_LAUNCH_ARGS) - that sandbox is off, so the
+    # capability would do nothing for it. Verified empirically: a real render
+    # succeeds identically with or without SYS_ADMIN as long as --no-sandbox
+    # stays. Re-add it only alongside removing --no-sandbox from server.js -
+    # and re-verify then, since a from-scratch test of that combination
+    # (real Chrome sandbox + cap_add SYS_ADMIN + this same read_only/tmpfs
+    # setup) did not come up clean.
     cap_drop:
       - ALL
-    cap_add:
-      - SYS_ADMIN # required by the official Puppeteer base image for Chrome's sandbox
     read_only: true
     tmpfs:
       - /tmp
