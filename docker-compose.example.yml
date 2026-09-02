@@ -14,18 +14,27 @@ services:
     image: ghcr.io/solarssk/wp-critical-css:latest
     container_name: critical-css-service
     restart: always
+    init: true # reaps orphaned Chrome subprocesses - Node alone doesn't, and this container runs as PID 1
+    cap_drop:
+      - ALL
     cap_add:
       - SYS_ADMIN # required by the official Puppeteer base image for Chrome's sandbox
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/pptruser/.cache/puppeteer/tmp # Chrome's own scratch/profile directory at runtime, verified empirically - not the build-time install path, which is baked into the read-only image already
     networks:
       - your_wordpress_network
     env_file:
       - .env
-    healthcheck:
+    healthcheck: # the image now also ships this same check as its own HEALTHCHECK - kept here too since this stanza overrides it, and being explicit costs nothing
       test: ["CMD-SHELL", "wget -qO- http://localhost:3939/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
     mem_limit: 1g
+    cpus: "1.0" # tune to your hardware - bounds a single render's worst case, this generator only ever runs one at a time by design
+    pids_limit: 256 # generous headroom for Chrome's normal multi-process footprint, still a real ceiling
 
 networks:
   your_wordpress_network:
