@@ -12,194 +12,48 @@ version in use), ESM throughout,
 [`critical@8.0.0`](https://www.npmjs.com/package/critical) (Puppeteer-based
 render engine via its `penthouse-esm` dependency), Express 5, node-cron 4.
 
-## Architecture
+## Documentation
 
-```
-save_post (publish/update)
-        |
-        v
-wpcc-trigger.php  --POST /generate-->  critical-css-service
-                                              |
-                                        (headless Chrome,
-                                         critical package)
-                                              |
-wpcc-receiver.php <--POST /critical-css------
-        |
-        v
-   postmeta (_wpcc_critical_css_mobile / _desktop)
-        |
-        v
-wpcc-inject.php  -->  inlined in <head>,
-                        full stylesheets deferred
-```
+| Doc | Covers |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System flow, request sequence, data flow, design decisions |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Full setup, verification, releases, rollback |
+| [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) | Threat model, CI/CD security controls, conscious exclusions |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 
-A daily sitemap sweep (cron inside the container) backfills anything the
-webhook missed - restarts, manual DB edits, or the very first run against
-existing content.
+## Quick start
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough.
+In short: configure `.env` and a matching `WPCC_SHARED_SECRET` in
+`wp-config.php`, run the container (published image, build-from-repo, or
+local build), then copy `wordpress-mu-plugins/*.php` into
+`wp-content/mu-plugins/`.
 
 ## Files
 
-- `service/` - the generator: `server.js`, `package.json`,
+- `service/` - the generator: `server.js`, `lib.js`, `package.json`,
   `package-lock.json`, `Dockerfile`.
 - `.env.example` - configuration template, including the shared secret
   format. Copy to `.env`, fill in real values, and never commit the real
-  file - see the comments inside for what has to match on the WordPress
-  side.
+  file.
 - `docker-compose.example.yml` - the service block to add to your existing
   WordPress `docker-compose.yml`.
 - `wordpress-mu-plugins/` - drop these into `wp-content/mu-plugins/` on
   your WordPress install: `wpcc-trigger.php`, `wpcc-receiver.php`,
   `wpcc-inject.php`.
-- `.github/workflows/` - CI (build, `npm audit`, PHP syntax check, Docker
-  build smoke test), CodeQL and Semgrep SAST, and the scan-then-publish
-  pipeline that builds and ships the image to GHCR. See "CI/CD and
-  security scanning" below.
+- `.github/workflows/` - CI, CodeQL and Semgrep SAST, and the
+  scan-then-publish pipeline that builds and ships the image to GHCR. See
+  [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) for what each one
+  checks.
 - `.github/dependabot.yml` - weekly update PRs for the npm dependencies,
   the Docker base image, and the pinned GitHub Actions themselves.
 
-## Setup
+## Security & data
 
-1. Copy `.env.example` to `.env` and fill in:
-   - `SHARED_SECRET` - generate one with `openssl rand -hex 32`.
-   - `WP_RECEIVER_URL` - your WordPress REST endpoint, ideally reached over
-     an internal Docker network rather than the public internet.
-   - `ALLOWED_HOSTNAME` - your site's hostname (no scheme). Only URLs on
-     this exact hostname are ever rendered.
-   - `SITE_SITEMAP_URL` - your sitemap index URL.
-2. **Add the same secret to `wp-config.php`** (not optional - the receiver
-   and trigger mu-plugins fail closed without it, see "Security notes"
-   below):
-   ```php
-   define( 'WPCC_SHARED_SECRET', '<same value as SHARED_SECRET in .env>' );
-   ```
-3. Get the container running - three options, in order of least to most
-   setup:
-   - **Pull the published image** (built and Trivy-scanned by CI on every
-     release tag - see `docker-compose.example.yml`):
-     ```
-     docker pull ghcr.io/solarssk/wp-critical-css:latest
-     docker run --env-file .env -p 3939:3939 ghcr.io/solarssk/wp-critical-css:latest
-     ```
-   - **Let your compose/Portainer stack build straight from this repo**
-     (no local checkout needed) - see the `build:` alternative commented
-     in `docker-compose.example.yml`.
-   - **Build locally**:
-     ```
-     docker build -t wp-critical-css ./service
-     docker run --env-file .env -p 3939:3939 wp-critical-css
-     ```
-4. Sanity check:
-   ```
-   curl -s http://localhost:3939/health
-   ```
-   Should return `{"status":"ok","queueLength":0,"processing":false}`.
-5. Copy the three files from `wordpress-mu-plugins/` into your site's
-   `wp-content/mu-plugins/` directory (mu-plugins load automatically, no
-   activation step).
-6. Backfill existing posts (don't wait for the daily 03:00 sweep):
-   ```
-   curl -s -X POST http://localhost:3939/sweep \
-     -H "X-WPCC-Secret: <your SHARED_SECRET>"
-   ```
-   Watch progress: `docker logs -f critical-css-service`
-7. Verify on a real post/page once it's been processed: view source, look
-   for `<style id="wpcc-critical-css">` in `<head>`, and confirm the
-   theme/plugin `<link rel="stylesheet">` tags now carry
-   `media="print" onload="this.media='all'"`.
-
-## CI/CD and security scanning
-
-| Workflow | Runs on | What it does |
-|---|---|---|
-| `ci.yml` | every push/PR to `main` | `npm ci` + `npm audit --audit-level=high` + `node --check`, `php -l` on the mu-plugins, and a Dockerfile build smoke test (no push) |
-| `codeql.yml` | push/PR to `main` + weekly | CodeQL SAST for the JS service (`build-mode: none`) |
-| `semgrep.yml` | push/PR to `main` + weekly | Semgrep SAST across both the JS service and the PHP mu-plugins |
-| `publish-container.yml` | push of a `vX.Y.Z` tag, or manual dispatch | Builds the image, runs it through Trivy twice (a full SARIF report uploaded to the Security tab, then a hard gate that fails the job on any fixable CRITICAL finding), and only then pushes to `ghcr.io/solarssk/wp-critical-css` with a CycloneDX SBOM and signed build provenance attached. A manual dispatch on a non-tag ref runs the same build+scan but never publishes - useful for checking a branch's CVE exposure without cutting a release. |
-
-Every third-party action is pinned to a full commit SHA (not a mutable
-tag), and `.github/dependabot.yml` keeps those SHAs, the npm dependencies,
-and the Docker base image current with weekly PRs. See `SECURITY.md` for
-the vulnerability-reporting process and a control-to-workflow mapping
-table.
-
-To cut a release: tag `main` with a semver tag and push it -
-`git tag vX.Y.Z && git push origin vX.Y.Z` - `publish-container.yml` does
-the rest.
-
-## Security notes
-
-- **Stored XSS via the receiver endpoint.** `wpcc-receiver.php` is a
-  normal WP REST route - reachable from the public internet like any other
-  page on the site unless you scope it off at your reverse proxy/CDN. Its
-  only gate is the shared secret. The stored CSS is echoed straight into a
-  `<style>` tag, so it's stripped of any `</style` sequence before storage
-  (`wpcc_sanitize_css()`) - `esc_html()` would be the wrong tool here,
-  since HTML-entity-encoding a stylesheet corrupts valid CSS the browser
-  needs to parse. Applied on write (receiver) and again independently on
-  read (inject) - two layers, neither trusts the other.
-- **Secret must live in `wp-config.php`, never in a tracked mu-plugin
-  file.** Both plugins fail closed (do nothing) if the constant isn't
-  defined there, instead of silently working off a value baked into
-  source.
-- **Constant-time secret comparison.** The Node side uses
-  `crypto.timingSafeEqual()`, the WordPress side uses `hash_equals()` - a
-  plain `!==`/`==` comparison leaks how many leading bytes matched via
-  response timing.
-- **URL allowlist on the generator's `/generate` endpoint.** It only ever
-  renders URLs on `ALLOWED_HOSTNAME`. Without this, a leaked
-  `SHARED_SECRET` would turn `/generate` into an open SSRF proxy - able to
-  fetch/render internal-network or cloud-metadata URLs (e.g.
-  `169.254.169.254`) from inside the container.
-
-## Why the Dockerfile runs `npm ci --ignore-scripts` then invokes puppeteer's install script by hand
-
-Every dependency's install-time script is blocked (`--ignore-scripts`)
-except one, run explicitly right after: `node
-node_modules/puppeteer/install.mjs`. Two things were tried and rejected
-first, both confirmed by actually launching a page render, not just by a
-successful build:
-
-- **Blocking every script, including puppeteer's**: breaks Chrome
-  discovery at runtime. The base image ships its own copy of Chrome, but
-  puppeteer's runtime still needs its postinstall step to have registered
-  the browser at the cache path (`PUPPETEER_CACHE_DIR`) it looks in later
-  - skipping the script entirely, even with a working Chrome already
-    present, produces "Could not find Chrome".
-- **Letting every script run** (the original approach): works, but means
-  trusting the install-time script of every dependency in the tree
-  (including transitive ones never individually audited) - the whole
-  point of `--ignore-scripts` in the first place.
-
-Running only puppeteer's script by name gets the same working result as
-letting everything run, with every other dependency's install script
-blocked.
-
-## Notes
-
-- Only `post` and `page` post types are handled by default - matches the
-  trigger's scope in `wpcc-trigger.php`. Extend the `in_array()` check
-  there if other post types need it too.
-- `cap_add: SYS_ADMIN` on the container is required by the official
-  Puppeteer image for Chrome's sandbox to work - documented by the
-  Puppeteer team, not a workaround. `critical` doesn't expose a way to
-  pass `--no-sandbox` instead, so this is the correct path, not a
-  shortcut.
-- The generator processes one URL at a time by design (single-worker queue
-  in `server.js`) - safe for modest hardware, at the cost of the sitemap
-  sweep taking a while on first run (5s delay between URLs by default,
-  tune `SWEEP_DELAY_MS`).
-- The sitemap sweep only fetches `post-sitemap*.xml` and `page-sitemap.xml`
-  sub-sitemaps (see the filter in `fetchSitemapUrls()`) - taxonomy archive
-  pages (tags, categories, the homepage) can't be resolved back to a single
-  post via `url_to_postid()`, so including them would just waste a full
-  Puppeteer render on a request that's guaranteed to 404 at the receiver.
-  Adjust the filter pattern if your sitemap generator names sub-sitemaps
-  differently.
-- `WPCC_BREAKPOINT` (782px, in `wpcc-inject.php`) should match your
-  theme's actual mobile/desktop breakpoint if it differs.
-- Rollback: remove the three mu-plugin files and stop the container.
-  Nothing else depends on this - stylesheets simply go back to loading
-  render-blocking, as before.
+`wpcc-receiver.php` is a public WordPress REST route gated by a shared
+secret, with an SSRF allowlist and XSS-safe CSS storage on top - see
+[docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) for the full threat
+model, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## License
 
