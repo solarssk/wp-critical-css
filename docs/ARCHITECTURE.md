@@ -98,10 +98,18 @@ each.
 - **`WPCC_BREAKPOINT` (782px, in `wpcc-inject.php`)** matches WordPress
   core's own mobile/desktop admin-bar breakpoint by default - tune it if
   your theme's real breakpoint differs.
-- **`cap_add: SYS_ADMIN` on the container** is required by the official
-  Puppeteer image for Chrome's sandbox to work - documented by the
-  Puppeteer team, not a workaround. `critical` doesn't expose a way to
-  pass `--no-sandbox` instead, so this is the correct path.
+- **No `cap_add: SYS_ADMIN` on the container.** Chrome runs with
+  `--no-sandbox`/`--disable-setuid-sandbox` (`PUPPETEER_LAUNCH_ARGS`,
+  `service/server.js`), so the elevated capability the real Chrome sandbox
+  would otherwise need is never used - confirmed empirically, and
+  `docker-compose.example.yml`/`docs/SECURITY-CONTROLS.md` cross-reference
+  this same tradeoff. `critical` (via `penthouse`) does expose a way to
+  pass custom launch args despite not surfacing one directly: its
+  `puppeteer.getBrowser` option accepts a function that supplies an
+  already-launched browser instance instead of letting penthouse start its
+  own - `getSsrfSafeBrowser()` uses this to call `puppeteer.launch()`
+  itself with `PUPPETEER_LAUNCH_ARGS` (and to wire up this project's own
+  SSRF-guarded request interception on every page it hands out).
 
 ## Rollback
 
