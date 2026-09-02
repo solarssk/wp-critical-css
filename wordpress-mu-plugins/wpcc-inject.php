@@ -75,10 +75,12 @@ add_filter( 'style_loader_tag', 'wpcc_defer_stylesheet', 20, 2 );
  * on-screen once the onload handler fired.
  *
  * @param string $html
- * @param string $handle
+ * @param string $handle Unused - kept because style_loader_tag always calls
+ *                        with 2 args (add_filter's own accepted_args below);
+ *                        dropping it from the signature would obscure that.
  * @return string
  */
-function wpcc_defer_stylesheet( $html, $handle ) {
+function wpcc_defer_stylesheet( $html, $handle ) { // NOSONAR php:S100,S1142,S1172 - WordPress Coding Standards mandate snake_case; each return is a distinct short-circuit ("nothing to defer" / "not a stylesheet tag" / "media already excludes it"), not a single-exit candidate; $handle is a required part of the style_loader_tag filter's own signature, see the docblock above
 	if ( empty( $GLOBALS['wpcc_critical_css_active'] ) || is_admin() ) {
 		return $html;
 	}
