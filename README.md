@@ -38,7 +38,8 @@ existing content.
 
 ## Files
 
-- `service/` - the generator: `server.js`, `package.json`, `Dockerfile`.
+- `service/` - the generator: `server.js`, `package.json`,
+  `package-lock.json`, `Dockerfile`.
 - `.env.example` - configuration template, including the shared secret
   format. Copy to `.env`, fill in real values, and never commit the real
   file - see the comments inside for what has to match on the WordPress
@@ -48,6 +49,12 @@ existing content.
 - `wordpress-mu-plugins/` - drop these into `wp-content/mu-plugins/` on
   your WordPress install: `wpcc-trigger.php`, `wpcc-receiver.php`,
   `wpcc-inject.php`.
+- `.github/workflows/` - CI (build, `npm audit`, PHP syntax check, Docker
+  build smoke test), CodeQL and Semgrep SAST, and the scan-then-publish
+  pipeline that builds and ships the image to GHCR. See "CI/CD and
+  security scanning" below.
+- `.github/dependabot.yml` - weekly update PRs for the npm dependencies,
+  the Docker base image, and the pinned GitHub Actions themselves.
 
 ## Setup
 
@@ -64,13 +71,22 @@ existing content.
    ```php
    define( 'WPCC_SHARED_SECRET', '<same value as SHARED_SECRET in .env>' );
    ```
-3. Build and run the container - either with the example compose block
-   (`docker-compose.example.yml`) added to your existing WordPress stack,
-   or standalone:
-   ```
-   docker build -t wp-critical-css ./service
-   docker run --env-file .env -p 3939:3939 wp-critical-css
-   ```
+3. Get the container running - three options, in order of least to most
+   setup:
+   - **Pull the published image** (built and Trivy-scanned by CI on every
+     release tag - see `docker-compose.example.yml`):
+     ```
+     docker pull ghcr.io/solarssk/wp-critical-css:latest
+     docker run --env-file .env -p 3939:3939 ghcr.io/solarssk/wp-critical-css:latest
+     ```
+   - **Let your compose/Portainer stack build straight from this repo**
+     (no local checkout needed) - see the `build:` alternative commented
+     in `docker-compose.example.yml`.
+   - **Build locally**:
+     ```
+     docker build -t wp-critical-css ./service
+     docker run --env-file .env -p 3939:3939 wp-critical-css
+     ```
 4. Sanity check:
    ```
    curl -s http://localhost:3939/health
@@ -89,6 +105,25 @@ existing content.
    for `<style id="wpcc-critical-css">` in `<head>`, and confirm the
    theme/plugin `<link rel="stylesheet">` tags now carry
    `media="print" onload="this.media='all'"`.
+
+## CI/CD and security scanning
+
+| Workflow | Runs on | What it does |
+|---|---|---|
+| `ci.yml` | every push/PR to `main` | `npm ci` + `npm audit --audit-level=high` + `node --check`, `php -l` on the mu-plugins, and a Dockerfile build smoke test (no push) |
+| `codeql.yml` | push/PR to `main` + weekly | CodeQL SAST for the JS service (`build-mode: none`) |
+| `semgrep.yml` | push/PR to `main` + weekly | Semgrep SAST across both the JS service and the PHP mu-plugins |
+| `publish-container.yml` | push of a `vX.Y.Z` tag, or manual dispatch | Builds the image, runs it through Trivy twice (a full SARIF report uploaded to the Security tab, then a hard gate that fails the job on any fixable CRITICAL finding), and only then pushes to `ghcr.io/solarssk/wp-critical-css` with a CycloneDX SBOM and signed build provenance attached. A manual dispatch on a non-tag ref runs the same build+scan but never publishes - useful for checking a branch's CVE exposure without cutting a release. |
+
+Every third-party action is pinned to a full commit SHA (not a mutable
+tag), and `.github/dependabot.yml` keeps those SHAs, the npm dependencies,
+and the Docker base image current with weekly PRs. See `SECURITY.md` for
+the vulnerability-reporting process and a control-to-workflow mapping
+table.
+
+To cut a release: tag `main` with a semver tag and push it -
+`git tag v1.0.0 && git push origin v1.0.0` - `publish-container.yml` does
+the rest.
 
 ## Security notes
 

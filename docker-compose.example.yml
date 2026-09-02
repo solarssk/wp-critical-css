@@ -1,13 +1,17 @@
 # Example service block to add to your existing WordPress docker-compose.yml.
-# Adjust the network name to match your stack, and either build from this
-# repo directly (as shown) or build/push an image and reference it with
-# `image:` instead.
+# Adjust the network name to match your stack.
+#
+# Default: pull the published, Trivy-scanned image from GHCR (built and
+# published by .github/workflows/publish-container.yml on every version
+# tag). If you've forked this and want Portainer/Compose to build straight
+# from your own fork instead, replace `image:` with:
+#   build:
+#     context: https://github.com/<your-username>/wp-critical-css.git
+#     dockerfile: service/Dockerfile
 
 services:
   critical-css-service:
-    build:
-      context: https://github.com/<your-username>/wp-critical-css.git
-      dockerfile: service/Dockerfile
+    image: ghcr.io/solarssk/wp-critical-css:latest
     container_name: critical-css-service
     restart: always
     cap_add:
