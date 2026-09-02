@@ -62,6 +62,95 @@ export function logSafe(value) {
 	return JSON.stringify(value);
 }
 
+const BLOCKED_IPV4_CIDRS = [
+	['0.0.0.0', 8], // "this network"
+	['10.0.0.0', 8], // RFC1918 private
+	['100.64.0.0', 10], // carrier-grade NAT
+	['127.0.0.0', 8], // loopback
+	['169.254.0.0', 16], // link-local - includes cloud metadata (169.254.169.254)
+	['172.16.0.0', 12], // RFC1918 private
+	['192.0.0.0', 24], // IETF protocol assignments
+	['192.0.2.0', 24], // documentation (TEST-NET-1)
+	['192.168.0.0', 16], // RFC1918 private
+	['198.18.0.0', 15], // benchmarking
+	['198.51.100.0', 24], // documentation (TEST-NET-2)
+	['203.0.113.0', 24], // documentation (TEST-NET-3)
+	['224.0.0.0', 4], // multicast
+	['240.0.0.0', 4], // reserved
+];
+
+function ipv4ToInt(ip) {
+	const parts = ip.split('.');
+	if (parts.length !== 4) {
+		return null;
+	}
+	let result = 0;
+	for (const part of parts) {
+		if (!/^\d{1,3}$/.test(part)) {
+			return null;
+		}
+		const n = Number(part);
+		if (n > 255) {
+			return null;
+		}
+		result = (result << 8) | n;
+	}
+	return result >>> 0;
+}
+
+/**
+ * Range-checks against the CIDR blocks above using integer bit-masking, not
+ * string prefixes - a naive `startsWith('192.168.')` would (for example)
+ * wrongly allow "192.1680.0.1" or miss non-octet-aligned ranges entirely.
+ */
+export function isPrivateOrReservedIpv4(ip) {
+	const addr = ipv4ToInt(ip);
+	if (addr === null) {
+		return true; // fail closed - can't classify it, don't trust it
+	}
+	return BLOCKED_IPV4_CIDRS.some(([base, prefixLength]) => {
+		const mask = prefixLength === 0 ? 0 : (0xffffffff << (32 - prefixLength)) >>> 0;
+		return (addr & mask) === (ipv4ToInt(base) & mask);
+	});
+}
+
+/**
+ * IPv6 equivalents of the IPv4 ranges above, checked against just the
+ * address's first hextet (::1 and IPv4-mapped addresses are handled
+ * separately below) - fe80::/10 and fc00::/7 both fall on boundaries a
+ * single 16-bit hextet comparison can express exactly, so this avoids
+ * needing full 128-bit arithmetic for a hand-rolled parser.
+ */
+export function isPrivateOrReservedIpv6(ip) {
+	const clean = ip.split('%')[0].toLowerCase(); // strip a zone ID (e.g. fe80::1%eth0) if present
+
+	if (clean === '::1' || clean === '::') {
+		return true; // loopback / unspecified
+	}
+
+	const mapped = clean.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+	if (mapped) {
+		return isPrivateOrReservedIpv4(mapped[1]);
+	}
+
+	const firstGroup = clean.startsWith('::') ? '0' : clean.split(':')[0];
+	const firstHextet = parseInt(firstGroup, 16);
+	if (Number.isNaN(firstHextet)) {
+		return true; // fail closed
+	}
+
+	const isUniqueLocal = firstHextet >= 0xfc00 && firstHextet <= 0xfdff; // fc00::/7
+	const isLinkLocal = firstHextet >= 0xfe80 && firstHextet <= 0xfebf; // fe80::/10
+	return isUniqueLocal || isLinkLocal;
+}
+
+export function isPrivateOrReservedAddress(address, family) {
+	if (family === 6) {
+		return isPrivateOrReservedIpv6(address);
+	}
+	return isPrivateOrReservedIpv4(address);
+}
+
 export function extractUrlsFromUrlset(parsed) {
 	if (!parsed?.urlset?.url) {
 		return [];

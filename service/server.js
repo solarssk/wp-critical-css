@@ -21,11 +21,12 @@
  * once - this is what keeps memory/CPU bounded on modest hardware.
  */
 
+import { lookup as dnsLookup } from 'node:dns';
 import express from 'express';
 import cron from 'node-cron';
 import { parseStringPromise } from 'xml2js';
 import { generate as generateCriticalCss } from 'critical';
-import { isValidSecret, isAllowedUrl, logSafe, extractUrlsFromUrlset } from './lib.js';
+import { isValidSecret, isAllowedUrl, logSafe, extractUrlsFromUrlset, isPrivateOrReservedAddress } from './lib.js';
 
 const PORT = process.env.PORT || 3939;
 const SHARED_SECRET = process.env.SHARED_SECRET;
@@ -44,6 +45,50 @@ const VIEWPORTS = {
 	mobile: { width: 412, height: 915 },
 	desktop: { width: 1280, height: 800 },
 };
+
+/**
+ * `isAllowedUrl()` only gates the URL /generate is called with. The `critical`
+ * package does its own Node-side HTTP fetching internally (the page itself,
+ * then every stylesheet/preload href it finds in that page's HTML) via
+ * `got`, entirely independent of the Puppeteer render step - none of that
+ * traffic was ever covered by the ALLOWED_HOSTNAME check. A page on the
+ * allowed host could embed `<link rel="stylesheet" href="http://169.254.169.254/...">`
+ * and this generator would fetch it directly, no secret required from
+ * whoever put that link there.
+ *
+ * A per-URL hostname allowlist isn't the right tool here (a legitimate page
+ * can reasonably reference a real third-party stylesheet, e.g. Google
+ * Fonts) - what actually needs blocking is the destination address class,
+ * not the specific host. This overrides the DNS resolution `got` uses to
+ * open every one of those connections (including the top-level fetch) with
+ * one that refuses to connect to a private/reserved address (RFC1918,
+ * loopback, link-local/cloud-metadata, etc. - see isPrivateOrReservedAddress
+ * in lib.js) - checked against the address actually being connected to, not
+ * a separately-resolved one, so a DNS-rebinding attempt between check and
+ * connect can't slip through either.
+ */
+function ssrfSafeDnsLookup(hostname, options, callback) {
+	if (typeof options === 'function') {
+		callback = options;
+		options = {};
+	}
+	dnsLookup(hostname, options, (err, address, family) => {
+		if (err) {
+			return callback(err);
+		}
+		if (options.all) {
+			const blocked = address.find((r) => isPrivateOrReservedAddress(r.address, r.family));
+			if (blocked) {
+				return callback(new Error(`wpcc: refusing to connect to reserved/private address ${blocked.address}`));
+			}
+			return callback(null, address);
+		}
+		if (isPrivateOrReservedAddress(address, family)) {
+			return callback(new Error(`wpcc: refusing to connect to reserved/private address ${address}`));
+		}
+		callback(null, address, family);
+	});
+}
 
 const queue = [];
 let processing = false;
@@ -112,6 +157,14 @@ async function generateForViewport(url, dimensions) {
 		penthouse: {
 			timeout: 60000,
 		},
+		request: {
+			// Closes the redirect-following vector as a first layer - the
+			// dnsLookup override above is what actually closes the direct
+			// (no-redirect-needed) SSRF vector, on every request `critical`
+			// makes internally, not just the top-level one.
+			followRedirect: false,
+			dnsLookup: ssrfSafeDnsLookup,
+		},
 	});
 	return css.toString();
 }
@@ -174,7 +227,12 @@ app.post('/generate', (req, res) => {
 		return res.status(403).json({ error: 'forbidden' });
 	}
 
-	const { url } = req.body;
+	// req.body is undefined whenever the request omits/mismatches
+	// Content-Type: application/json (body-parser leaves it unset rather
+	// than defaulting to {}) - destructuring `url` straight off it would
+	// throw a TypeError that only the generic error handler below catches,
+	// instead of this route's own clean 400.
+	const url = typeof req.body?.url === 'string' ? req.body.url : undefined;
 	if (!url || !isAllowedUrl(url, ALLOWED_HOSTNAME)) {
 		return res.status(400).json({ error: `url is required and must be on ${ALLOWED_HOSTNAME}` });
 	}
@@ -189,6 +247,20 @@ app.post('/sweep', (req, res) => {
 	}
 	runSweep().catch((err) => console.error('[critical-css] sweep failed:', err.message));
 	res.status(202).json({ status: 'sweep started' });
+});
+
+// Must be registered after every route, and keep the 4-argument signature -
+// that's how Express recognizes error-handling middleware. Catches
+// anything thrown synchronously in a route (e.g. a malformed-JSON body
+// rejected by express.json() itself, before any route handler runs) and
+// always responds with a fixed, generic message - never err.stack or any
+// other exception detail, regardless of NODE_ENV. Relying solely on
+// NODE_ENV=production (set in the Dockerfile) would still leak stack
+// traces to anyone running this image with that unset, e.g. a plain
+// `docker run` that doesn't carry it forward.
+app.use((err, req, res, _next) => {
+	console.error(`[critical-css] unhandled request error: ${err.message}`);
+	res.status(err.status || err.statusCode || 500).json({ error: 'request could not be processed' });
 });
 
 app.listen(PORT, () => {
