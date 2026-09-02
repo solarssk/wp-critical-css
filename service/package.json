@@ -1,6 +1,6 @@
 {
   "name": "wp-critical-css",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Self-hosted critical CSS generator for WordPress, using a real headless browser via the critical package.",
   "private": true,
   "type": "module",
