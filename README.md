@@ -20,6 +20,7 @@ render engine via its `penthouse-esm` dependency), Express 5, node-cron 4.
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Full setup, verification, releases, rollback |
 | [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) | Threat model, CI/CD security controls, conscious exclusions |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 
 ## Quick start
 

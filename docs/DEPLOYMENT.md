@@ -116,12 +116,14 @@ list.
 
 A manual `workflow_dispatch` on a non-tag ref runs the same build+scan but
 never publishes - useful for checking a branch's CVE exposure, or for
-refreshing the Security tab after a Dockerfile fix lands on `main` (the
-publish workflow only triggers on tag pushes and manual dispatch, not
-every push to `main`).
+refreshing the Security tab after a Dockerfile fix lands on `main`. The
+workflow also runs on its own weekly schedule (re-scanning the actual
+published image, not a rebuild) - see
+[SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for why. Neither of those
+publishes either - only a version-tag push does.
 
 ## Rollback
 
-Remove the three mu-plugin files from `wp-content/mu-plugins/` and stop
+Remove the four mu-plugin files from `wp-content/mu-plugins/` and stop
 the container. Nothing else depends on this pipeline - stylesheets simply
 go back to loading render-blocking, exactly as before it existed.
