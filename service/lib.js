@@ -133,9 +133,28 @@ export function isPrivateOrReservedIpv6(ip) {
 		return true; // loopback / unspecified
 	}
 
-	const mapped = clean.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-	if (mapped) {
-		return isPrivateOrReservedIpv4(mapped[1]);
+	// IPv4-mapped addresses (::ffff:0:0/96) show up in two forms: the
+	// human-authored dotted-decimal one (::ffff:127.0.0.1), and the form
+	// WHATWG URL parsing (and Node's own dns.lookup on IPv4-mapped results)
+	// actually canonicalizes to - two plain hex groups, e.g. ::ffff:7f00:1
+	// for that same address (confirmed directly: `new
+	// URL('http://[::ffff:127.0.0.1]/').hostname` is `[::ffff:7f00:1]`, not
+	// the dotted form). Checking only the dotted form left every
+	// IPv4-mapped literal a caller writes in a URL completely unclassified
+	// by this function - it never even reached the fail-closed branches
+	// below, since ::ffff:7f00:1 has a first hextet of 0 (via the `::`
+	// prefix), matching neither reserved range checked further down.
+	const mappedDotted = clean.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+	if (mappedDotted) {
+		return isPrivateOrReservedIpv4(mappedDotted[1]);
+	}
+
+	const mappedHex = clean.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+	if (mappedHex) {
+		const high = Number.parseInt(mappedHex[1], 16);
+		const low = Number.parseInt(mappedHex[2], 16);
+		const dotted = [(high >> 8) & 0xff, high & 0xff, (low >> 8) & 0xff, low & 0xff].join('.');
+		return isPrivateOrReservedIpv4(dotted);
 	}
 
 	const firstGroup = clean.startsWith('::') ? '0' : clean.split(':')[0];
