@@ -165,7 +165,13 @@ export function isPrivateOrReservedIpv6(ip) {
 
 	const isUniqueLocal = firstHextet >= 0xfc00 && firstHextet <= 0xfdff; // fc00::/7
 	const isLinkLocal = firstHextet >= 0xfe80 && firstHextet <= 0xfebf; // fe80::/10
-	return isUniqueLocal || isLinkLocal;
+	// fec0::/10 - IPv6 "site-local" addressing, deprecated by RFC 3879 in
+	// 2004 in favor of fc00::/7 (already covered above), but still actually
+	// routed as an internal-only range on some legacy/enterprise networks
+	// that never migrated off it - a real internal-network target in that
+	// environment, not just a historical curiosity to skip.
+	const isDeprecatedSiteLocal = firstHextet >= 0xfec0 && firstHextet <= 0xfeff;
+	return isUniqueLocal || isLinkLocal || isDeprecatedSiteLocal;
 }
 
 export function isPrivateOrReservedAddress(address, family) {

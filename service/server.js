@@ -22,10 +22,12 @@
  */
 
 import { lookup as dnsLookup } from 'node:dns';
+import { lookup as dnsLookupAsync } from 'node:dns/promises';
 import express from 'express';
 import cron from 'node-cron';
 import { parseStringPromise } from 'xml2js';
 import { generate as generateCriticalCss } from 'critical';
+import puppeteer from 'puppeteer';
 import {
 	isValidSecret,
 	isAllowedUrl,
@@ -175,6 +177,137 @@ async function generateAndSubmit(url) {
 	console.log(`[critical-css] delivered for ${logSafe(url)}`);
 }
 
+/**
+ * Everything above (ssrfSafeBeforeRequest/ssrfSafeDnsLookup) only guards
+ * requests `critical` itself makes via `got` (the top-level page fetch,
+ * plus every `<link rel=stylesheet>`/`<link rel=preload>` href it finds).
+ * It never touches Chromium's OWN network stack - `critical` hands
+ * Puppeteer a local `file://` copy of the fetched page (see
+ * docs/SECURITY-CONTROLS.md), but that copy still contains the page's
+ * original markup verbatim, so anything Chromium itself resolves while
+ * rendering it (an <iframe src="...">, an <img src="...">, a
+ * background-image: url(...), a fetch()/XHR the page's own JS makes) is
+ * fetched directly by Chromium, completely bypassing every guard above.
+ * `<iframe src="http://169.254.169.254/...">` on an otherwise-legitimate
+ * allowed page is a real, confirmed example of this.
+ *
+ * Puppeteer's own `page.setRequestInterception()` is the equivalent
+ * mechanism for Chromium's network stack - checked here against the exact
+ * same private/reserved-address policy as the `got` path above, applied
+ * to every request Chromium itself makes (navigation, subresources,
+ * fetch/XHR), not just the top-level document.
+ *
+ * `penthouse` (the package `critical` uses to drive Puppeteer) already
+ * sets up its own request interception by default (to block `.js`
+ * requests during critical-CSS extraction) - `blockJSRequests: false`
+ * below turns that off so this replaces it outright with one handler that
+ * does both: only one interception handler is safe per page, since
+ * Puppeteer requires each intercepted request to be resolved (continued/
+ * aborted) exactly once.
+ *
+ * Known residual gap, not fully closable via Puppeteer's own request-
+ * interception API: unlike the `got` path (where `dnsLookup` overrides
+ * the DNS resolution `got` itself uses to connect, closing the gap
+ * completely), this checks the destination via a separate DNS lookup
+ * BEFORE calling request.continue() - Chromium then does its own,
+ * independent DNS resolution when it actually opens the connection.  A
+ * sufficiently fast DNS-rebinding attack between those two lookups could
+ * theoretically slip a different address past this check. Operators who
+ * need this fully closed should add network-level egress filtering
+ * (block RFC1918/link-local destinations at the container/firewall
+ * level) - the same mitigation already documented for the stylesheet-href
+ * vector's own residual gap.
+ */
+const PUPPETEER_LAUNCH_ARGS = ['--disable-setuid-sandbox', '--no-sandbox', '--ignore-certificate-errors'];
+
+let cachedBrowserPromise = null;
+
+async function isChromiumRequestTargetBlocked(url) {
+	let target;
+	try {
+		target = new URL(url);
+	} catch {
+		return false; // unparseable - not a real network destination (shouldn't happen for a request Chromium itself is making)
+	}
+
+	if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+		return false; // data:, blob:, about:, chrome-error:, etc. - no real network fetch happens for these
+	}
+
+	if (isBlockedLiteralAddress(target.hostname)) {
+		return true;
+	}
+
+	try {
+		const addresses = await dnsLookupAsync(target.hostname, { all: true });
+		return addresses.some((a) => isPrivateOrReservedAddress(a.address, a.family));
+	} catch {
+		return true; // couldn't resolve it - fail closed, don't let an erroring lookup through
+	}
+}
+
+async function setupSsrfSafeRequestInterception(page) {
+	await page.setRequestInterception(true);
+	page.on('request', async (request) => {
+		try {
+			// Replicates penthouse's own default blockJSRequests behavior,
+			// disabled below (blockJSRequests: false) since this handler now
+			// owns every interception decision for this page - JS execution
+			// during critical-CSS extraction adds nothing critical rendering
+			// needs and only expands what a malicious page could attempt.
+			if (/\.js(\?.*)?$/.test(request.url())) {
+				await request.abort();
+				return;
+			}
+			const blocked = await isChromiumRequestTargetBlocked(request.url());
+			if (blocked) {
+				await request.abort();
+			} else {
+				await request.continue();
+			}
+		} catch {
+			// Already handled (e.g. the page navigated away mid-check) -
+			// nothing more to do.
+		}
+	});
+}
+
+/**
+ * Shared by both viewport renders of the SAME url (called via Promise.all
+ * in generateAndSubmit) so they use one browser/one Chrome process, not
+ * two - launching a fresh browser is real overhead on the "modest
+ * hardware" this is designed to run on. Safe to cache at module scope
+ * despite that: penthouse closes the browser it was handed once every job
+ * using it has finished (unless unstableKeepBrowserAlive is set, which
+ * this doesn't use) - the 'disconnected' listener below detects exactly
+ * that and drops the stale reference, so the NEXT url's pair of viewport
+ * calls correctly launches a fresh browser instead of reusing a closed
+ * one.
+ */
+async function getSsrfSafeBrowser() {
+	if (cachedBrowserPromise) {
+		return cachedBrowserPromise;
+	}
+	cachedBrowserPromise = puppeteer
+		.launch({
+			args: PUPPETEER_LAUNCH_ARGS,
+			ignoreHTTPSErrors: true,
+		})
+		.then((browser) => {
+			browser.once('disconnected', () => {
+				cachedBrowserPromise = null;
+			});
+			const originalNewPage = browser.newPage.bind(browser);
+			browser.newPage = async (...args) => {
+				const page = await originalNewPage(...args);
+				await setupSsrfSafeRequestInterception(page);
+				return page;
+			};
+			return browser;
+		});
+	return cachedBrowserPromise;
+}
+
 async function generateForViewport(url, dimensions) {
 	const { css } = await generateCriticalCss({
 		src: url,
@@ -182,6 +315,10 @@ async function generateForViewport(url, dimensions) {
 		dimensions: [dimensions],
 		penthouse: {
 			timeout: 60000,
+			blockJSRequests: false,
+			puppeteer: {
+				getBrowser: getSsrfSafeBrowser,
+			},
 		},
 		request: {
 			// Redirects are followed normally (got's default) - a real page
