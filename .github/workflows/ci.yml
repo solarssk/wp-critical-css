@@ -66,6 +66,18 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: service/lcov.info
 
+      # if: !cancelled() (not just success/failure) so a failing test run's
+      # results still get uploaded and show up in Codecov's Test Analytics
+      # (flaky-test detection needs failures recorded, not just passes) -
+      # same secret-handling reasoning as the coverage upload above applies
+      # here too.
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1.2.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: service/junit.xml
+
   php-lint:
     name: PHP syntax check (mu-plugins)
     runs-on: ubuntu-latest
