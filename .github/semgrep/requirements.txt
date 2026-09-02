@@ -1,0 +1,2 @@
+setuptools==81.0.0
+semgrep==1.136.0

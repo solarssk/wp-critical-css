@@ -26,8 +26,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install Semgrep
+        # Versions tracked in .github/semgrep/requirements.txt, not inline
+        # here - a pip Dependabot entry (.github/dependabot.yml) watches
+        # that file and proposes bump PRs the same way it already does for
+        # npm/docker/github-actions, so this scanner's own version (and any
+        # CVE fix in it or setuptools) doesn't go stale indefinitely.
         run: |
-          pip install --break-system-packages --only-binary=:all: "setuptools==81.0.0" "semgrep==1.136.0"
+          pip install --break-system-packages --only-binary=:all: -r .github/semgrep/requirements.txt
 
       # --error makes findings fail this step (the gate); the two steps
       # below still run via if: always() so the SARIF is uploaded even
