@@ -4,6 +4,21 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  schedule:
+    # Weekly re-scan of the actual published image (ghcr.io/...:latest -
+    # what users actually pulled), offset from codeql.yml's (0 3) and
+    # semgrep.yml's (0 5) own schedules. Without this, a CVE disclosed in
+    # the pinned base image or its OS packages weeks after the last
+    # release tag stays invisible to this pipeline until someone manually
+    # dispatches it or cuts a new release - this is the only workflow that
+    # scans the actual container image. Deliberately NOT a rebuild from
+    # source on this trigger (see the "Build or pull image for scanning"
+    # step below) - a fresh `docker build` re-runs the Dockerfile's own
+    # `apt-get update && apt-get install --only-upgrade`, which would pull
+    # in today's patched OS packages regardless of what's actually baked
+    # into the image currently deployed, silently defeating the entire
+    # point of this weekly check.
+    - cron: '0 4 * * 1'
   workflow_dispatch:
     inputs:
       ref:
@@ -74,7 +89,14 @@ jobs:
       # registry - the image is only pushed a second time, further down,
       # if the CRITICAL-severity gate below passes. On a plain branch/SHA
       # dispatch (publish=false) this is the only build that happens.
+      #
+      # NOT on a schedule trigger, deliberately: that run's whole purpose
+      # is to catch drift in what's already deployed, so it pulls and
+      # re-tags the actual published `:latest` image instead of building a
+      # fresh one from source - see the `schedule:` trigger's own comment
+      # above for why a rebuild here would silently defeat that.
       - name: Build image for scanning
+        if: github.event_name != 'schedule'
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: ./service
@@ -85,13 +107,24 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Pull published image for scanning (weekly re-scan)
+        if: github.event_name == 'schedule'
+        run: |
+          docker pull ghcr.io/${{ github.repository }}:latest
+          docker tag ghcr.io/${{ github.repository }}:latest ghcr.io/${{ github.repository }}:ci-scan
+
       - name: Trivy scan (SARIF, always uploaded)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:ci-scan
           format: sarif
           output: trivy-results.sarif
-          severity: CRITICAL,HIGH
+          # MEDIUM included here (unlike the CRITICAL-only gate further
+          # down) so it's at least visible on the Security tab, not just
+          # excluded from failing the build - previously CRITICAL,HIGH
+          # only, which meant a MEDIUM finding never appeared anywhere in
+          # this repo's CI at all, not even informationally.
+          severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
 
       - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4

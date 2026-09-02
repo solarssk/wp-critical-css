@@ -52,10 +52,10 @@ sides, so it's treated like any other credential throughout.
 | Real functional smoke test | every push/PR to `main` | `.github/workflows/ci.yml` - builds the image and actually launches Chrome to render a page, not just checks the build succeeds |
 | Static analysis (JS/TS) | push/PR to `main` + weekly | `.github/workflows/codeql.yml` |
 | Static analysis (JS + PHP) | push/PR to `main` + weekly | `.github/workflows/semgrep.yml` |
-| Container image CVEs | on every version tag, or manual dispatch (scan-only on a plain branch) | `.github/workflows/publish-container.yml` - Trivy; a full SARIF report is always uploaded to the Security tab, and a hard gate blocks the push on any fixable CRITICAL finding |
+| Container image CVEs | every version tag, weekly (Monday 04:00 UTC, re-scanning the actual published `:latest` image - not a fresh rebuild, which would silently pick up today's patched OS packages regardless of what's really deployed), or manual dispatch (scan-only on a plain branch/ref) | `.github/workflows/publish-container.yml` - Trivy; a full SARIF report (CRITICAL/HIGH/MEDIUM) is always uploaded to the Security tab, and a hard gate blocks the push (or fails the weekly job) on any fixable CRITICAL finding |
 | SBOM | every published image | `publish-container.yml` (CycloneDX via Trivy) |
 | Build provenance | every published image | `publish-container.yml` (`actions/attest-build-provenance`, signed) |
-| Dependency/base-image/action updates | weekly | `.github/dependabot.yml` (npm, docker, github-actions) |
+| Dependency/base-image/action/Semgrep-toolchain updates | weekly | `.github/dependabot.yml` (npm, docker, github-actions, pip - the last one tracks Semgrep's own version, pinned in `.github/semgrep/requirements.txt` rather than inline in the workflow) |
 | Third-party action supply chain | every workflow | every `uses:` is pinned to a full commit SHA, never a mutable tag |
 
 Every finding these tools have surfaced so far - a CVE in npm's own bundled
@@ -104,3 +104,11 @@ investigation behind each one.
   transients happen to be backed by the options table or by a persistent
   object cache (Redis/Memcached) - accepted rather than shipping a fix
   that would only be correct for one of those two backends.
+- **`npm audit --audit-level=high` in `ci.yml` doesn't gate the build on
+  MEDIUM/LOW findings.** Accepted asymmetrically with the container-image
+  side (where MEDIUM is now included in what's uploaded to the Security
+  tab, even though only CRITICAL blocks a publish): the full `npm audit`
+  report still prints to the CI log either way, and weekly Dependabot
+  `minor-and-patch` PRs aren't severity-gated, so most such issues get
+  fixed via routine dependency updates regardless of the audit-level
+  threshold.
