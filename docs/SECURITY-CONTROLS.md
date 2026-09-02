@@ -22,7 +22,7 @@ sides, so it's treated like any other credential throughout.
 | Userinfo/host-confusion bypass (`https://user:pass@evil.com@example.com/`) | WHATWG `URL` parsing resolves the real host correctly (everything before the *last* `@` is userinfo) - covered by regression tests, not assumed | `service/lib.test.js` |
 | IP-literal / cloud-metadata target (e.g. `169.254.169.254`) | Hostname is compared as an exact string against `ALLOWED_HOSTNAME` - an IP literal never matches a DNS name | `isAllowedUrl()`, tested explicitly |
 | Non-HTTP(S) scheme (`file:`, `javascript:`, `data:`) | Protocol allowlist (`https:`/`http:` only) | `isAllowedUrl()` |
-| Stored XSS via the receiver endpoint | Any `</style` sequence is stripped before storage - `esc_html()` would be the wrong tool, since HTML-entity-encoding a stylesheet corrupts valid CSS the browser needs to parse. Applied on write (receiver) and again independently on read (inject) - two layers, neither trusts the other | `wpcc_sanitize_css()` in both `wpcc-receiver.php` and `wpcc-inject.php` |
+| Stored XSS via the receiver endpoint | Any `</style` sequence is stripped before storage - `esc_html()` would be the wrong tool, since HTML-entity-encoding a stylesheet corrupts valid CSS the browser needs to parse. Applied on write (receiver) and again independently on read (inject) - two independent call sites into the same function, neither trusts the other | `wpcc_sanitize_css()`, `wpcc-shared.php` |
 | Timing attack on the shared secret | Constant-time comparison on both sides - a plain `!==`/`==` leaks how many leading bytes matched via response timing | `isValidSecret()` (`crypto.timingSafeEqual`, `service/lib.js`) and `hash_equals()` (`wpcc-receiver.php`) |
 | Log injection / forged log lines | Any value that reaches a log line (URLs from the sitemap sweep or the `/generate` request body) is JSON-stringified first, escaping control characters, and always logged as a single template-literal argument (never a second `console.*` argument, which Node would otherwise treat as a printf-style format string - see CodeQL finding #885 below) | `logSafe()`, `service/lib.js` |
 | Secret committed to source control | The shared secret lives only in `.env` (generator, gitignored) and the `WPCC_SHARED_SECRET` constant in `wp-config.php` (never in a tracked mu-plugin file). Both sides fail closed - reject everything - if it's missing, instead of falling back to a value baked into source | `wpcc-trigger.php`, `wpcc-receiver.php` |
@@ -72,23 +72,27 @@ investigation behind each one.
 - **No authentication on `/health`.** Deliberately public - it carries no
   sensitive data (queue length, a boolean), and Docker/Portainer
   healthchecks need it reachable without a secret.
-- **`wpcc_sanitize_css()` strips `</style` and `@import`, but deliberately
-  leaves `url(...)` alone.** A compromised secret still lets an attacker
-  write arbitrary CSS-shaped text into a page (subject to those two
-  strips) - a `url(...)`-based exfiltration/tracking vector is real, but
-  real critical CSS legitimately contains `url(...)` for hero
-  background-images and `@font-face src`. Stripping it would break correct
-  output for the actual purpose of this tool on every real site, which is
-  a worse outcome than the narrow residual risk it would close for an
-  attacker who, by this point, already holds the shared secret.
-- **The receiver's rate limiter isn't atomic.** `wpcc_receiver_rate_limited()`
-  does a `get_transient()` + `set_transient()` read-modify-write, which can
-  race under concurrent requests from the same IP and undercount by
-  roughly the size of the PHP worker pool handling them - a real weakening
-  under a genuinely parallel abuse attempt, not just sequential rapid-fire.
-  This is a defense-in-depth control behind the shared secret, not the
-  primary security boundary; a correct fix needs a backend-specific atomic
-  primitive, and this route has to work whether transients happen to be
-  backed by the options table or by a persistent object cache (Redis/
-  Memcached) - accepted rather than shipping a fix that would only be
-  correct for one of those two backends.
+- **`wpcc_sanitize_css()` strips `</style` and real `@import` at-rules
+  (via a character-scanner, not a regex - see its own doc comment in
+  `wpcc-shared.php` for why), but deliberately leaves `url(...)` alone.**
+  A compromised secret still lets an attacker write arbitrary CSS-shaped
+  text into a page (subject to those two strips) - a `url(...)`-based
+  exfiltration/tracking vector is real, but real critical CSS legitimately
+  contains `url(...)` for hero background-images and `@font-face src`.
+  Stripping it would break correct output for the actual purpose of this
+  tool on every real site, which is a worse outcome than the narrow
+  residual risk it would close for an attacker who, by this point, already
+  holds the shared secret.
+- **The receiver's rate limiters aren't atomic.**
+  `wpcc_receiver_fixed_window_limited()` (the shared core both
+  `wpcc_receiver_auth_rate_limited()` and `wpcc_receiver_write_rate_limited()`
+  call) does a `get_transient()` + `set_transient()` read-modify-write,
+  which can race under concurrent requests against the same key and
+  undercount by roughly the size of the PHP worker pool handling them - a
+  real weakening under a genuinely parallel abuse attempt, not just
+  sequential rapid-fire. This is a defense-in-depth control behind the
+  shared secret, not the primary security boundary; a correct fix needs a
+  backend-specific atomic primitive, and this route has to work whether
+  transients happen to be backed by the options table or by a persistent
+  object cache (Redis/Memcached) - accepted rather than shipping a fix
+  that would only be correct for one of those two backends.

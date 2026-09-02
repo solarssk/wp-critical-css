@@ -2,8 +2,8 @@
 /**
  * MU-Plugin: Inline stored critical CSS and defer the full stylesheets.
  *
- * Part of a 3-file set (trigger / receiver / inject) - see the repo's
- * README for the full architecture.
+ * Part of a 4-file set (trigger / receiver / inject / shared) - see the
+ * repo's README for the full architecture.
  *
  * Mobile and desktop critical CSS are both inlined, each wrapped in its own
  * matching media query, so the browser picks the right one natively - no
@@ -23,133 +23,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+require_once __DIR__ . '/wpcc-shared.php';
+
 if ( ! defined( 'WPCC_BREAKPOINT' ) ) {
 	define( 'WPCC_BREAKPOINT', 782 );
-}
-
-if ( ! function_exists( 'wpcc_strip_import_statements' ) ) {
-	/**
-	 * Same character-scanner as wpcc-receiver.php's copy - see that file's
-	 * doc comment on this function for why it's a real scanner and not a
-	 * regex (two rounds of regex boundary heuristics both got proven wrong
-	 * by real CSS content they corrupted). Duplicated here deliberately so
-	 * this file is safe standing alone.
-	 *
-	 * @param string $css
-	 * @return string
-	 */
-	function wpcc_strip_import_statements( $css ) {
-		$css        = (string) $css;
-		$length     = strlen( $css );
-		$output     = '';
-		$i          = 0;
-		$in_string  = null; // null, or the quote character currently open.
-		$in_comment = false;
-
-		while ( $i < $length ) {
-			$ch = $css[ $i ];
-
-			if ( $in_comment ) {
-				if ( '*' === $ch && isset( $css[ $i + 1 ] ) && '/' === $css[ $i + 1 ] ) {
-					$output    .= '*/';
-					$i         += 2;
-					$in_comment = false;
-					continue;
-				}
-				$output .= $ch;
-				++$i;
-				continue;
-			}
-
-			if ( null !== $in_string ) {
-				if ( '\\' === $ch && isset( $css[ $i + 1 ] ) ) {
-					$output .= $ch . $css[ $i + 1 ];
-					$i      += 2;
-					continue;
-				}
-				if ( $ch === $in_string ) {
-					$in_string = null;
-				}
-				$output .= $ch;
-				++$i;
-				continue;
-			}
-
-			if ( '/' === $ch && isset( $css[ $i + 1 ] ) && '*' === $css[ $i + 1 ] ) {
-				$output    .= '/*';
-				$i         += 2;
-				$in_comment = true;
-				continue;
-			}
-
-			if ( '"' === $ch || "'" === $ch ) {
-				$in_string = $ch;
-				$output   .= $ch;
-				++$i;
-				continue;
-			}
-
-			// Only reachable outside any string/comment - a genuine
-			// top-level position, so no separate boundary check is needed.
-			// The word-boundary-style check (next char isn't an identifier
-			// character) stops this from matching inside e.g. `@importantx`.
-			if ( '@' === $ch && 0 === strncasecmp( substr( $css, $i, 7 ), '@import', 7 ) ) {
-				$next_char = $css[ $i + 7 ] ?? '';
-				if ( '' === $next_char || ! preg_match( '/[a-zA-Z0-9_-]/', $next_char ) ) {
-					$j             = $i + 7;
-					$import_string = null;
-					while ( $j < $length ) {
-						$c = $css[ $j ];
-						if ( null !== $import_string ) {
-							if ( '\\' === $c && isset( $css[ $j + 1 ] ) ) {
-								$j += 2;
-								continue;
-							}
-							if ( $c === $import_string ) {
-								$import_string = null;
-							}
-							++$j;
-							continue;
-						}
-						if ( '"' === $c || "'" === $c ) {
-							$import_string = $c;
-							++$j;
-							continue;
-						}
-						++$j;
-						if ( ';' === $c ) {
-							break;
-						}
-					}
-					$i = $j;
-					continue;
-				}
-			}
-
-			$output .= $ch;
-			++$i;
-		}
-
-		return $output;
-	}
-}
-
-if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
-	/**
-	 * Same stripping applied in wpcc-receiver.php at write time - duplicated
-	 * here deliberately so this file is safe standing alone, not relying on
-	 * the receiver having already cleaned the stored value. `url(...)` is
-	 * deliberately left untouched: real critical CSS legitimately contains
-	 * it (hero background-images, @font-face src) - see
-	 * docs/SECURITY-CONTROLS.md for the reasoning.
-	 *
-	 * @param string $css
-	 * @return string
-	 */
-	function wpcc_sanitize_css( $css ) {
-		$css = preg_replace( '#</\s*style#i', '', (string) $css );
-		return wpcc_strip_import_statements( $css );
-	}
 }
 
 add_action( 'wp_head', 'wpcc_inline_critical_css', 1 );

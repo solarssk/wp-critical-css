@@ -3,8 +3,8 @@
  * MU-Plugin: REST endpoint that receives generated critical CSS from the
  * self-hosted critical-css-service and stores it per-post.
  *
- * Part of a 3-file set (trigger / receiver / inject) - see the repo's
- * README for the full architecture.
+ * Part of a 4-file set (trigger / receiver / inject / shared) - see the
+ * repo's README for the full architecture.
  *
  * Stored per-post (not per-template) - useful if your page builder emits a
  * separate physical CSS file per post, since the critical subset then
@@ -42,6 +42,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+require_once __DIR__ . '/wpcc-shared.php';
+
 if ( ! defined( 'WPCC_RECEIVER_MAX_CSS_BYTES' ) ) {
 	define( 'WPCC_RECEIVER_MAX_CSS_BYTES', 204800 ); // 200 KB per field.
 }
@@ -52,148 +54,6 @@ if ( ! defined( 'WPCC_RECEIVER_RATE_LIMIT' ) ) {
 
 if ( ! defined( 'WPCC_RECEIVER_RATE_WINDOW' ) ) {
 	define( 'WPCC_RECEIVER_RATE_WINDOW', 60 ); // seconds.
-}
-
-if ( ! function_exists( 'wpcc_strip_import_statements' ) ) {
-	/**
-	 * A minimal character-scanner, not a regex - two rounds of regex
-	 * boundary heuristics here (first "preceded by `;{}` or whitespace",
-	 * then still-broken because whitespace INSIDE a quoted string is also
-	 * whitespace) both got corrected by finding real CSS content they
-	 * corrupted, e.g. `content:"hello @import world"`. A regex fundamentally
-	 * cannot tell "inside an unclosed string" from "at the top level"
-	 * without tracking quote state character by character, so that's what
-	 * this does instead: `@import` is only ever treated as a real at-rule
-	 * when the scanner is NOT currently inside a single/double-quoted
-	 * string or a CSS comment, which is both the necessary and the
-	 * sufficient condition (no boundary-character guessing needed) - and
-	 * while consuming through to the import statement's own closing `;`,
-	 * the scanner keeps tracking quote state too, so a `;` inside the
-	 * import's own quoted URL doesn't end the strip early.
-	 *
-	 * @param string $css
-	 * @return string
-	 */
-	function wpcc_strip_import_statements( $css ) {
-		$css      = (string) $css;
-		$length   = strlen( $css );
-		$output   = '';
-		$i        = 0;
-		$in_string = null; // null, or the quote character currently open.
-		$in_comment = false;
-
-		while ( $i < $length ) {
-			$ch = $css[ $i ];
-
-			if ( $in_comment ) {
-				if ( '*' === $ch && isset( $css[ $i + 1 ] ) && '/' === $css[ $i + 1 ] ) {
-					$output    .= '*/';
-					$i         += 2;
-					$in_comment = false;
-					continue;
-				}
-				$output .= $ch;
-				++$i;
-				continue;
-			}
-
-			if ( null !== $in_string ) {
-				if ( '\\' === $ch && isset( $css[ $i + 1 ] ) ) {
-					$output .= $ch . $css[ $i + 1 ];
-					$i      += 2;
-					continue;
-				}
-				if ( $ch === $in_string ) {
-					$in_string = null;
-				}
-				$output .= $ch;
-				++$i;
-				continue;
-			}
-
-			if ( '/' === $ch && isset( $css[ $i + 1 ] ) && '*' === $css[ $i + 1 ] ) {
-				$output    .= '/*';
-				$i         += 2;
-				$in_comment = true;
-				continue;
-			}
-
-			if ( '"' === $ch || "'" === $ch ) {
-				$in_string = $ch;
-				$output   .= $ch;
-				++$i;
-				continue;
-			}
-
-			// Only reachable outside any string/comment - a genuine
-			// top-level position, so no separate boundary check is needed.
-			// The word-boundary-style check (next char isn't an identifier
-			// character) stops this from matching inside e.g. `@importantx`.
-			if ( '@' === $ch && 0 === strncasecmp( substr( $css, $i, 7 ), '@import', 7 ) ) {
-				$next_char = $css[ $i + 7 ] ?? '';
-				if ( '' === $next_char || ! preg_match( '/[a-zA-Z0-9_-]/', $next_char ) ) {
-					$j              = $i + 7;
-					$import_string  = null;
-					while ( $j < $length ) {
-						$c = $css[ $j ];
-						if ( null !== $import_string ) {
-							if ( '\\' === $c && isset( $css[ $j + 1 ] ) ) {
-								$j += 2;
-								continue;
-							}
-							if ( $c === $import_string ) {
-								$import_string = null;
-							}
-							++$j;
-							continue;
-						}
-						if ( '"' === $c || "'" === $c ) {
-							$import_string = $c;
-							++$j;
-							continue;
-						}
-						++$j;
-						if ( ';' === $c ) {
-							break;
-						}
-					}
-					$i = $j;
-					continue;
-				}
-			}
-
-			$output .= $ch;
-			++$i;
-		}
-
-		return $output;
-	}
-}
-
-if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
-	/**
-	 * Strips the sequences that let CSS-as-text reach further than it
-	 * should once it's later echoed into a <style> element (see
-	 * wpcc-inject.php):
-	 * - `</style` - HTML's raw-text parsing rules mean nothing else typed
-	 *   inside a <style> block is interpreted as markup, only a literal
-	 *   closing tag is.
-	 * - `@import` - real critical/extracted CSS never legitimately needs
-	 *   it (it's a set of matched, already-resolved rules, not a stylesheet
-	 *   reference), so removing it costs nothing while closing off pulling
-	 *   in an attacker-controlled remote stylesheet. See
-	 *   wpcc_strip_import_statements() for why this is a real scanner, not
-	 *   a regex.
-	 * Applied on both write (here) and read (inject.php) - two independent
-	 * layers, neither relies on the other.
-	 *
-	 * @param string $css
-	 * @return string
-	 */
-	function wpcc_sanitize_css( $css ) {
-		$css = preg_replace( '#</\s*style#i', '', (string) $css );
-		return wpcc_strip_import_statements( $css );
-	}
 }
 
 if ( ! function_exists( 'wpcc_receiver_fixed_window_limited' ) ) {
@@ -319,6 +179,68 @@ add_action( 'rest_api_init', function () {
 	);
 } );
 
+if ( ! function_exists( 'wpcc_receiver_auth_error' ) ) {
+	/**
+	 * Validates the shared secret and, on failure, applies the IP-keyed
+	 * brute-force throttle - collapsed into one call so wpcc_receive()
+	 * doesn't carry this branching itself.
+	 *
+	 * @param WP_REST_Request $request
+	 * @return WP_REST_Response|null A response to return immediately, or
+	 *                               null if the secret is valid.
+	 */
+	function wpcc_receiver_auth_error( WP_REST_Request $request ) { // NOSONAR php:S100 - WordPress Coding Standards mandate snake_case; matches every other function in this directory
+		$provided_secret = $request->get_header( 'x_wpcc_secret' );
+
+		if ( $provided_secret && hash_equals( WPCC_SHARED_SECRET, $provided_secret ) ) {
+			return null;
+		}
+
+		// IP-keyed brute-force throttle - only ever counts actual failed
+		// attempts (see wpcc_receiver_auth_rate_limited()'s own doc comment
+		// for why this can't share a bucket with the write-volume cap
+		// wpcc_receive() applies separately, after authentication).
+		if ( wpcc_receiver_auth_rate_limited() ) {
+			return new WP_REST_Response( array( 'error' => 'too many requests' ), 429 );
+		}
+		return new WP_REST_Response( array( 'error' => 'forbidden' ), 403 );
+	}
+}
+
+if ( ! function_exists( 'wpcc_receiver_post_is_eligible' ) ) {
+	/**
+	 * Mirrors the whitelist wpcc-trigger.php already applies before ever
+	 * scheduling generation (post/page, published only) - without this,
+	 * url_to_postid()'s ?p=N/?page_id=N/?attachment_id=N fallback lets any
+	 * resolvable post ID be written to, including attachments, drafts, and
+	 * other post types this plugin was never meant to touch.
+	 *
+	 * @param int $post_id
+	 * @return bool
+	 */
+	function wpcc_receiver_post_is_eligible( $post_id ) { // NOSONAR php:S100 - see wpcc_receiver_auth_error() above
+		return in_array( get_post_type( $post_id ), array( 'post', 'page' ), true ) && 'publish' === get_post_status( $post_id );
+	}
+}
+
+if ( ! function_exists( 'wpcc_receiver_store_css' ) ) {
+	/**
+	 * @param int    $post_id
+	 * @param string $css_mobile
+	 * @param string $css_desktop
+	 * @return void
+	 */
+	function wpcc_receiver_store_css( $post_id, $css_mobile, $css_desktop ) { // NOSONAR php:S100 - see wpcc_receiver_auth_error() above
+		if ( '' !== $css_mobile ) {
+			update_post_meta( $post_id, '_wpcc_critical_css_mobile', $css_mobile );
+		}
+		if ( '' !== $css_desktop ) {
+			update_post_meta( $post_id, '_wpcc_critical_css_desktop', $css_desktop );
+		}
+		update_post_meta( $post_id, '_wpcc_critical_css_generated_at', time() );
+	}
+}
+
 /**
  * @param WP_REST_Request $request
  * @return WP_REST_Response
@@ -328,17 +250,9 @@ function wpcc_receive( WP_REST_Request $request ) {
 		return new WP_REST_Response( array( 'error' => 'not configured' ), 503 );
 	}
 
-	$provided_secret = $request->get_header( 'x_wpcc_secret' );
-
-	if ( ! $provided_secret || ! hash_equals( WPCC_SHARED_SECRET, $provided_secret ) ) {
-		// IP-keyed brute-force throttle - only ever counts actual failed
-		// attempts (see wpcc_receiver_auth_rate_limited()'s own doc comment
-		// for why this can't share a bucket with the write-volume cap
-		// below when the site sits behind a reverse proxy/CDN).
-		if ( wpcc_receiver_auth_rate_limited() ) {
-			return new WP_REST_Response( array( 'error' => 'too many requests' ), 429 );
-		}
-		return new WP_REST_Response( array( 'error' => 'forbidden' ), 403 );
+	$auth_error = wpcc_receiver_auth_error( $request );
+	if ( null !== $auth_error ) {
+		return $auth_error;
 	}
 
 	// Reached only with a valid secret - global (not per-IP) write-volume
@@ -373,22 +287,11 @@ function wpcc_receive( WP_REST_Request $request ) {
 		return new WP_REST_Response( array( 'error' => 'could not resolve url to a post', 'url' => $url ), 404 );
 	}
 
-	// Mirrors the whitelist wpcc-trigger.php already applies before ever
-	// scheduling generation (post/page, published only) - without this,
-	// url_to_postid()'s ?p=N/?page_id=N/?attachment_id=N fallback lets any
-	// resolvable post ID be written to, including attachments, drafts, and
-	// other post types this plugin was never meant to touch.
-	if ( ! in_array( get_post_type( $post_id ), array( 'post', 'page' ), true ) || 'publish' !== get_post_status( $post_id ) ) {
+	if ( ! wpcc_receiver_post_is_eligible( $post_id ) ) {
 		return new WP_REST_Response( array( 'error' => 'post is not an eligible published post/page', 'url' => $url ), 404 );
 	}
 
-	if ( '' !== $css_mobile ) {
-		update_post_meta( $post_id, '_wpcc_critical_css_mobile', $css_mobile );
-	}
-	if ( '' !== $css_desktop ) {
-		update_post_meta( $post_id, '_wpcc_critical_css_desktop', $css_desktop );
-	}
-	update_post_meta( $post_id, '_wpcc_critical_css_generated_at', time() );
+	wpcc_receiver_store_css( $post_id, $css_mobile, $css_desktop );
 
 	return new WP_REST_Response( array( 'status' => 'stored', 'post_id' => $post_id ), 200 );
 }

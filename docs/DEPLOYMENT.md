@@ -65,9 +65,12 @@ Should return `{"status":"ok","queueLength":0,"processing":false}`.
 
 ## 5. Install the mu-plugins
 
-Copy the three files from `wordpress-mu-plugins/` into your site's
-`wp-content/mu-plugins/` directory. Must-use plugins load automatically -
-no activation step, no plugins-page entry.
+Copy all four files from `wordpress-mu-plugins/` into your site's
+`wp-content/mu-plugins/` directory (including `wpcc-shared.php` - the
+other two `require_once` it, but WordPress's mu-plugins loader also picks
+up every top-level `.php` file in that directory on its own, so it needs
+to actually be present, not just referenced). Must-use plugins load
+automatically - no activation step, no plugins-page entry.
 
 ## 6. Backfill existing content
 
