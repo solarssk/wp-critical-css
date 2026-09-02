@@ -245,7 +245,7 @@ if ( ! function_exists( 'wpcc_receiver_store_css' ) ) {
  * @param WP_REST_Request $request
  * @return WP_REST_Response
  */
-function wpcc_receive( WP_REST_Request $request ) {
+function wpcc_receive( WP_REST_Request $request ) { // NOSONAR php:S1142 - each early return is a distinct validation failure with its own HTTP status/message; collapsing them into one exit point would either merge unrelated error codes or need a flag-plus-nesting rewrite, both worse than this guard-clause sequence
 	if ( ! defined( 'WPCC_SHARED_SECRET' ) || '' === WPCC_SHARED_SECRET ) {
 		return new WP_REST_Response( array( 'error' => 'not configured' ), 503 );
 	}
