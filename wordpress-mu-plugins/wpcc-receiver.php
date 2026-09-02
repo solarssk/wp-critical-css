@@ -90,9 +90,13 @@ if ( ! function_exists( 'wpcc_receiver_rate_limited' ) ) {
 	 * @return bool True if this caller is over the limit and should be
 	 *              rejected.
 	 */
-	function wpcc_receiver_rate_limited() {
+	function wpcc_receiver_rate_limited() { // NOSONAR php:S100 - WordPress Coding Standards mandate snake_case; matches every other function in this directory
+		// A transient key just needs to be short and collision-resistant
+		// enough for a coarse per-IP bucket, not cryptographically strong -
+		// sanitize_key() (strip to a-z0-9_-) is the WordPress-native way to
+		// get there without reaching for a hash function at all.
 		$ip  = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : 'unknown';
-		$key = 'wpcc_rl_' . md5( $ip );
+		$key = 'wpcc_rl_' . sanitize_key( $ip );
 
 		$count = get_transient( $key );
 
