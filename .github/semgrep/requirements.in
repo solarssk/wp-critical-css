@@ -1,13 +1,11 @@
-# Ceiling, not an exact pin: setuptools>=82 fully removed the pkg_resources
-# module (verified directly - `import pkg_resources` succeeds, with a
-# deprecation warning, on 81.0.0, and fails outright with
-# ModuleNotFoundError on every 82.0.0+ release tried). semgrep's own
-# transitive dependency opentelemetry-instrumentation-requests still does
-# `from pkg_resources import (...)` at import time, so any setuptools>=82
-# breaks `semgrep scan` before it even runs (confirmed - a Dependabot bump
-# to 84.0.0 did exactly this, PR #21). Raise this ceiling once semgrep's
-# own dependency chain moves off pkg_resources, not before - a real render
-# of `semgrep scan`, not just `pip install`, is what would actually prove
-# that.
-setuptools>=81.0.0,<82
-semgrep==1.136.0
+# setuptools isn't listed here deliberately - unlike on 1.136.0 (this
+# file's previous pin), semgrep 1.176.0's dependency chain no longer needs
+# pkg_resources at all, so nothing pulls setuptools in as a runtime
+# dependency any more (verified directly: a full --require-hashes install
+# and a real `semgrep scan` against this repo both succeed with no
+# setuptools installed whatsoever). This bump also resolves two open
+# Dependabot alerts along the way: the setuptools MANIFEST.in/Unicode CVE
+# (moot now - setuptools isn't installed) and a HIGH-severity protobuf
+# JSON-recursion CVE (the newer OpenTelemetry line this semgrep release
+# pulls in allows protobuf>=6, resolving to a version past the fix).
+semgrep==1.176.0
