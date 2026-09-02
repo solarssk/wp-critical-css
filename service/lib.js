@@ -62,21 +62,25 @@ export function logSafe(value) {
 	return JSON.stringify(value);
 }
 
+// Every literal below IS the point of this table, not an oversight -
+// SonarCloud's "hardcoded IP" hotspot rule (javascript:S1313) exists to catch a
+// real server address baked into source by mistake, not a documented,
+// intentional table of well-known reserved/private ranges.
 const BLOCKED_IPV4_CIDRS = [
 	['0.0.0.0', 8], // "this network"
-	['10.0.0.0', 8], // RFC1918 private
-	['100.64.0.0', 10], // carrier-grade NAT
+	['10.0.0.0', 8], // NOSONAR javascript:S1313 - RFC1918 private, see table comment above
+	['100.64.0.0', 10], // NOSONAR javascript:S1313 - carrier-grade NAT, see table comment above
 	['127.0.0.0', 8], // loopback
-	['169.254.0.0', 16], // link-local - includes cloud metadata (169.254.169.254)
-	['172.16.0.0', 12], // RFC1918 private
-	['192.0.0.0', 24], // IETF protocol assignments
+	['169.254.0.0', 16], // NOSONAR javascript:S1313 - link-local, includes cloud metadata (169.254.169.254)
+	['172.16.0.0', 12], // NOSONAR javascript:S1313 - RFC1918 private, see table comment above
+	['192.0.0.0', 24], // NOSONAR javascript:S1313 - IETF protocol assignments, see table comment above
 	['192.0.2.0', 24], // documentation (TEST-NET-1)
-	['192.168.0.0', 16], // RFC1918 private
-	['198.18.0.0', 15], // benchmarking
+	['192.168.0.0', 16], // NOSONAR javascript:S1313 - RFC1918 private, see table comment above
+	['198.18.0.0', 15], // NOSONAR javascript:S1313 - benchmarking, see table comment above
 	['198.51.100.0', 24], // documentation (TEST-NET-2)
 	['203.0.113.0', 24], // documentation (TEST-NET-3)
-	['224.0.0.0', 4], // multicast
-	['240.0.0.0', 4], // reserved
+	['224.0.0.0', 4], // NOSONAR javascript:S1313 - multicast, see table comment above
+	['240.0.0.0', 4], // NOSONAR javascript:S1313 - reserved, see table comment above
 ];
 
 function ipv4ToInt(ip) {
@@ -134,7 +138,7 @@ export function isPrivateOrReservedIpv6(ip) {
 	}
 
 	const firstGroup = clean.startsWith('::') ? '0' : clean.split(':')[0];
-	const firstHextet = parseInt(firstGroup, 16);
+	const firstHextet = Number.parseInt(firstGroup, 16);
 	if (Number.isNaN(firstHextet)) {
 		return true; // fail closed
 	}
