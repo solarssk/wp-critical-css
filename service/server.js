@@ -218,6 +218,16 @@ async function generateAndSubmit(url) {
  * level) - the same mitigation already documented for the stylesheet-href
  * vector's own residual gap.
  */
+/**
+ * --no-sandbox/--disable-setuid-sandbox mean Chrome's own internal sandbox
+ * never runs - deliberately not the elevated-capability alternative
+ * (cap_add: SYS_ADMIN in the container, so Chrome's real sandbox can use
+ * user namespaces) since that combination didn't come up clean in testing
+ * under this project's read_only/tmpfs container setup. Because Chrome's
+ * sandbox is off, docker-compose.example.yml does NOT grant SYS_ADMIN - it
+ * would do nothing for Chrome specifically. Change either side only
+ * together with the other, and re-verify with a real render.
+ */
 const PUPPETEER_LAUNCH_ARGS = ['--disable-setuid-sandbox', '--no-sandbox', '--ignore-certificate-errors'];
 
 let cachedBrowserPromise = null;
