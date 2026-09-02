@@ -21,11 +21,11 @@
  * once - this is what keeps memory/CPU bounded on modest hardware.
  */
 
-import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import cron from 'node-cron';
 import { parseStringPromise } from 'xml2js';
 import { generate as generateCriticalCss } from 'critical';
+import { isValidSecret, isAllowedUrl, logSafe, extractUrlsFromUrlset } from './lib.js';
 
 const PORT = process.env.PORT || 3939;
 const SHARED_SECRET = process.env.SHARED_SECRET;
@@ -45,56 +45,11 @@ const VIEWPORTS = {
 	desktop: { width: 1280, height: 800 },
 };
 
-/**
- * Constant-time secret comparison - a plain !== leaks how many leading
- * bytes matched via response timing. Buffers of unequal length are
- * rejected via a dummy compare first so the early return doesn't itself
- * leak length information through timing.
- */
-function isValidSecret(provided) {
-	if (typeof provided !== 'string' || provided === '') {
-		return false;
-	}
-	const providedBuf = Buffer.from(provided);
-	const expectedBuf = Buffer.from(SHARED_SECRET);
-	if (providedBuf.length !== expectedBuf.length) {
-		timingSafeEqual(providedBuf, providedBuf);
-		return false;
-	}
-	return timingSafeEqual(providedBuf, expectedBuf);
-}
-
-/**
- * Only ever render your own site. Without this, a leaked SHARED_SECRET
- * would turn /generate into an open SSRF proxy - anyone with the secret
- * could make this container's headless browser fetch/render arbitrary
- * internal or external URLs (including cloud metadata endpoints).
- */
-function isAllowedUrl(url) {
-	try {
-		const parsed = new URL(url);
-		return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && parsed.hostname === ALLOWED_HOSTNAME;
-	} catch {
-		return false;
-	}
-}
-
 const queue = [];
 let processing = false;
 
-/**
- * `url` reaches every log call in this file straight from either the
- * sitemap sweep or the /generate request body - never render it into a
- * log line raw. JSON.stringify escapes control characters (newlines,
- * carriage returns, terminal escape sequences), which is what stops a
- * crafted value from forging fake log lines or corrupting a terminal.
- */
-function logSafe(url) {
-	return JSON.stringify(url);
-}
-
 function enqueue(url) {
-	if (!isAllowedUrl(url)) {
+	if (!isAllowedUrl(url, ALLOWED_HOSTNAME)) {
 		console.warn(`[critical-css] refusing to queue disallowed URL: ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
 		return;
 	}
@@ -195,13 +150,6 @@ async function fetchUrlsFromSitemap(sitemapUrl) {
 	return extractUrlsFromUrlset(parsed);
 }
 
-function extractUrlsFromUrlset(parsed) {
-	if (!parsed?.urlset?.url) {
-		return [];
-	}
-	return parsed.urlset.url.map((u) => u.loc[0]);
-}
-
 async function runSweep() {
 	console.log('[critical-css] sweep starting');
 	const urls = await fetchSitemapUrls();
@@ -222,12 +170,12 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/generate', (req, res) => {
-	if (!isValidSecret(req.get('X-WPCC-Secret'))) {
+	if (!isValidSecret(req.get('X-WPCC-Secret'), SHARED_SECRET)) {
 		return res.status(403).json({ error: 'forbidden' });
 	}
 
 	const { url } = req.body;
-	if (!url || !isAllowedUrl(url)) {
+	if (!url || !isAllowedUrl(url, ALLOWED_HOSTNAME)) {
 		return res.status(400).json({ error: `url is required and must be on ${ALLOWED_HOSTNAME}` });
 	}
 
@@ -236,7 +184,7 @@ app.post('/generate', (req, res) => {
 });
 
 app.post('/sweep', (req, res) => {
-	if (!isValidSecret(req.get('X-WPCC-Secret'))) {
+	if (!isValidSecret(req.get('X-WPCC-Secret'), SHARED_SECRET)) {
 		return res.status(403).json({ error: 'forbidden' });
 	}
 	runSweep().catch((err) => console.error('[critical-css] sweep failed:', err.message));

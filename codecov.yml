@@ -1,0 +1,22 @@
+# Coverage only for now - this is a plain Node.js service with no
+# bundler/JS build step (no webpack/vite/esbuild, just `node server.js`),
+# so Codecov's Bundle Analysis doesn't apply here. Test Analytics
+# (flaky-test detection, run-time trends) is wired separately via
+# codecov/test-results-action in .github/workflows/ci.yml and needs no
+# config here beyond the JUnit upload already set up there.
+
+coverage:
+  status:
+    project:
+      default:
+        # Relative to the base commit, not a fixed percentage: lib.js (the
+        # only unit-tested file) is already at 100%, while server.js's
+        # Express/Puppeteer wiring is exercised by the separate smoke
+        # tests in ci.yml instead, which don't produce lcov data - a fixed
+        # project-wide target would be measuring the wrong thing.
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: auto
+        threshold: 1%
