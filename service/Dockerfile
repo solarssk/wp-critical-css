@@ -75,7 +75,12 @@ EXPOSE 3939
 # restart-on-unhealthy, Swarm health-based rescheduling) tied to it -
 # including this image's own `restart: always` policy, which assumes
 # something external notices a hung/broken instance.
+#
+# Reads $PORT (falling back to 3939, server.js's own default) rather than
+# hardcoding the port - a deployment that overrides PORT in .env would
+# otherwise have server.js listening somewhere this check never checks,
+# permanently "unhealthy" despite working fine.
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-	CMD wget -qO- http://localhost:3939/health || exit 1
+	CMD wget -qO- "http://localhost:${PORT:-3939}/health" || exit 1
 
 CMD ["node", "server.js"]

@@ -28,7 +28,7 @@ services:
     env_file:
       - .env
     healthcheck: # the image now also ships this same check as its own HEALTHCHECK - kept here too since this stanza overrides it, and being explicit costs nothing
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3939/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT:-3939}/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
