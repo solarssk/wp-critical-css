@@ -6,6 +6,19 @@ FROM ghcr.io/puppeteer/puppeteer:25.9.0@sha256:5c341215d78353c3416b6c92aae9fac66
 USER root
 WORKDIR /app
 
+# The base image ships build-time tooling this service never needs at
+# runtime - a PostgreSQL client (we talk to no database), -dev packages
+# (compiler headers, meaningless once nothing here compiles anything),
+# and unzip (no code path here ever extracts an archive). Confirmed via
+# `apt-cache rdepends` that nothing else installed depends on any of
+# these (their reverse-dependency chains are each other, or -dev variants
+# of things this app doesn't build) - so purging them doesn't risk
+# breaking Chrome, unlike libexpat1 (kept: real reverse-dependents
+# include libfontconfig1/libgbm1, which Chrome's rendering does need).
+RUN apt-get purge -y --auto-remove \
+		libpq5 libpq-dev libexpat1-dev unzip \
+	&& rm -rf /var/lib/apt/lists/*
+
 COPY --chown=pptruser:pptruser package.json package-lock.json ./
 # --ignore-scripts blocks install-time scripts for every dependency
 # (including transitive ones we haven't individually audited) except the
