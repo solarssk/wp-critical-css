@@ -32,6 +32,7 @@ if ( ! defined( 'WPCC_GENERATOR_URL' ) ) {
 	// public internet, so TLS buys no real confidentiality/integrity gain
 	// here and only adds a certificate to manage for an internal hop.
 	define( 'WPCC_GENERATOR_URL', 'http://critical-css-service:3939/generate' ); // NOSONAR php:S5332 - internal Docker-network call by design, see comment above
+}
 
 add_action( 'save_post', 'wpcc_schedule_notify', 20, 3 );
 add_action( 'wpcc_dispatch_webhook', 'wpcc_send_webhook' );
