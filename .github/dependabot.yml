@@ -25,12 +25,3 @@ updates:
     directory: "/.github/semgrep"
     schedule:
       interval: "weekly"
-    ignore:
-      # setuptools>=82 dropped pkg_resources outright, which
-      # opentelemetry-instrumentation-requests (a transitive dependency of
-      # semgrep) still imports - breaks `semgrep scan` at startup, not just
-      # a lint finding. See the ceiling + comment in requirements.in for
-      # the verification behind this. Remove once that transitive
-      # dependency no longer needs pkg_resources, re-verified for real.
-      - dependency-name: "setuptools"
-        versions: [">=82"]
