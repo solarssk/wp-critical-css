@@ -54,6 +54,122 @@ if ( ! defined( 'WPCC_RECEIVER_RATE_WINDOW' ) ) {
 	define( 'WPCC_RECEIVER_RATE_WINDOW', 60 ); // seconds.
 }
 
+if ( ! function_exists( 'wpcc_strip_import_statements' ) ) {
+	/**
+	 * A minimal character-scanner, not a regex - two rounds of regex
+	 * boundary heuristics here (first "preceded by `;{}` or whitespace",
+	 * then still-broken because whitespace INSIDE a quoted string is also
+	 * whitespace) both got corrected by finding real CSS content they
+	 * corrupted, e.g. `content:"hello @import world"`. A regex fundamentally
+	 * cannot tell "inside an unclosed string" from "at the top level"
+	 * without tracking quote state character by character, so that's what
+	 * this does instead: `@import` is only ever treated as a real at-rule
+	 * when the scanner is NOT currently inside a single/double-quoted
+	 * string or a CSS comment, which is both the necessary and the
+	 * sufficient condition (no boundary-character guessing needed) - and
+	 * while consuming through to the import statement's own closing `;`,
+	 * the scanner keeps tracking quote state too, so a `;` inside the
+	 * import's own quoted URL doesn't end the strip early.
+	 *
+	 * @param string $css
+	 * @return string
+	 */
+	function wpcc_strip_import_statements( $css ) {
+		$css      = (string) $css;
+		$length   = strlen( $css );
+		$output   = '';
+		$i        = 0;
+		$in_string = null; // null, or the quote character currently open.
+		$in_comment = false;
+
+		while ( $i < $length ) {
+			$ch = $css[ $i ];
+
+			if ( $in_comment ) {
+				if ( '*' === $ch && isset( $css[ $i + 1 ] ) && '/' === $css[ $i + 1 ] ) {
+					$output    .= '*/';
+					$i         += 2;
+					$in_comment = false;
+					continue;
+				}
+				$output .= $ch;
+				++$i;
+				continue;
+			}
+
+			if ( null !== $in_string ) {
+				if ( '\\' === $ch && isset( $css[ $i + 1 ] ) ) {
+					$output .= $ch . $css[ $i + 1 ];
+					$i      += 2;
+					continue;
+				}
+				if ( $ch === $in_string ) {
+					$in_string = null;
+				}
+				$output .= $ch;
+				++$i;
+				continue;
+			}
+
+			if ( '/' === $ch && isset( $css[ $i + 1 ] ) && '*' === $css[ $i + 1 ] ) {
+				$output    .= '/*';
+				$i         += 2;
+				$in_comment = true;
+				continue;
+			}
+
+			if ( '"' === $ch || "'" === $ch ) {
+				$in_string = $ch;
+				$output   .= $ch;
+				++$i;
+				continue;
+			}
+
+			// Only reachable outside any string/comment - a genuine
+			// top-level position, so no separate boundary check is needed.
+			// The word-boundary-style check (next char isn't an identifier
+			// character) stops this from matching inside e.g. `@importantx`.
+			if ( '@' === $ch && 0 === strncasecmp( substr( $css, $i, 7 ), '@import', 7 ) ) {
+				$next_char = $css[ $i + 7 ] ?? '';
+				if ( '' === $next_char || ! preg_match( '/[a-zA-Z0-9_-]/', $next_char ) ) {
+					$j              = $i + 7;
+					$import_string  = null;
+					while ( $j < $length ) {
+						$c = $css[ $j ];
+						if ( null !== $import_string ) {
+							if ( '\\' === $c && isset( $css[ $j + 1 ] ) ) {
+								$j += 2;
+								continue;
+							}
+							if ( $c === $import_string ) {
+								$import_string = null;
+							}
+							++$j;
+							continue;
+						}
+						if ( '"' === $c || "'" === $c ) {
+							$import_string = $c;
+							++$j;
+							continue;
+						}
+						++$j;
+						if ( ';' === $c ) {
+							break;
+						}
+					}
+					$i = $j;
+					continue;
+				}
+			}
+
+			$output .= $ch;
+			++$i;
+		}
+
+		return $output;
+	}
+}
+
 if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
 	/**
 	 * Strips the sequences that let CSS-as-text reach further than it
@@ -65,7 +181,9 @@ if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
 	 * - `@import` - real critical/extracted CSS never legitimately needs
 	 *   it (it's a set of matched, already-resolved rules, not a stylesheet
 	 *   reference), so removing it costs nothing while closing off pulling
-	 *   in an attacker-controlled remote stylesheet.
+	 *   in an attacker-controlled remote stylesheet. See
+	 *   wpcc_strip_import_statements() for why this is a real scanner, not
+	 *   a regex.
 	 * Applied on both write (here) and read (inject.php) - two independent
 	 * layers, neither relies on the other.
 	 *
@@ -74,32 +192,26 @@ if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
 	 */
 	function wpcc_sanitize_css( $css ) {
 		$css = preg_replace( '#</\s*style#i', '', (string) $css );
-		// Only strips @import when it starts an actual statement
-		// (preceded by the start of the string, `;`, `{`, `}`, or
-		// whitespace) - a plain substring match would also corrupt
-		// `@import` appearing inside a legitimate string value, e.g.
-		// `.x::before{content:"@import now"}`, by consuming through to
-		// the next `;` regardless of what's actually between them.
-		return preg_replace( '/(^|[;{}\s])@import\b[^;]*;?/i', '$1', $css );
+		return wpcc_strip_import_statements( $css );
 	}
 }
 
-if ( ! function_exists( 'wpcc_receiver_rate_limited' ) ) {
+if ( ! function_exists( 'wpcc_receiver_fixed_window_limited' ) ) {
 	/**
-	 * A fixed-window counter keyed by caller IP, backed by WP's transient
-	 * API (options table if no external object cache is configured, the
-	 * real cache otherwise) - no new dependency, and correct at the
-	 * traffic volumes this route actually sees (at most one call per post
-	 * save, or one per WPCC_SWEEP_DELAY_MS-spaced sweep step from the
-	 * generator).
+	 * A fixed-window counter under an arbitrary transient key, backed by
+	 * WP's transient API (options table if no external object cache is
+	 * configured, the real cache otherwise) - no new dependency, and
+	 * correct at the traffic volumes this route actually sees (at most one
+	 * call per post save, or one per WPCC_SWEEP_DELAY_MS-spaced sweep step
+	 * from the generator).
 	 *
 	 * The window's own start time is stored IN the value
 	 * (`"<window_start>:<count>"`), and window expiry is computed here by
 	 * comparing that timestamp to time() - not left to the transient's own
 	 * TTL. set_transient() unconditionally resets its entry's expiry on
 	 * every write, so relying on that TTL to signal "window expired" would
-	 * mean any caller making a request more often than WPCC_RECEIVER_RATE_WINDOW
-	 * apart keeps pushing the window out indefinitely and the counter never
+	 * mean any caller making a request more often than the window apart
+	 * keeps pushing the window out indefinitely and the counter never
 	 * resets - on a real site (especially one backed by Redis/Memcached,
 	 * where this is most visible) that can eventually rate-limit the
 	 * generator's own legitimate sitemap-sweep deliveries once enough of
@@ -110,25 +222,20 @@ if ( ! function_exists( 'wpcc_receiver_rate_limited' ) ) {
 	 *
 	 * Known tradeoff, not fixed here: the get_transient()+set_transient()
 	 * pair below is a non-atomic read-modify-write, so concurrent requests
-	 * from the same IP can race and undercount by roughly the size of the
-	 * PHP worker pool handling them. This is a defense-in-depth control
-	 * behind the shared secret, not the primary security boundary, and a
-	 * correct fix needs a backend-specific atomic primitive (this route
-	 * has to work whether transients happen to be backed by the options
-	 * table or by a persistent object cache) - accepted rather than
-	 * papered over with a fix that would only be correct for one of those
-	 * two backends.
+	 * against the same key can race and undercount by roughly the size of
+	 * the PHP worker pool handling them. This is a defense-in-depth
+	 * control behind the shared secret, not the primary security boundary,
+	 * and a correct fix needs a backend-specific atomic primitive (this
+	 * route has to work whether transients happen to be backed by the
+	 * options table or by a persistent object cache) - accepted rather
+	 * than papered over with a fix that would only be correct for one of
+	 * those two backends.
 	 *
-	 * @return bool True if this caller is over the limit and should be
-	 *              rejected.
+	 * @param string $key   Transient key - callers own the namespacing.
+	 * @param int    $limit Max requests allowed within WPCC_RECEIVER_RATE_WINDOW.
+	 * @return bool True if this key is over the limit and should be rejected.
 	 */
-	function wpcc_receiver_rate_limited() { // NOSONAR php:S100 - WordPress Coding Standards mandate snake_case; matches every other function in this directory
-		// A transient key just needs to be short and collision-resistant
-		// enough for a coarse per-IP bucket, not cryptographically strong -
-		// sanitize_key() (strip to a-z0-9_-) is the WordPress-native way to
-		// get there without reaching for a hash function at all.
-		$ip  = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : 'unknown';
-		$key = 'wpcc_rl_' . sanitize_key( $ip );
+	function wpcc_receiver_fixed_window_limited( $key, $limit ) { // NOSONAR php:S100 - WordPress Coding Standards mandate snake_case; matches every other function in this directory
 		$now = time();
 
 		$state        = get_transient( $key );
@@ -146,12 +253,57 @@ if ( ! function_exists( 'wpcc_receiver_rate_limited' ) ) {
 			$count        = 0;
 		}
 
-		if ( $count >= WPCC_RECEIVER_RATE_LIMIT ) {
+		if ( $count >= $limit ) {
 			return true;
 		}
 
 		set_transient( $key, $window_start . ':' . ( $count + 1 ), WPCC_RECEIVER_RATE_WINDOW * 2 );
 		return false;
+	}
+}
+
+if ( ! function_exists( 'wpcc_receiver_auth_rate_limited' ) ) {
+	/**
+	 * Throttles repeated FAILED secret attempts, keyed by caller IP -
+	 * brute-force protection. Deliberately NOT applied to successful
+	 * (valid-secret) requests: this route sits behind a reverse proxy/CDN
+	 * on plenty of real deployments, and unless that layer restores the
+	 * true client IP into REMOTE_ADDR, every caller - including the
+	 * generator's own legitimate traffic - shares one apparent address.
+	 * Sharing a bucket between "public internet noise probing with wrong
+	 * secrets" and "the generator's own valid deliveries" would let that
+	 * noise 429 the generator's real work. Keyed only on failure, this
+	 * bucket now only ever contains actual brute-force attempts.
+	 *
+	 * @return bool True if this caller has failed the secret check too
+	 *              often recently and should be rejected outright.
+	 */
+	function wpcc_receiver_auth_rate_limited() { // NOSONAR php:S100 - see wpcc_receiver_fixed_window_limited() above
+		// A transient key just needs to be short and collision-resistant
+		// enough for a coarse per-IP bucket, not cryptographically strong -
+		// sanitize_key() (strip to a-z0-9_-) is the WordPress-native way to
+		// get there without reaching for a hash function at all.
+		$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : 'unknown';
+		return wpcc_receiver_fixed_window_limited( 'wpcc_rl_auth_' . sanitize_key( $ip ), WPCC_RECEIVER_RATE_LIMIT );
+	}
+}
+
+if ( ! function_exists( 'wpcc_receiver_write_rate_limited' ) ) {
+	/**
+	 * Bounds total write volume from a VALID secret - the DB-bloat-DoS
+	 * control. Deliberately a single global bucket, not per-IP: there is
+	 * exactly one valid WPCC_SHARED_SECRET for the whole site by design
+	 * (see wpcc-trigger.php/wp-config.php), so "per caller" was never the
+	 * right shape for this cap in the first place - a global counter maps
+	 * directly onto "how fast can the one valid secret be used to write",
+	 * and is immune to REMOTE_ADDR being proxy-shared/ambiguous, unlike a
+	 * per-IP cap would be.
+	 *
+	 * @return bool True if authenticated write volume is currently over
+	 *              the limit and this request should be rejected.
+	 */
+	function wpcc_receiver_write_rate_limited() { // NOSONAR php:S100 - see wpcc_receiver_fixed_window_limited() above
+		return wpcc_receiver_fixed_window_limited( 'wpcc_rl_write_global', WPCC_RECEIVER_RATE_LIMIT );
 	}
 }
 
@@ -176,17 +328,23 @@ function wpcc_receive( WP_REST_Request $request ) {
 		return new WP_REST_Response( array( 'error' => 'not configured' ), 503 );
 	}
 
-	// Checked before the secret comparison below so this also throttles
-	// brute-force attempts against the secret itself, not just abuse of an
-	// already-known one.
-	if ( wpcc_receiver_rate_limited() ) {
-		return new WP_REST_Response( array( 'error' => 'too many requests' ), 429 );
-	}
-
 	$provided_secret = $request->get_header( 'x_wpcc_secret' );
 
 	if ( ! $provided_secret || ! hash_equals( WPCC_SHARED_SECRET, $provided_secret ) ) {
+		// IP-keyed brute-force throttle - only ever counts actual failed
+		// attempts (see wpcc_receiver_auth_rate_limited()'s own doc comment
+		// for why this can't share a bucket with the write-volume cap
+		// below when the site sits behind a reverse proxy/CDN).
+		if ( wpcc_receiver_auth_rate_limited() ) {
+			return new WP_REST_Response( array( 'error' => 'too many requests' ), 429 );
+		}
 		return new WP_REST_Response( array( 'error' => 'forbidden' ), 403 );
+	}
+
+	// Reached only with a valid secret - global (not per-IP) write-volume
+	// cap, see wpcc_receiver_write_rate_limited()'s own doc comment.
+	if ( wpcc_receiver_write_rate_limited() ) {
+		return new WP_REST_Response( array( 'error' => 'too many requests' ), 429 );
 	}
 
 	$url             = esc_url_raw( (string) $request->get_param( 'url' ) );
