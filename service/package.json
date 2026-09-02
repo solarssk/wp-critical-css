@@ -1,0 +1,20 @@
+{
+  "name": "wp-critical-css",
+  "version": "1.0.0",
+  "description": "Self-hosted critical CSS generator for WordPress, using a real headless browser via the critical package.",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "critical": "^8.0.0",
+    "express": "^5.2.1",
+    "node-cron": "^4.6.0",
+    "xml2js": "^0.6.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
