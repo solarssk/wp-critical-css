@@ -41,7 +41,9 @@ if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
 	 */
 	function wpcc_sanitize_css( $css ) {
 		$css = preg_replace( '#</\s*style#i', '', (string) $css );
-		return preg_replace( '/@import\b[^;]*;?/i', '', $css );
+		// See wpcc-receiver.php's copy of this function for why the match
+		// requires a preceding statement boundary, not a plain substring.
+		return preg_replace( '/(^|[;{}\s])@import\b[^;]*;?/i', '$1', $css );
 	}
 }
 

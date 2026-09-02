@@ -74,18 +74,50 @@ if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
 	 */
 	function wpcc_sanitize_css( $css ) {
 		$css = preg_replace( '#</\s*style#i', '', (string) $css );
-		return preg_replace( '/@import\b[^;]*;?/i', '', $css );
+		// Only strips @import when it starts an actual statement
+		// (preceded by the start of the string, `;`, `{`, `}`, or
+		// whitespace) - a plain substring match would also corrupt
+		// `@import` appearing inside a legitimate string value, e.g.
+		// `.x::before{content:"@import now"}`, by consuming through to
+		// the next `;` regardless of what's actually between them.
+		return preg_replace( '/(^|[;{}\s])@import\b[^;]*;?/i', '$1', $css );
 	}
 }
 
 if ( ! function_exists( 'wpcc_receiver_rate_limited' ) ) {
 	/**
-	 * A simple sliding-window counter keyed by caller IP, backed by WP's
-	 * transient API (options table if no external object cache is
-	 * configured, the real cache otherwise) - no new dependency, and
-	 * correct at the traffic volumes this route actually sees (at most one
-	 * call per post save, or one per WPCC_SWEEP_DELAY_MS-spaced sweep step
-	 * from the generator).
+	 * A fixed-window counter keyed by caller IP, backed by WP's transient
+	 * API (options table if no external object cache is configured, the
+	 * real cache otherwise) - no new dependency, and correct at the
+	 * traffic volumes this route actually sees (at most one call per post
+	 * save, or one per WPCC_SWEEP_DELAY_MS-spaced sweep step from the
+	 * generator).
+	 *
+	 * The window's own start time is stored IN the value
+	 * (`"<window_start>:<count>"`), and window expiry is computed here by
+	 * comparing that timestamp to time() - not left to the transient's own
+	 * TTL. set_transient() unconditionally resets its entry's expiry on
+	 * every write, so relying on that TTL to signal "window expired" would
+	 * mean any caller making a request more often than WPCC_RECEIVER_RATE_WINDOW
+	 * apart keeps pushing the window out indefinitely and the counter never
+	 * resets - on a real site (especially one backed by Redis/Memcached,
+	 * where this is most visible) that can eventually rate-limit the
+	 * generator's own legitimate sitemap-sweep deliveries once enough of
+	 * them land inside one never-expiring window, silently leaving pages
+	 * without critical CSS. The transient's own TTL below is set generously
+	 * past the real window purely so WordPress eventually garbage-collects
+	 * the row - it no longer defines the window boundary itself.
+	 *
+	 * Known tradeoff, not fixed here: the get_transient()+set_transient()
+	 * pair below is a non-atomic read-modify-write, so concurrent requests
+	 * from the same IP can race and undercount by roughly the size of the
+	 * PHP worker pool handling them. This is a defense-in-depth control
+	 * behind the shared secret, not the primary security boundary, and a
+	 * correct fix needs a backend-specific atomic primitive (this route
+	 * has to work whether transients happen to be backed by the options
+	 * table or by a persistent object cache) - accepted rather than
+	 * papered over with a fix that would only be correct for one of those
+	 * two backends.
 	 *
 	 * @return bool True if this caller is over the limit and should be
 	 *              rejected.
@@ -97,19 +129,28 @@ if ( ! function_exists( 'wpcc_receiver_rate_limited' ) ) {
 		// get there without reaching for a hash function at all.
 		$ip  = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : 'unknown';
 		$key = 'wpcc_rl_' . sanitize_key( $ip );
+		$now = time();
 
-		$count = get_transient( $key );
+		$state        = get_transient( $key );
+		$window_start = 0;
+		$count        = 0;
 
-		if ( false === $count ) {
-			set_transient( $key, 1, WPCC_RECEIVER_RATE_WINDOW );
-			return false;
+		if ( is_string( $state ) && false !== strpos( $state, ':' ) ) {
+			list( $stored_start, $stored_count ) = explode( ':', $state, 2 );
+			$window_start = (int) $stored_start;
+			$count        = (int) $stored_count;
 		}
 
-		if ( (int) $count >= WPCC_RECEIVER_RATE_LIMIT ) {
+		if ( 0 === $window_start || ( $now - $window_start ) >= WPCC_RECEIVER_RATE_WINDOW ) {
+			$window_start = $now;
+			$count        = 0;
+		}
+
+		if ( $count >= WPCC_RECEIVER_RATE_LIMIT ) {
 			return true;
 		}
 
-		set_transient( $key, (int) $count + 1, WPCC_RECEIVER_RATE_WINDOW );
+		set_transient( $key, $window_start . ':' . ( $count + 1 ), WPCC_RECEIVER_RATE_WINDOW * 2 );
 		return false;
 	}
 }
