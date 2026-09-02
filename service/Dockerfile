@@ -7,16 +7,20 @@ USER root
 WORKDIR /app
 
 # The base image ships build-time tooling this service never needs at
-# runtime - a PostgreSQL client (we talk to no database), -dev packages
-# (compiler headers, meaningless once nothing here compiles anything),
-# and unzip (no code path here ever extracts an archive). Confirmed via
-# `apt-cache rdepends` that nothing else installed depends on any of
-# these (their reverse-dependency chains are each other, or -dev variants
-# of things this app doesn't build) - so purging them doesn't risk
-# breaking Chrome, unlike libexpat1 (kept: real reverse-dependents
-# include libfontconfig1/libgbm1, which Chrome's rendering does need).
+# runtime - a PostgreSQL client (we talk to no database), Subversion and
+# its whole dependency chain (no source-control tooling runs here),
+# -dev packages (compiler headers, meaningless once nothing here compiles
+# anything), and unzip (no code path here ever extracts an archive).
+# Confirmed via `apt-cache rdepends` that nothing else installed depends
+# on any of these (subversion has zero reverse-dependents of its own;
+# libsvn1/libserf-1-1/libaprutil1 only depend on each other or on
+# subversion; the rest are -dev variants of things this app doesn't
+# build) - so purging them doesn't risk breaking Chrome, unlike libexpat1
+# (kept: real reverse-dependents include libfontconfig1/libgbm1, which
+# Chrome's rendering does need).
 RUN apt-get purge -y --auto-remove \
 		libpq5 libpq-dev libexpat1-dev unzip \
+		subversion libsvn1 libserf-1-1 libaprutil1 \
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY --chown=pptruser:pptruser package.json package-lock.json ./
