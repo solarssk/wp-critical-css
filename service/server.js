@@ -82,9 +82,20 @@ function isAllowedUrl(url) {
 const queue = [];
 let processing = false;
 
+/**
+ * `url` reaches every log call in this file straight from either the
+ * sitemap sweep or the /generate request body - never render it into a
+ * log line raw. JSON.stringify escapes control characters (newlines,
+ * carriage returns, terminal escape sequences), which is what stops a
+ * crafted value from forging fake log lines or corrupting a terminal.
+ */
+function logSafe(url) {
+	return JSON.stringify(url);
+}
+
 function enqueue(url) {
 	if (!isAllowedUrl(url)) {
-		console.warn(`[critical-css] refusing to queue disallowed URL: ${url}`);
+		console.warn(`[critical-css] refusing to queue disallowed URL: ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
 		return;
 	}
 	if (queue.includes(url)) {
@@ -104,14 +115,14 @@ async function processQueue() {
 		try {
 			await generateAndSubmit(url);
 		} catch (err) {
-			console.error(`[critical-css] failed for ${url}:`, err.message);
+			console.error(`[critical-css] failed for ${logSafe(url)}:`, err.message); // NOSONAR jssecurity:S5145 - see logSafe() above
 		}
 	}
 	processing = false;
 }
 
 async function generateAndSubmit(url) {
-	console.log(`[critical-css] generating for ${url}`);
+	console.log(`[critical-css] generating for ${logSafe(url)}`);
 
 	const [mobile, desktop] = await Promise.all([
 		generateForViewport(url, VIEWPORTS.mobile),
@@ -131,7 +142,7 @@ async function generateAndSubmit(url) {
 		throw new Error(`WordPress receiver returned ${res.status}: ${await res.text()}`);
 	}
 
-	console.log(`[critical-css] delivered for ${url}`);
+	console.log(`[critical-css] delivered for ${logSafe(url)}`);
 }
 
 async function generateForViewport(url, dimensions) {
@@ -199,6 +210,7 @@ async function runSweep() {
 }
 
 const app = express();
+app.disable('x-powered-by'); // don't advertise the framework/version to every caller
 app.use(express.json());
 
 app.get('/health', (req, res) => {

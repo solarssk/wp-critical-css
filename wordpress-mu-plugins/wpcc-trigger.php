@@ -26,8 +26,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 if ( ! defined( 'WPCC_GENERATOR_URL' ) ) {
 	// Point this at your critical-css-service container/host, e.g. the
 	// Docker network hostname if it's on the same internal network as
-	// WordPress, or a reachable internal URL otherwise.
-	define( 'WPCC_GENERATOR_URL', 'http://critical-css-service:3939/generate' );
+	// WordPress, or a reachable internal URL otherwise. Plain HTTP is
+	// intentional here, not an oversight: this call is meant to stay on
+	// an internal Docker network between two containers, never cross the
+	// public internet, so TLS buys no real confidentiality/integrity gain
+	// here and only adds a certificate to manage for an internal hop.
+	define( 'WPCC_GENERATOR_URL', 'http://critical-css-service:3939/generate' ); // NOSONAR php:S5332 - internal Docker-network call by design, see comment above
 }
 
 add_action( 'save_post', 'wpcc_schedule_notify', 20, 3 );

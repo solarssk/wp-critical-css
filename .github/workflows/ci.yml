@@ -28,7 +28,7 @@ jobs:
           cache-dependency-path: service/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Audit dependencies
         run: npm audit --audit-level=high
@@ -64,12 +64,42 @@ jobs:
 
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
-      - name: Build image (no push)
+      - name: Build image (no push, load for the smoke test below)
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: ./service
           file: ./service/Dockerfile
           push: false
+          load: true
           tags: wp-critical-css:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # A build that succeeds doesn't prove the image works - Puppeteer
+      # needs more than "Chrome is present somewhere in the filesystem"
+      # (its postinstall step registers the exact cache path its own
+      # runtime later reads from), so this actually launches Chrome and
+      # renders a real page, not just checks the HTTP server answers.
+      - name: Smoke test - real Puppeteer render
+        run: |
+          docker run --rm wp-critical-css:ci node --input-type=module -e "
+          import { generate } from 'critical';
+          const { css } = await generate({ src: 'https://example.com', inline: false, dimensions: [{ width: 412, height: 915 }], penthouse: { timeout: 30000 } });
+          if (!css || css.toString().length === 0) { throw new Error('generated empty CSS'); }
+          console.log('Puppeteer render OK,', css.toString().length, 'bytes of CSS');
+          "
+
+      - name: Smoke test - HTTP server responds
+        run: |
+          docker run -d --rm --name wpcc-smoke -p 3939:3939 \
+            -e SHARED_SECRET=ci-smoke-test \
+            -e WP_RECEIVER_URL=unused-in-this-smoke-test \
+            -e ALLOWED_HOSTNAME=example.com \
+            wp-critical-css:ci
+          for i in $(seq 1 10); do
+            echo "health check attempt $i"
+            if curl -sf http://localhost:3939/health; then break; fi
+            sleep 1
+          done
+          curl -sf http://localhost:3939/health | grep -q '"status":"ok"'
+          docker stop wpcc-smoke
