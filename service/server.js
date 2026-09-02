@@ -192,7 +192,7 @@ async function fetchUrlsFromSitemap(sitemapUrl) {
 }
 
 function extractUrlsFromUrlset(parsed) {
-	if (!parsed.urlset || !parsed.urlset.url) {
+	if (!parsed?.urlset?.url) {
 		return [];
 	}
 	return parsed.urlset.url.map((u) => u.loc[0]);
