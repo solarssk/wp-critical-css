@@ -31,8 +31,21 @@ jobs:
         id: resolve
         run: |
           REF="${{ inputs.ref || github.ref }}"
-          if [[ "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+          if [[ "$REF" =~ ^refs/tags/v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+            # version/major_minor computed explicitly here, from the
+            # resolved ref (which correctly reflects a manual
+            # workflow_dispatch ref override), unlike
+            # docker/metadata-action's own {{version}} pattern - that
+            # reads github.ref_name directly, which on a workflow_dispatch
+            # run is the dispatch branch (e.g. main), not the tag passed
+            # via the `ref` input. Without this, a manual re-publish of an
+            # existing tag would push :latest and a :sha tag but silently
+            # skip the version tags entirely.
+            {
+              echo "publish=true"
+              echo "version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+              echo "major_minor=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+            } >> "$GITHUB_OUTPUT"
           else
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
@@ -53,8 +66,8 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.resolve.outputs.version }}
+            type=raw,value=${{ steps.resolve.outputs.major_minor }}
             type=sha,format=short,prefix=
 
       # Build once, locally, and scan THAT image before it ever reaches the
