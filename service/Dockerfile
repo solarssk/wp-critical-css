@@ -6,9 +6,16 @@ FROM ghcr.io/puppeteer/puppeteer:25.9.0@sha256:5c341215d78353c3416b6c92aae9fac66
 USER root
 WORKDIR /app
 
-# The base image ships build-time tooling this service never needs at
-# runtime - a PostgreSQL client (we talk to no database), Subversion and
-# its whole dependency chain (no source-control tooling runs here),
+# `apt-get upgrade` pulls in whatever Debian security-bookworm has
+# published since the base image was built (e.g. libexpat1
+# 2.5.0-1+deb12u2 -> u3, ca-certificates -> 20250419~deb12u1 at the time
+# this was written) - Debian's stable-security backports are, by policy,
+# security-only patches with no API/behavior change, so this is the
+# standard, low-risk way to close a CVE against a package that's staying
+# installed (unlike the purges below, for packages leaving entirely).
+# Then: the base image ships build-time tooling this service never needs
+# at runtime - a PostgreSQL client (we talk to no database), Subversion
+# and its whole dependency chain (no source-control tooling runs here),
 # -dev packages (compiler headers, meaningless once nothing here compiles
 # anything), and unzip (no code path here ever extracts an archive).
 # Confirmed via `apt-cache rdepends` that nothing else installed depends
@@ -16,9 +23,11 @@ WORKDIR /app
 # libsvn1/libserf-1-1/libaprutil1 only depend on each other or on
 # subversion; the rest are -dev variants of things this app doesn't
 # build) - so purging them doesn't risk breaking Chrome, unlike libexpat1
-# (kept: real reverse-dependents include libfontconfig1/libgbm1, which
-# Chrome's rendering does need).
-RUN apt-get purge -y --auto-remove \
+# (kept, patched via the upgrade above instead: real reverse-dependents
+# include libfontconfig1/libgbm1, which Chrome's rendering does need).
+RUN apt-get update \
+	&& apt-get upgrade -y \
+	&& apt-get purge -y --auto-remove \
 		libpq5 libpq-dev libexpat1-dev unzip \
 		subversion libsvn1 libserf-1-1 libaprutil1 \
 	&& rm -rf /var/lib/apt/lists/*
