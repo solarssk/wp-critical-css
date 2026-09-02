@@ -35,7 +35,7 @@ WORKDIR /app
 # (kept, patched above instead: real reverse-dependents include
 # libfontconfig1/libgbm1, which Chrome's rendering does need).
 RUN apt-get update \
-	&& apt-get install -y --only-upgrade libexpat1 ca-certificates \
+	&& apt-get install -y --no-install-recommends --only-upgrade libexpat1 ca-certificates \
 	&& apt-get purge -y --auto-remove \
 		libpq5 libpq-dev libexpat1-dev unzip \
 		subversion libsvn1 libserf-1-1 libaprutil1 \
