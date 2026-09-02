@@ -143,11 +143,11 @@ function hexPairToDottedIpv4(highHex, lowHex) {
  * this prefix.
  */
 function embeddedIpv4Blocked(clean, prefix) {
-	const dotted = clean.match(new RegExp(`^${prefix}(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})$`));
+	const dotted = clean.match(new RegExp(String.raw`^${prefix}(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$`));
 	if (dotted) {
 		return isPrivateOrReservedIpv4(dotted[1]);
 	}
-	const hex = clean.match(new RegExp(`^${prefix}([0-9a-f]{1,4}):([0-9a-f]{1,4})$`));
+	const hex = clean.match(new RegExp(String.raw`^${prefix}([0-9a-f]{1,4}):([0-9a-f]{1,4})$`));
 	if (hex) {
 		return isPrivateOrReservedIpv4(hexPairToDottedIpv4(hex[1], hex[2]));
 	}
@@ -169,7 +169,7 @@ export function isPrivateOrReservedIpv6(ip) {
 	// RFC 6052 - what a real DNS64/NAT64 gateway uses so an IPv6-only host
 	// can still reach an IPv4 destination). Each check falls through to the
 	// next if the address doesn't match that prefix at all.
-	for (const prefix of ['::ffff:', '::', '64:ff9b::']) {
+	for (const prefix of ['::ffff:', '::', '64:ff9b::']) { // NOSONAR javascript:S1313 - hardcoding this well-known prefix (RFC 6052) is the whole point, same reasoning as BLOCKED_IPV4_CIDRS above
 		const result = embeddedIpv4Blocked(clean, prefix);
 		if (result !== null) {
 			return result;

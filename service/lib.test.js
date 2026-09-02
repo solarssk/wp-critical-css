@@ -127,6 +127,38 @@ describe('isPrivateOrReservedIpv4', () => {
 });
 
 describe('isPrivateOrReservedIpv6', () => {
+	// Every mechanism below embeds a plain IPv4 address after a fixed
+	// prefix - IPv4-*mapped* (::ffff:0:0/96), the deprecated IPv4-
+	// *compatible* form (::0:0/96, no "ffff:"), and the NAT64 well-known
+	// prefix (64:ff9b::/96, RFC 6052 - what a real DNS64/NAT64 gateway uses
+	// so an IPv6-only host can still reach IPv4, not hypothetical). WHATWG
+	// URL parsing (and Node's dns.lookup) canonicalizes the dotted-decimal
+	// form a human would write into two plain hex groups - e.g. `new
+	// URL('http://[::ffff:127.0.0.1]/').hostname` is `[::ffff:7f00:1]`,
+	// never the dotted form - so both forms need covering per mechanism.
+	// Generated from one shared table instead of hand-duplicating the same
+	// loopback/metadata/public triple three times (an earlier, hand-written
+	// version of exactly this block was a real SonarCloud duplication
+	// finding).
+	const EMBEDDED_IPV4_MECHANISMS = [
+		['IPv4-mapped', '::ffff:'],
+		['IPv4-compatible (deprecated)', '::'],
+		['NAT64-embedded', '64:ff9b::'],
+	];
+	const EMBEDDED_IPV4_ADDRESSES = [
+		['loopback', 'rejects', '7f00:1'],
+		['cloud metadata', 'rejects', 'a9fe:a9fe'],
+		['public', 'accepts', '808:808'],
+	];
+	const embeddedIpv4Cases = EMBEDDED_IPV4_MECHANISMS.flatMap(([mechName, prefix]) => [
+		...EMBEDDED_IPV4_ADDRESSES.map(([addrName, verb, hex]) => [
+			`${verb} ${mechName} ${addrName} address (canonical hex form)`,
+			`${prefix}${hex}`,
+			verb === 'rejects',
+		]),
+		[`rejects ${mechName} loopback address (dotted form)`, `${prefix}127.0.0.1`, true],
+	]);
+
 	const cases = [
 		['rejects loopback', '::1', true],
 		['rejects unspecified', '::', true],
@@ -139,35 +171,8 @@ describe('isPrivateOrReservedIpv6', () => {
 		['rejects the bottom of the unique-local range', 'fc00::1', true],
 		['accepts just below the unique-local range', 'fbff::1', false],
 		['strips a zone ID before classifying', 'fe80::1%eth0', true],
-		['rejects an IPv4-mapped loopback address (dotted-decimal form)', '::ffff:127.0.0.1', true],
-		['rejects an IPv4-mapped cloud metadata address (dotted-decimal form)', '::ffff:169.254.169.254', true],
-		['accepts an IPv4-mapped public address (dotted-decimal form)', '::ffff:8.8.8.8', false],
-		// The canonical form WHATWG URL parsing (and Node's dns.lookup)
-		// actually produces - `new URL('http://[::ffff:127.0.0.1]/').hostname`
-		// is `[::ffff:7f00:1]`, never the dotted-decimal form above. A guard
-		// that only recognized the dotted form left every one of these
-		// completely unclassified (real Codex-review finding).
-		['rejects an IPv4-mapped loopback address (canonical hex form)', '::ffff:7f00:1', true],
-		['rejects an IPv4-mapped cloud metadata address (canonical hex form)', '::ffff:a9fe:a9fe', true],
-		['rejects an IPv4-mapped RFC1918 address (canonical hex form)', '::ffff:c0a8:101', true],
-		['accepts an IPv4-mapped public address (canonical hex form)', '::ffff:808:808', false],
 		['strips a zone ID before classifying an IPv4-mapped hex-form address', '::ffff:7f00:1%eth0', true],
-		// Deprecated IPv4-*compatible* form (RFC 4291, no "ffff:" segment -
-		// distinct bit layout from the IPv4-*mapped* form above). WHATWG URL
-		// parsing canonicalizes e.g. `http://[::127.0.0.1]/` to this exact
-		// hex form, never the dotted one.
-		['rejects an IPv4-compatible loopback address (canonical hex form)', '::7f00:1', true],
-		['rejects an IPv4-compatible cloud metadata address (canonical hex form)', '::a9fe:a9fe', true],
-		['rejects an IPv4-compatible loopback address (dotted form)', '::127.0.0.1', true],
-		['accepts an IPv4-compatible public address (canonical hex form)', '::808:808', false],
-		// NAT64 well-known prefix (RFC 6052) - what a real DNS64/NAT64
-		// gateway uses so an IPv6-only host can still reach an IPv4
-		// destination; not hypothetical, used by real IPv6-only cloud node
-		// pools and carrier networks.
-		['rejects a NAT64-embedded loopback address (canonical hex form)', '64:ff9b::7f00:1', true],
-		['rejects a NAT64-embedded cloud metadata address (canonical hex form)', '64:ff9b::a9fe:a9fe', true],
-		['rejects a NAT64-embedded loopback address (dotted form)', '64:ff9b::127.0.0.1', true],
-		['accepts a NAT64-embedded public address (canonical hex form)', '64:ff9b::808:808', false],
+		...embeddedIpv4Cases,
 		['accepts a real public IPv6 address', '2606:4700:4700::1111', false],
 		['rejects garbage instead of throwing (fail closed)', 'not-an-ipv6-address', true],
 	];
