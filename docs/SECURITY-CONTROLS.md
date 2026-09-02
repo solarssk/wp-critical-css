@@ -26,6 +26,8 @@ sides, so it's treated like any other credential throughout.
 | Timing attack on the shared secret | Constant-time comparison on both sides - a plain `!==`/`==` leaks how many leading bytes matched via response timing | `isValidSecret()` (`crypto.timingSafeEqual`, `service/lib.js`) and `hash_equals()` (`wpcc-receiver.php`) |
 | Log injection / forged log lines | Any value that reaches a log line (URLs from the sitemap sweep or the `/generate` request body) is JSON-stringified first, escaping control characters, and always logged as a single template-literal argument (never a second `console.*` argument, which Node would otherwise treat as a printf-style format string - see CodeQL finding #885 below) | `logSafe()`, `service/lib.js` |
 | Secret committed to source control | The shared secret lives only in `.env` (generator, gitignored) and the `WPCC_SHARED_SECRET` constant in `wp-config.php` (never in a tracked mu-plugin file). Both sides fail closed - reject everything - if it's missing, instead of falling back to a value baked into source | `wpcc-trigger.php`, `wpcc-receiver.php` |
+| DB-bloat DoS via the receiver (leaked/brute-forced secret looping oversized writes) | Payload size cap (`WPCC_RECEIVER_MAX_CSS_BYTES`, 200 KB/field - a real render never produces more than tens of KB) and a per-IP sliding-window rate limit (`WPCC_RECEIVER_RATE_LIMIT`/`WPCC_RECEIVER_RATE_WINDOW`), checked *before* the secret comparison so it also throttles brute-forcing the secret itself | `wpcc-receiver.php` |
+| Receiver writing to posts outside its intended scope (attachments, drafts, other post types) via `url_to_postid()`'s numeric-ID fallback | Mirrors `wpcc-trigger.php`'s own whitelist: rejects unless the resolved post is type `post`/`page` and status `publish` | `wpcc-receiver.php` |
 | Framework/version fingerprinting | `X-Powered-By` header disabled | `app.disable('x-powered-by')`, `service/server.js` |
 | CVE in a dependency's install-time script | `npm ci --ignore-scripts` blocks every dependency's install script except one, run explicitly by name: puppeteer's own postinstall (needed - see the Dockerfile's own comment for why skipping it breaks Chrome discovery even with a copy already present) | `service/Dockerfile` |
 | CVE in the base image's unused OS packages | Purged at build time: PostgreSQL client, the Subversion toolchain, `-dev` packages, `unzip` - none of them used by this service, confirmed via `apt-cache rdepends` that nothing else installed depends on them. `libexpat1`/`ca-certificates` stay installed (real Chrome/TLS dependencies) but are explicitly upgraded to their patched versions instead | `service/Dockerfile` |
@@ -69,3 +71,12 @@ investigation behind each one.
 - **No authentication on `/health`.** Deliberately public - it carries no
   sensitive data (queue length, a boolean), and Docker/Portainer
   healthchecks need it reachable without a secret.
+- **`wpcc_sanitize_css()` strips `</style` and `@import`, but deliberately
+  leaves `url(...)` alone.** A compromised secret still lets an attacker
+  write arbitrary CSS-shaped text into a page (subject to those two
+  strips) - a `url(...)`-based exfiltration/tracking vector is real, but
+  real critical CSS legitimately contains `url(...)` for hero
+  background-images and `@font-face src`. Stripping it would break correct
+  output for the actual purpose of this tool on every real site, which is
+  a worse outcome than the narrow residual risk it would close for an
+  attacker who, by this point, already holds the shared secret.

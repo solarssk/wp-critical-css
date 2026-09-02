@@ -31,13 +31,17 @@ if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
 	/**
 	 * Same stripping applied in wpcc-receiver.php at write time - duplicated
 	 * here deliberately so this file is safe standing alone, not relying on
-	 * the receiver having already cleaned the stored value.
+	 * the receiver having already cleaned the stored value. `url(...)` is
+	 * deliberately left untouched: real critical CSS legitimately contains
+	 * it (hero background-images, @font-face src) - see
+	 * docs/SECURITY-CONTROLS.md for the reasoning.
 	 *
 	 * @param string $css
 	 * @return string
 	 */
 	function wpcc_sanitize_css( $css ) {
-		return preg_replace( '#</\s*style#i', '', (string) $css );
+		$css = preg_replace( '#</\s*style#i', '', (string) $css );
+		return preg_replace( '/@import\b[^;]*;?/i', '', $css );
 	}
 }
 
