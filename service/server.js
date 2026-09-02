@@ -26,7 +26,14 @@ import express from 'express';
 import cron from 'node-cron';
 import { parseStringPromise } from 'xml2js';
 import { generate as generateCriticalCss } from 'critical';
-import { isValidSecret, isAllowedUrl, logSafe, extractUrlsFromUrlset, isPrivateOrReservedAddress } from './lib.js';
+import {
+	isValidSecret,
+	isAllowedUrl,
+	logSafe,
+	extractUrlsFromUrlset,
+	isPrivateOrReservedAddress,
+	isBlockedLiteralAddress,
+} from './lib.js';
 
 const PORT = process.env.PORT || 3939;
 const SHARED_SECRET = process.env.SHARED_SECRET;
@@ -59,14 +66,33 @@ const VIEWPORTS = {
  * A per-URL hostname allowlist isn't the right tool here (a legitimate page
  * can reasonably reference a real third-party stylesheet, e.g. Google
  * Fonts) - what actually needs blocking is the destination address class,
- * not the specific host. This overrides the DNS resolution `got` uses to
- * open every one of those connections (including the top-level fetch) with
- * one that refuses to connect to a private/reserved address (RFC1918,
- * loopback, link-local/cloud-metadata, etc. - see isPrivateOrReservedAddress
- * in lib.js) - checked against the address actually being connected to, not
- * a separately-resolved one, so a DNS-rebinding attempt between check and
- * connect can't slip through either.
+ * not the specific host. Two layers close this, both wired into every
+ * request `got` makes (the top-level fetch, and every stylesheet href) via
+ * the `request` option in generateForViewport() below - including redirects,
+ * since got re-runs its whole request pipeline (hooks included) per hop, not
+ * just for the original URL:
+ *
+ * - ssrfSafeBeforeRequest() catches a LITERAL IP target (e.g. a `<link
+ *   href="http://169.254.169.254/...">`). This has to be checked here, not
+ *   only in the DNS hook below - Node's own http/net internals recognize an
+ *   already-literal IP and skip calling the configured DNS `lookup` function
+ *   entirely, confirmed directly against Node's connection handling (a
+ *   custom `lookup` is simply never invoked for a target that doesn't need
+ *   resolving) - so a DNS-hook-only guard leaves exactly the address-literal
+ *   case, the headline cloud-metadata scenario, completely open.
+ * - ssrfSafeDnsLookup() catches everything else: a real hostname that
+ *   resolves to a private/reserved address (RFC1918, loopback, link-local,
+ *   etc. - see isPrivateOrReservedAddress in lib.js), checked against the
+ *   address actually being connected to, not a separately-resolved one, so
+ *   a DNS-rebinding attempt between check and connect can't slip through.
  */
+function ssrfSafeBeforeRequest(options) {
+	const hostname = options.url.hostname;
+	if (isBlockedLiteralAddress(hostname)) {
+		throw new Error(`wpcc: refusing to connect to reserved/private address ${hostname}`);
+	}
+}
+
 function ssrfSafeDnsLookup(hostname, options, callback) {
 	if (typeof options === 'function') {
 		callback = options;
@@ -158,11 +184,18 @@ async function generateForViewport(url, dimensions) {
 			timeout: 60000,
 		},
 		request: {
-			// Closes the redirect-following vector as a first layer - the
-			// dnsLookup override above is what actually closes the direct
-			// (no-redirect-needed) SSRF vector, on every request `critical`
-			// makes internally, not just the top-level one.
-			followRedirect: false,
+			// Redirects are followed normally (got's default) - a real page
+			// or stylesheet legitimately 30x's sometimes (an http->https
+			// canonical redirect, a CDN asset redirect), and disabling that
+			// outright broke generation for those cases. Safe to leave on:
+			// got re-runs its whole request pipeline, hooks included, for
+			// each redirect hop (verified directly against got's own
+			// source - _makeRequest() is invoked again per hop, not
+			// skipped), so both checks below apply to every hop, not just
+			// the first request.
+			hooks: {
+				beforeRequest: [ssrfSafeBeforeRequest],
+			},
 			dnsLookup: ssrfSafeDnsLookup,
 		},
 	});
@@ -259,7 +292,12 @@ app.post('/sweep', (req, res) => {
 // traces to anyone running this image with that unset, e.g. a plain
 // `docker run` that doesn't carry it forward.
 app.use((err, req, res, _next) => {
-	console.error(`[critical-css] unhandled request error: ${err.message}`);
+	// A body-parser SyntaxError's message can include a raw excerpt of the
+	// attacker-controlled request body - this fires before the secret check
+	// in POST /generate even runs, so it's reachable unauthenticated.
+	// logSafe() here for the same reason every other log line in this file
+	// uses it: an unescaped value in a log line is a forged-log-line vector.
+	console.error(`[critical-css] unhandled request error: ${logSafe(err.message)}`);
 	res.status(err.status || err.statusCode || 500).json({ error: 'request could not be processed' });
 });
 

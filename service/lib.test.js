@@ -8,6 +8,7 @@ import {
 	isPrivateOrReservedIpv4,
 	isPrivateOrReservedIpv6,
 	isPrivateOrReservedAddress,
+	isBlockedLiteralAddress,
 } from './lib.js';
 
 describe('isValidSecret', () => {
@@ -164,6 +165,25 @@ describe('isPrivateOrReservedAddress', () => {
 	test('defaults to the IPv4 check when family is omitted', () => {
 		assert.equal(isPrivateOrReservedAddress('127.0.0.1'), true);
 	});
+});
+
+describe('isBlockedLiteralAddress', () => {
+	const cases = [
+		['blocks the cloud metadata address as a bare literal', '169.254.169.254', true],
+		['blocks a loopback literal', '127.0.0.1', true],
+		['blocks an RFC1918 literal', '192.168.1.1', true],
+		['accepts a public IPv4 literal', '8.8.8.8', false],
+		['blocks a bracketed IPv6 loopback literal (URL.hostname format)', '[::1]', true],
+		['accepts a public IPv6 literal', '[2606:4700:4700::1111]', false],
+		['does not treat a real hostname as blocked - nothing for this check to do', 'example.com', false],
+		['does not treat a lookalike hostname as an IP literal', '169.254.169.254.evil.example', false],
+	];
+
+	for (const [description, hostname, expected] of cases) {
+		test(description, () => {
+			assert.equal(isBlockedLiteralAddress(hostname), expected);
+		});
+	}
 });
 
 describe('logSafe', () => {

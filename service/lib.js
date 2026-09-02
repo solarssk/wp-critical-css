@@ -5,6 +5,7 @@
  */
 
 import { timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 
 /**
  * Constant-time secret comparison - a plain !== leaks how many leading
@@ -153,6 +154,30 @@ export function isPrivateOrReservedAddress(address, family) {
 		return isPrivateOrReservedIpv6(address);
 	}
 	return isPrivateOrReservedIpv4(address);
+}
+
+/**
+ * A DNS-resolution hook (like the one this backs, ssrfSafeDnsLookup() in
+ * server.js) is never consulted at all when the connection target is
+ * already a literal IP address - Node's own net/http internals special-case
+ * that and connect directly, skipping the configured `lookup` function
+ * entirely (verified directly against Node's connection handling, not
+ * assumed). So a page embedding e.g. `<link href="http://169.254.169.254/...">`
+ * would sail straight through a DNS-lookup-only guard. This has to be
+ * checked separately, before any connection is attempted at all - see
+ * ssrfSafeBeforeRequest() in server.js for where this is actually wired in.
+ *
+ * `hostname` is taken as-is from a URL's `.hostname` property, which wraps
+ * an IPv6 literal in brackets (e.g. "[::1]") - stripped here since
+ * net.isIP() doesn't recognize the bracketed form.
+ */
+export function isBlockedLiteralAddress(hostname) {
+	const clean = hostname.replace(/^\[/, '').replace(/\]$/, '');
+	const family = isIP(clean);
+	if (family === 0) {
+		return false; // not a literal IP at all - nothing for this check to do, it's a real hostname
+	}
+	return isPrivateOrReservedAddress(clean, family);
 }
 
 export function extractUrlsFromUrlset(parsed) {
