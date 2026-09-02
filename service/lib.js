@@ -147,7 +147,7 @@ function embeddedIpv4Blocked(clean, prefix) {
 	if (dotted) {
 		return isPrivateOrReservedIpv4(dotted[1]);
 	}
-	const hex = clean.match(new RegExp(String.raw`^${prefix}([0-9a-f]{1,4}):([0-9a-f]{1,4})$`));
+	const hex = clean.match(new RegExp(`^${prefix}([0-9a-f]{1,4}):([0-9a-f]{1,4})$`));
 	if (hex) {
 		return isPrivateOrReservedIpv4(hexPairToDottedIpv4(hex[1], hex[2]));
 	}
