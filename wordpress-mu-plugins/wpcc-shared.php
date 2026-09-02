@@ -1,4 +1,9 @@
 <?php
+// NOSONAR php:S105 - WordPress Coding Standards mandate tabs, not spaces,
+// for PHP indentation; every other file in this directory already uses
+// tabs consistently, and this rule (tagged "psr2" - PSR-2 recommends
+// 4-space indentation) directly conflicts with that. A file-level rule
+// with no anchor line, so this comment is placed here rather than per-line.
 /**
  * MU-Plugin: CSS sanitization shared by wpcc-receiver.php (write time) and
  * wpcc-inject.php (read time) - see the repo's README for the full
@@ -138,7 +143,7 @@ if ( ! function_exists( 'wpcc_strip_import_statements' ) ) {
 	 * @param string $css
 	 * @return string
 	 */
-	function wpcc_strip_import_statements( $css ) {
+	function wpcc_strip_import_statements( $css ) { // NOSONAR php:S100 - WordPress Coding Standards mandate snake_case; matches every other function in this directory
 		$css    = (string) $css;
 		$length = strlen( $css );
 		$output = '';
@@ -200,7 +205,7 @@ if ( ! function_exists( 'wpcc_sanitize_css' ) ) {
 	 * @param string $css
 	 * @return string
 	 */
-	function wpcc_sanitize_css( $css ) {
+	function wpcc_sanitize_css( $css ) { // NOSONAR php:S100 - see wpcc_css_string_end() above
 		$css = preg_replace( '#</\s*style#i', '', (string) $css );
 		return wpcc_strip_import_statements( $css );
 	}
