@@ -6,10 +6,11 @@ equivalent: a real headless browser renders each URL and extracts the
 above-the-fold CSS for mobile and desktop viewports, delivered back into
 WordPress and inlined per-post.
 
-Stack: Node 24 (via the official `ghcr.io/puppeteer/puppeteer:25.8.0`
-image), ESM throughout, [`critical@8.0.0`](https://www.npmjs.com/package/critical)
-(Puppeteer-based render engine via its `penthouse-esm` dependency),
-Express 5, node-cron 4.
+Stack: Node 24 (via the official `ghcr.io/puppeteer/puppeteer` image,
+pinned by digest in `service/Dockerfile` - check there for the exact
+version in use), ESM throughout,
+[`critical@8.0.0`](https://www.npmjs.com/package/critical) (Puppeteer-based
+render engine via its `penthouse-esm` dependency), Express 5, node-cron 4.
 
 ## Architecture
 
@@ -122,7 +123,7 @@ the vulnerability-reporting process and a control-to-workflow mapping
 table.
 
 To cut a release: tag `main` with a semver tag and push it -
-`git tag v1.0.0 && git push origin v1.0.0` - `publish-container.yml` does
+`git tag vX.Y.Z && git push origin vX.Y.Z` - `publish-container.yml` does
 the rest.
 
 ## Security notes
@@ -150,17 +151,28 @@ the rest.
   fetch/render internal-network or cloud-metadata URLs (e.g.
   `169.254.169.254`) from inside the container.
 
-## Known, investigated build warning
+## Why the Dockerfile runs `npm ci --ignore-scripts` then invokes puppeteer's install script by hand
 
-The Docker build logs `npm warn allow-scripts ... puppeteer@25.8.0
-(postinstall: node install.mjs) ... not yet covered by allowScripts` - a
-supply-chain-security gate (present in whatever npm version ships in the
-`ghcr.io/puppeteer/puppeteer` base image) blocking that postinstall script
-from running. Safe to ignore: `install.mjs`'s only job is
-`downloadBrowsers()` - check `PUPPETEER_CACHE_DIR` for a matching Chrome
-build, download only if missing. The base image already installs Chrome at
-exactly the version `npm install` resolves to, so even an unblocked run of
-this script is a no-op.
+Every dependency's install-time script is blocked (`--ignore-scripts`)
+except one, run explicitly right after: `node
+node_modules/puppeteer/install.mjs`. Two things were tried and rejected
+first, both confirmed by actually launching a page render, not just by a
+successful build:
+
+- **Blocking every script, including puppeteer's**: breaks Chrome
+  discovery at runtime. The base image ships its own copy of Chrome, but
+  puppeteer's runtime still needs its postinstall step to have registered
+  the browser at the cache path (`PUPPETEER_CACHE_DIR`) it looks in later
+  - skipping the script entirely, even with a working Chrome already
+    present, produces "Could not find Chrome".
+- **Letting every script run** (the original approach): works, but means
+  trusting the install-time script of every dependency in the tree
+  (including transitive ones never individually audited) - the whole
+  point of `--ignore-scripts` in the first place.
+
+Running only puppeteer's script by name gets the same working result as
+letting everything run, with every other dependency's install script
+blocked.
 
 ## Notes
 
