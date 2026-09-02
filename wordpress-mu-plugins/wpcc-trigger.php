@@ -3,8 +3,8 @@
  * MU-Plugin: Notify the self-hosted critical-CSS generator when a post is
  * published or updated.
  *
- * Part of a 3-file set (trigger / receiver / inject) replacing WP Rocket's
- * paid Remove Unused CSS with a self-hosted equivalent - see the repo's
+ * Part of a 4-file set (trigger / receiver / inject / shared) replacing WP
+ * Rocket's paid Remove Unused CSS with a self-hosted equivalent - see the repo's
  * README for the full architecture and the companion Node service that
  * actually renders pages and extracts CSS.
  *

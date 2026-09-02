@@ -22,10 +22,13 @@ sides, so it's treated like any other credential throughout.
 | Userinfo/host-confusion bypass (`https://user:pass@evil.com@example.com/`) | WHATWG `URL` parsing resolves the real host correctly (everything before the *last* `@` is userinfo) - covered by regression tests, not assumed | `service/lib.test.js` |
 | IP-literal / cloud-metadata target (e.g. `169.254.169.254`) | Hostname is compared as an exact string against `ALLOWED_HOSTNAME` - an IP literal never matches a DNS name | `isAllowedUrl()`, tested explicitly |
 | Non-HTTP(S) scheme (`file:`, `javascript:`, `data:`) | Protocol allowlist (`https:`/`http:` only) | `isAllowedUrl()` |
-| Stored XSS via the receiver endpoint | Any `</style` sequence is stripped before storage - `esc_html()` would be the wrong tool, since HTML-entity-encoding a stylesheet corrupts valid CSS the browser needs to parse. Applied on write (receiver) and again independently on read (inject) - two layers, neither trusts the other | `wpcc_sanitize_css()` in both `wpcc-receiver.php` and `wpcc-inject.php` |
+| Stored XSS via the receiver endpoint | Any `</style` sequence is stripped before storage - `esc_html()` would be the wrong tool, since HTML-entity-encoding a stylesheet corrupts valid CSS the browser needs to parse. Applied on write (receiver) and again independently on read (inject) - two independent call sites into the same function, neither trusts the other | `wpcc_sanitize_css()`, `wpcc-shared.php` |
 | Timing attack on the shared secret | Constant-time comparison on both sides - a plain `!==`/`==` leaks how many leading bytes matched via response timing | `isValidSecret()` (`crypto.timingSafeEqual`, `service/lib.js`) and `hash_equals()` (`wpcc-receiver.php`) |
 | Log injection / forged log lines | Any value that reaches a log line (URLs from the sitemap sweep or the `/generate` request body) is JSON-stringified first, escaping control characters, and always logged as a single template-literal argument (never a second `console.*` argument, which Node would otherwise treat as a printf-style format string - see CodeQL finding #885 below) | `logSafe()`, `service/lib.js` |
 | Secret committed to source control | The shared secret lives only in `.env` (generator, gitignored) and the `WPCC_SHARED_SECRET` constant in `wp-config.php` (never in a tracked mu-plugin file). Both sides fail closed - reject everything - if it's missing, instead of falling back to a value baked into source | `wpcc-trigger.php`, `wpcc-receiver.php` |
+| DB-bloat DoS via the receiver (a valid secret looping oversized writes) | Payload size cap (`WPCC_RECEIVER_MAX_CSS_BYTES`, 200 KB/field) plus a **global** (not per-IP) fixed-window write-volume cap (`WPCC_RECEIVER_RATE_LIMIT`/`WPCC_RECEIVER_RATE_WINDOW`) - global because there is exactly one valid `WPCC_SHARED_SECRET` for the whole site by design, so a global counter maps directly onto "how fast can the one valid secret be used to write" | `wpcc_receiver_write_rate_limited()`, `wpcc-receiver.php` |
+| Brute-forcing the shared secret | A **separate**, per-IP fixed-window throttle that only ever counts failed secret checks - kept apart from the write-volume cap above specifically so a site behind a reverse proxy/CDN that doesn't restore the true client IP (every caller, including the generator itself, then shares one apparent `REMOTE_ADDR`) can't have public noise probing with wrong secrets starve the generator's own legitimate deliveries by sharing a bucket with them | `wpcc_receiver_auth_rate_limited()`, `wpcc-receiver.php` |
+| Receiver writing to posts outside its intended scope (attachments, drafts, other post types) via `url_to_postid()`'s numeric-ID fallback | Mirrors `wpcc-trigger.php`'s own whitelist: rejects unless the resolved post is type `post`/`page` and status `publish` | `wpcc-receiver.php` |
 | Framework/version fingerprinting | `X-Powered-By` header disabled | `app.disable('x-powered-by')`, `service/server.js` |
 | CVE in a dependency's install-time script | `npm ci --ignore-scripts` blocks every dependency's install script except one, run explicitly by name: puppeteer's own postinstall (needed - see the Dockerfile's own comment for why skipping it breaks Chrome discovery even with a copy already present) | `service/Dockerfile` |
 | CVE in the base image's unused OS packages | Purged at build time: PostgreSQL client, the Subversion toolchain, `-dev` packages, `unzip` - none of them used by this service, confirmed via `apt-cache rdepends` that nothing else installed depends on them. `libexpat1`/`ca-certificates` stay installed (real Chrome/TLS dependencies) but are explicitly upgraded to their patched versions instead | `service/Dockerfile` |
@@ -69,3 +72,27 @@ investigation behind each one.
 - **No authentication on `/health`.** Deliberately public - it carries no
   sensitive data (queue length, a boolean), and Docker/Portainer
   healthchecks need it reachable without a secret.
+- **`wpcc_sanitize_css()` strips `</style` and real `@import` at-rules
+  (via a character-scanner, not a regex - see its own doc comment in
+  `wpcc-shared.php` for why), but deliberately leaves `url(...)` alone.**
+  A compromised secret still lets an attacker write arbitrary CSS-shaped
+  text into a page (subject to those two strips) - a `url(...)`-based
+  exfiltration/tracking vector is real, but real critical CSS legitimately
+  contains `url(...)` for hero background-images and `@font-face src`.
+  Stripping it would break correct output for the actual purpose of this
+  tool on every real site, which is a worse outcome than the narrow
+  residual risk it would close for an attacker who, by this point, already
+  holds the shared secret.
+- **The receiver's rate limiters aren't atomic.**
+  `wpcc_receiver_fixed_window_limited()` (the shared core both
+  `wpcc_receiver_auth_rate_limited()` and `wpcc_receiver_write_rate_limited()`
+  call) does a `get_transient()` + `set_transient()` read-modify-write,
+  which can race under concurrent requests against the same key and
+  undercount by roughly the size of the PHP worker pool handling them - a
+  real weakening under a genuinely parallel abuse attempt, not just
+  sequential rapid-fire. This is a defense-in-depth control behind the
+  shared secret, not the primary security boundary; a correct fix needs a
+  backend-specific atomic primitive, and this route has to work whether
+  transients happen to be backed by the options table or by a persistent
+  object cache (Redis/Memcached) - accepted rather than shipping a fix
+  that would only be correct for one of those two backends.
