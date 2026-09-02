@@ -70,10 +70,12 @@ export function extractUrlsFromUrlset(parsed) {
 	// repeated element in an array even for a single entry (explicitArray
 	// defaults to true) - but this function's own contract shouldn't
 	// silently break if that ever changes (a different parser config, or a
-	// future switch away from xml2js). `[].concat(...)` normalizes both
-	// `url` and each entry's `loc` to an array whether the source was
-	// already an array or a bare object/string, and a url entry missing
-	// `loc` entirely (a malformed sitemap) is skipped rather than thrown on.
-	const urls = [].concat(parsed.urlset.url);
-	return urls.map((u) => [].concat(u?.loc ?? [])[0]).filter((loc) => typeof loc === 'string');
+	// future switch away from xml2js). `[x].flat()` normalizes both `url`
+	// and each entry's `loc` to an array whether the source was already an
+	// array (flat() spreads it one level) or a bare object/string
+	// (flat() only unwraps array elements, so a non-array passes through
+	// as the array's one element) - a url entry missing `loc` entirely (a
+	// malformed sitemap) is skipped rather than thrown on.
+	const urls = [parsed.urlset.url].flat();
+	return urls.map((u) => [u?.loc ?? []].flat()[0]).filter((loc) => typeof loc === 'string');
 }
