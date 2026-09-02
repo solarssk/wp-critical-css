@@ -114,13 +114,17 @@ signed build provenance attached. See
 [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for the full CI/CD control
 list.
 
-A manual `workflow_dispatch` on a non-tag ref runs the same build+scan but
-never publishes - useful for checking a branch's CVE exposure, or for
-refreshing the Security tab after a Dockerfile fix lands on `main`. The
-workflow also runs on its own weekly schedule (re-scanning the actual
-published image, not a rebuild) - see
-[SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for why. Neither of those
-publishes either - only a version-tag push does.
+What actually publishes is the resolved ref matching a semver tag
+(`vX.Y.Z`), not the trigger type - a manual `workflow_dispatch` supplying
+an existing tag as its `ref` input republishes exactly like a fresh tag
+push would (careful with this: dispatching an *older* tag republishes
+`latest` back to it too). Dispatching a branch/SHA instead runs the same
+build+scan but never publishes - useful for checking a branch's CVE
+exposure, or for refreshing the Security tab after a Dockerfile fix lands
+on `main`. The workflow also runs on its own weekly schedule (re-scanning
+the actual published image, not a rebuild) - see
+[SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for why; that trigger never
+publishes either.
 
 ## Rollback
 
