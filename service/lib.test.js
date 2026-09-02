@@ -38,29 +38,34 @@ describe('isValidSecret', () => {
 describe('isAllowedUrl', () => {
 	const HOST = 'example.com';
 
-	test('accepts https on the allowed hostname', () => {
-		assert.equal(isAllowedUrl('https://example.com/some/page', HOST), true);
-	});
+	// Table-driven rather than one test() per case: the assertion body is
+	// otherwise identical across every one of these (only the url/expected
+	// values differ), which SonarCloud's duplication check correctly
+	// flagged as repeated code - looping over data removes the repetition
+	// at the source instead of just working around the metric. The two
+	// cases with real security narrative behind them (userinfo confusion,
+	// IP-literal/metadata) stay as standalone tests below so their
+	// reasoning has room to be written out, not squeezed into a table row.
+	const cases = [
+		['accepts https on the allowed hostname', 'https://example.com/some/page', true],
+		['accepts http on the allowed hostname', 'http://example.com/', true],
+		['accepts a mixed-case hostname (URL parsing lowercases it)', 'https://EXAMPLE.com/', true],
+		['accepts the allowed hostname with an explicit port', 'https://example.com:8443/', true],
+		['rejects a different hostname', 'https://evil.example.com/', false],
+		['rejects a lookalike domain', 'https://example.com.evil.com/', false],
+		['rejects the mirror case: a trusted-looking userinfo in front of the real evil host', 'https://example.com@evil.com/', false],
+		['rejects the file: protocol', 'file:///etc/passwd', false],
+		['rejects the ftp: protocol', 'ftp://example.com/', false],
+		['rejects the javascript: scheme', 'javascript:alert(1)', false],
+		['rejects the data: scheme', 'data:text/html,hi', false],
+		['rejects an unparseable URL instead of throwing', 'not a url', false],
+	];
 
-	test('accepts http on the allowed hostname', () => {
-		assert.equal(isAllowedUrl('http://example.com/', HOST), true);
-	});
-
-	test('accepts a mixed-case hostname (URL parsing lowercases it)', () => {
-		assert.equal(isAllowedUrl('https://EXAMPLE.com/', HOST), true);
-	});
-
-	test('accepts the allowed hostname with an explicit port', () => {
-		assert.equal(isAllowedUrl('https://example.com:8443/', HOST), true);
-	});
-
-	test('rejects a different hostname', () => {
-		assert.equal(isAllowedUrl('https://evil.example.com/', HOST), false);
-	});
-
-	test('rejects a lookalike domain', () => {
-		assert.equal(isAllowedUrl('https://example.com.evil.com/', HOST), false);
-	});
+	for (const [description, url, expected] of cases) {
+		test(description, () => {
+			assert.equal(isAllowedUrl(url, HOST), expected);
+		});
+	}
 
 	test('resolves the real host, not an evil.com embedded before the last @ (userinfo confusion)', () => {
 		// The classic SSRF-allowlist bypass this function exists to stop:
@@ -69,30 +74,12 @@ describe('isAllowedUrl', () => {
 		assert.equal(isAllowedUrl('https://user:pass@evil.com@example.com/', HOST), true);
 	});
 
-	test('rejects the mirror case: a trusted-looking userinfo in front of the real evil host', () => {
-		assert.equal(isAllowedUrl('https://example.com@evil.com/', HOST), false);
-	});
-
 	test('rejects IP-literal targets, including the cloud metadata address', () => {
 		// Named explicitly in this function's own doc comment as the threat
 		// it exists to stop - an IP literal never string-equals a DNS
 		// hostname, so this should never need special-casing to reject.
 		assert.equal(isAllowedUrl('http://169.254.169.254/', HOST), false);
 		assert.equal(isAllowedUrl('http://127.0.0.1/', HOST), false);
-	});
-
-	test('rejects a non-http(s) protocol', () => {
-		assert.equal(isAllowedUrl('file:///etc/passwd', HOST), false);
-		assert.equal(isAllowedUrl('ftp://example.com/', HOST), false);
-	});
-
-	test('rejects javascript: and data: schemes', () => {
-		assert.equal(isAllowedUrl('javascript:alert(1)', HOST), false);
-		assert.equal(isAllowedUrl('data:text/html,hi', HOST), false);
-	});
-
-	test('rejects an unparseable URL instead of throwing', () => {
-		assert.equal(isAllowedUrl('not a url', HOST), false);
 	});
 });
 
