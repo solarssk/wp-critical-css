@@ -14,6 +14,16 @@ COPY --chown=pptruser:pptruser package.json package-lock.json ./
 # again after this step. Nothing at runtime needs `npm`/`npx` - only
 # `node` - so remove them once install is done rather than ship a CVE
 # with no code path to it.
+#
+# --ignore-scripts was tried here and reverted: puppeteer's postinstall
+# doesn't just download Chrome if missing, it also registers/verifies the
+# browser at the exact cache path (~/.cache/puppeteer) its own runtime
+# later reads from - skipping it, even with Chrome already present from
+# the base image, breaks that lookup and Puppeteer can't find Chrome at
+# all (confirmed by actually launching a page render against the
+# --ignore-scripts build, not just assumed). See "Known, investigated
+# build warning" in the README for why the script itself is otherwise
+# safe to run. NOSONAR docker:S6505 - accepted, not overlooked.
 RUN npm ci --omit=dev \
 	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --chown=pptruser:pptruser server.js ./
