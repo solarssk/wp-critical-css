@@ -40,7 +40,7 @@ COPY --chown=pptruser:pptruser package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts \
 	&& node node_modules/puppeteer/install.mjs \
 	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-COPY --chown=pptruser:pptruser server.js ./
+COPY --chown=pptruser:pptruser server.js lib.js ./
 
 USER pptruser
 

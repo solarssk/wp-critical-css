@@ -36,6 +36,36 @@ jobs:
       - name: Syntax-check server.js
         run: node --check server.js
 
+      - name: Run tests
+        run: npm test
+
+      # No job-level env/if-gate on the secret: an earlier version set
+      # CODECOV_TOKEN as a job-level env var so the upload step below could
+      # be gated with `if: env.CODECOV_TOKEN != ''` - but a job-level env
+      # var is visible to EVERY step in the job, including "Run tests"
+      # above, which executes arbitrary JS (npm test -> node --test, which
+      # auto-discovers any *.test.js). Since this repo is public and that
+      # step runs on every same-repo PR/branch (not just forks), anyone
+      # with push access - or a compromised such account - could exfiltrate
+      # the token via a crafted test file, before merge, unblocked by
+      # branch protection (which only gates the merge button, not what the
+      # CI run itself executes). Passing the secret only here, in this
+      # step's own `with:`, means it's never materialized anywhere else.
+      # No `if:` guard is needed either: GitHub withholds repository
+      # secrets entirely from fork-triggered and Dependabot pull_request
+      # runs (a platform guarantee, not something this workflow has to
+      # implement), so `secrets.CODECOV_TOKEN` is simply empty there, and
+      # fail_ci_if_error's default (false, left unset here) means an empty
+      # token doesn't fail this required, enforce_admins-gated check
+      # either - it would if a Codecov service outage or misconfiguration
+      # struck on a same-repo run with a real token, which is exactly the
+      # scenario this job's status shouldn't hinge on.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: service/lcov.info
+
   php-lint:
     name: PHP syntax check (mu-plugins)
     runs-on: ubuntu-latest
