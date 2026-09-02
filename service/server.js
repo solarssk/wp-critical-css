@@ -246,7 +246,35 @@ async function isChromiumRequestTargetBlocked(url) {
 	}
 }
 
+const ssrfGuardedPages = new WeakSet();
+
 async function setupSsrfSafeRequestInterception(page) {
+	if (ssrfGuardedPages.has(page)) {
+		return;
+	}
+	ssrfGuardedPages.add(page);
+
+	// CDP's Fetch-domain request interception (below) never sees a WebSocket
+	// handshake at all - a structural limitation, not a bug in the handler
+	// below - verified directly: page.on('request') simply never fires for
+	// a page-side `new WebSocket(...)`, so without this a private-network
+	// WebSocket target is a completely unguarded connection. CDP's
+	// Network.setBlockedURLs was tried first and rejected: it does tear the
+	// connection down, but only after the TCP connection and the HTTP
+	// upgrade request have already reached the target - too late for SSRF
+	// purposes (confirmed: the target still received a full request).
+	// Overriding the constructor before any page script runs is what
+	// actually stops the connection from ever being attempted - confirmed
+	// with a real file:// navigation (matching what critical actually hands
+	// Puppeteer), not just page.setContent(), since only a real navigation
+	// exercises evaluateOnNewDocument()'s "runs before the page's own
+	// scripts" guarantee.
+	await page.evaluateOnNewDocument(() => {
+		window.WebSocket = function BlockedWebSocket() {
+			throw new Error('wpcc: WebSocket is disabled during critical CSS extraction');
+		};
+	});
+
 	await page.setRequestInterception(true);
 	page.on('request', async (request) => {
 		try {
@@ -293,10 +321,46 @@ async function getSsrfSafeBrowser() {
 			args: PUPPETEER_LAUNCH_ARGS,
 			ignoreHTTPSErrors: true,
 		})
-		.then((browser) => {
+		.then(async (browser) => {
 			browser.once('disconnected', () => {
 				cachedBrowserPromise = null;
 			});
+
+			// A freshly launched browser already has at least one open page
+			// (about:blank) before this code ever runs - penthouse's own
+			// page-reuse logic (getOpenBrowserPage() in
+			// penthouse-esm/src/browser.js) hands this exact pre-existing
+			// page out FIRST, before ever calling browser.newPage(), to
+			// whichever of a url's two concurrent viewport jobs asks for a
+			// page first. Confirmed directly: without this explicit pass,
+			// that job's entire render (every subresource, JS execution
+			// included, since blockJSRequests: false also means penthouse
+			// never sets up its own fallback interception either) proceeds
+			// with zero SSRF guarding of any kind - not degraded, none.
+			// 'targetcreated' below only fires for pages created AFTER the
+			// listener is attached, so it can't retroactively cover this
+			// one; it has to be handled explicitly, up front.
+			const existingPages = await browser.pages();
+			await Promise.all(existingPages.map((page) => setupSsrfSafeRequestInterception(page)));
+
+			// Backstop for any OTHER page-creation path this app doesn't
+			// explicitly drive - a page penthouse pulls from its own reuse
+			// pool later, a popup, anything not covered by the pass above or
+			// the newPage() override below. setupSsrfSafeRequestInterception()
+			// is idempotent (a WeakSet guard) specifically so this can safely
+			// overlap with that override - browser.newPage() itself also
+			// fires 'targetcreated', so a page created that way would
+			// otherwise get set up twice.
+			browser.on('targetcreated', async (target) => {
+				if (target.type() !== 'page') {
+					return;
+				}
+				const page = await target.page();
+				if (page) {
+					await setupSsrfSafeRequestInterception(page);
+				}
+			});
+
 			const originalNewPage = browser.newPage.bind(browser);
 			browser.newPage = async (...args) => {
 				const page = await originalNewPage(...args);

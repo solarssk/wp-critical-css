@@ -152,6 +152,22 @@ describe('isPrivateOrReservedIpv6', () => {
 		['rejects an IPv4-mapped RFC1918 address (canonical hex form)', '::ffff:c0a8:101', true],
 		['accepts an IPv4-mapped public address (canonical hex form)', '::ffff:808:808', false],
 		['strips a zone ID before classifying an IPv4-mapped hex-form address', '::ffff:7f00:1%eth0', true],
+		// Deprecated IPv4-*compatible* form (RFC 4291, no "ffff:" segment -
+		// distinct bit layout from the IPv4-*mapped* form above). WHATWG URL
+		// parsing canonicalizes e.g. `http://[::127.0.0.1]/` to this exact
+		// hex form, never the dotted one.
+		['rejects an IPv4-compatible loopback address (canonical hex form)', '::7f00:1', true],
+		['rejects an IPv4-compatible cloud metadata address (canonical hex form)', '::a9fe:a9fe', true],
+		['rejects an IPv4-compatible loopback address (dotted form)', '::127.0.0.1', true],
+		['accepts an IPv4-compatible public address (canonical hex form)', '::808:808', false],
+		// NAT64 well-known prefix (RFC 6052) - what a real DNS64/NAT64
+		// gateway uses so an IPv6-only host can still reach an IPv4
+		// destination; not hypothetical, used by real IPv6-only cloud node
+		// pools and carrier networks.
+		['rejects a NAT64-embedded loopback address (canonical hex form)', '64:ff9b::7f00:1', true],
+		['rejects a NAT64-embedded cloud metadata address (canonical hex form)', '64:ff9b::a9fe:a9fe', true],
+		['rejects a NAT64-embedded loopback address (dotted form)', '64:ff9b::127.0.0.1', true],
+		['accepts a NAT64-embedded public address (canonical hex form)', '64:ff9b::808:808', false],
 		['accepts a real public IPv6 address', '2606:4700:4700::1111', false],
 		['rejects garbage instead of throwing (fail closed)', 'not-an-ipv6-address', true],
 	];

@@ -126,6 +126,34 @@ export function isPrivateOrReservedIpv4(ip) {
  * single 16-bit hextet comparison can express exactly, so this avoids
  * needing full 128-bit arithmetic for a hand-rolled parser.
  */
+function hexPairToDottedIpv4(highHex, lowHex) {
+	const high = Number.parseInt(highHex, 16);
+	const low = Number.parseInt(lowHex, 16);
+	return [(high >> 8) & 0xff, high & 0xff, (low >> 8) & 0xff, low & 0xff].join('.');
+}
+
+/**
+ * Checks both forms an IPv6 address that embeds a plain IPv4 address after
+ * a fixed `prefix` can show up as: the human-authored dotted-decimal one
+ * (e.g. `::ffff:127.0.0.1`), and the canonical two-hex-group one WHATWG URL
+ * parsing (and Node's own dns.lookup) actually produces for the same
+ * address (e.g. `::ffff:7f00:1` - confirmed directly: `new
+ * URL('http://[::ffff:127.0.0.1]/').hostname` is `[::ffff:7f00:1]`, never
+ * the dotted form). Returns null if `clean` doesn't match either form for
+ * this prefix.
+ */
+function embeddedIpv4Blocked(clean, prefix) {
+	const dotted = clean.match(new RegExp(`^${prefix}(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})$`));
+	if (dotted) {
+		return isPrivateOrReservedIpv4(dotted[1]);
+	}
+	const hex = clean.match(new RegExp(`^${prefix}([0-9a-f]{1,4}):([0-9a-f]{1,4})$`));
+	if (hex) {
+		return isPrivateOrReservedIpv4(hexPairToDottedIpv4(hex[1], hex[2]));
+	}
+	return null;
+}
+
 export function isPrivateOrReservedIpv6(ip) {
 	const clean = ip.split('%')[0].toLowerCase(); // strip a zone ID (e.g. fe80::1%eth0) if present
 
@@ -133,28 +161,19 @@ export function isPrivateOrReservedIpv6(ip) {
 		return true; // loopback / unspecified
 	}
 
-	// IPv4-mapped addresses (::ffff:0:0/96) show up in two forms: the
-	// human-authored dotted-decimal one (::ffff:127.0.0.1), and the form
-	// WHATWG URL parsing (and Node's own dns.lookup on IPv4-mapped results)
-	// actually canonicalizes to - two plain hex groups, e.g. ::ffff:7f00:1
-	// for that same address (confirmed directly: `new
-	// URL('http://[::ffff:127.0.0.1]/').hostname` is `[::ffff:7f00:1]`, not
-	// the dotted form). Checking only the dotted form left every
-	// IPv4-mapped literal a caller writes in a URL completely unclassified
-	// by this function - it never even reached the fail-closed branches
-	// below, since ::ffff:7f00:1 has a first hextet of 0 (via the `::`
-	// prefix), matching neither reserved range checked further down.
-	const mappedDotted = clean.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-	if (mappedDotted) {
-		return isPrivateOrReservedIpv4(mappedDotted[1]);
-	}
-
-	const mappedHex = clean.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-	if (mappedHex) {
-		const high = Number.parseInt(mappedHex[1], 16);
-		const low = Number.parseInt(mappedHex[2], 16);
-		const dotted = [(high >> 8) & 0xff, high & 0xff, (low >> 8) & 0xff, low & 0xff].join('.');
-		return isPrivateOrReservedIpv4(dotted);
+	// Every one of these embeds a plain IPv4 address in the low 32 bits -
+	// checking only the IPv4-*mapped* form (::ffff:0:0/96) below left the
+	// others (real, standardized mechanisms, not obscure) completely
+	// unclassified: the deprecated IPv4-*compatible* form (::0:0/96, no
+	// "ffff:" - RFC 4291) and the NAT64 well-known prefix (64:ff9b::/96,
+	// RFC 6052 - what a real DNS64/NAT64 gateway uses so an IPv6-only host
+	// can still reach an IPv4 destination). Each check falls through to the
+	// next if the address doesn't match that prefix at all.
+	for (const prefix of ['::ffff:', '::', '64:ff9b::']) {
+		const result = embeddedIpv4Blocked(clean, prefix);
+		if (result !== null) {
+			return result;
+		}
 	}
 
 	const firstGroup = clean.startsWith('::') ? '0' : clean.split(':')[0];
@@ -195,6 +214,22 @@ export function isPrivateOrReservedAddress(address, family) {
  * `hostname` is taken as-is from a URL's `.hostname` property, which wraps
  * an IPv6 literal in brackets (e.g. "[::1]") - stripped here since
  * net.isIP() doesn't recognize the bracketed form.
+ *
+ * SAFETY PRECONDITION: this (and isPrivateOrReservedIpv4()'s own strict
+ * 4-octet dotted-decimal parsing underneath it) is only safe to call with a
+ * hostname that's already been through full WHATWG URL parsing, which is
+ * what canonicalizes every alternate IPv4 encoding a raw attacker-supplied
+ * string could use - decimal ("2130706433"), hex ("0x7f000001"), octal-style
+ * leading zeros ("0177.0.0.1"), per-octet hex, and shorthand forms - into
+ * plain dotted-decimal before this function ever sees it (verified
+ * directly: net.isIP() itself returns 0 - "not a literal IP" - for every one
+ * of those raw forms, so a caller passing one straight through, without
+ * routing it through `new URL(...).hostname` first, would silently fail
+ * open here rather than being caught). Every current call site (got's
+ * beforeRequest hook, isChromiumRequestTargetBlocked(), and Chromium's own
+ * request.url()) satisfies this already - a future call site built from a
+ * raw header or config value, without going through URL parsing first,
+ * would not.
  */
 export function isBlockedLiteralAddress(hostname) {
 	const clean = hostname.replace(/^\[/, '').replace(/\]$/, '');
