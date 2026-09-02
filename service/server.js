@@ -115,7 +115,11 @@ async function processQueue() {
 		try {
 			await generateAndSubmit(url);
 		} catch (err) {
-			console.error(`[critical-css] failed for ${logSafe(url)}:`, err.message); // NOSONAR jssecurity:S5145 - see logSafe() above
+			// A single template-literal argument, not `console.error(template, err.message)` -
+			// with two+ arguments Node's console treats the first as a printf-style format
+			// string, so a crafted url containing e.g. "%s" would consume err.message as its
+			// substitution value and garble the log line (CodeQL js/tainted-format-string).
+			console.error(`[critical-css] failed for ${logSafe(url)}: ${err.message}`); // NOSONAR jssecurity:S5145 - see logSafe() above
 		}
 	}
 	processing = false;
