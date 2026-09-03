@@ -46,7 +46,17 @@ jobs:
         id: resolve
         run: |
           REF="${{ inputs.ref || github.ref }}"
-          if [[ "$REF" =~ ^refs/tags/v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+          # Strips an optional "refs/tags/" prefix before matching - a real
+          # push event's github.ref is always the fully-qualified form, but
+          # workflow_dispatch's `ref` is a plain string field, not a ref
+          # picker, so an operator following this repo's own docs (which
+          # just say "supply an existing tag") could very plausibly type
+          # the bare tag (v0.2.1) instead - verified this is genuinely
+          # ambiguous by re-reading that wording, not assumed. Parameter
+          # expansion leaves REF untouched when the prefix isn't present,
+          # so this accepts both forms without a second branch.
+          BARE_REF="${REF#refs/tags/}"
+          if [[ "$BARE_REF" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
             # version/major_minor computed explicitly here, from the
             # resolved ref (which correctly reflects a manual
             # workflow_dispatch ref override), unlike
@@ -184,13 +194,21 @@ jobs:
 
       # Creates the GitHub Release if this is the first of this repo's
       # workflows to finish for the tag, or just attaches the SBOM if
-      # publish-plugin.yml's own zip-upload step (or a re-run of this
-      # workflow) already created it - gh release view/create/upload make
-      # this safe to run from both workflows on the same tag push without
-      # coordinating which one "owns" creating the release. --generate-notes
-      # produces a real PR-based changelog automatically so a release always
-      # exists even if nobody gets around to writing prose for it by hand -
-      # replace it with curated notes from CHANGELOG.md afterward if wanted.
+      # publish-plugin.yml's own zip-upload step already created it.
+      # --generate-notes produces a real PR-based changelog automatically
+      # so a release always exists even if nobody gets around to writing
+      # prose for it by hand - replace it with curated notes from
+      # CHANGELOG.md afterward if wanted.
+      #
+      # Tries create first and falls back to upload on failure, rather than
+      # checking `gh release view` beforehand - both this workflow and
+      # publish-plugin.yml run from the same tag push, so a genuine race is
+      # possible: both could see "no release yet" and both then call
+      # `gh release create`, and that command has no upsert option - the
+      # loser would otherwise exit here under `set -e` with its own asset
+      # never attached. Falling back to upload on any create failure (not
+      # just a pre-checked "already exists") handles that race without
+      # needing to tell the two workflows apart or add locking.
       - name: Create or update the GitHub Release with the SBOM
         if: steps.resolve.outputs.publish == 'true'
         env:
@@ -202,8 +220,9 @@ jobs:
           if [ "${{ steps.resolve.outputs.major }}" = "0" ]; then
             PRERELEASE_ARGS=(--prerelease)
           fi
-          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release upload "$TAG" sbom.cdx.json --repo "${{ github.repository }}" --clobber
+          if gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --generate-notes "${PRERELEASE_ARGS[@]}" -- sbom.cdx.json; then
+            echo "Created release $TAG with the SBOM attached."
           else
-            gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --generate-notes "${PRERELEASE_ARGS[@]}" -- sbom.cdx.json
+            echo "release create failed - assuming a concurrent run (publish-plugin.yml, or a retry of this workflow) won the race and already created $TAG; retrying as an upload instead."
+            gh release upload "$TAG" sbom.cdx.json --repo "${{ github.repository }}" --clobber
           fi

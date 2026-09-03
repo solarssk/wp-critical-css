@@ -37,11 +37,18 @@ All notable changes to this project are documented here. Format based on
   `:latest`, `:0.2`)
 - WordPress plugin: `wp-critical-css-0.2.1.zip`, attached to this
   release.
-- Migration from an mu-plugin install: deactivate isn't applicable (they
-  were never a "plugin" WordPress could deactivate) - just delete the
-  four old files from `wp-content/mu-plugins/` after installing and
-  activating the new plugin. `WPCC_SHARED_SECRET` in `wp-config.php` and
-  everything already stored in postmeta are unaffected.
+- Migration from an mu-plugin install: **delete the four old files from
+  `wp-content/mu-plugins/` first**, then install and activate the new
+  plugin - not the other way around. mu-plugins load before regular
+  plugins, so installing/activating the new plugin while the old files
+  are still present means both define the same functions; every one of
+  them is now guarded (`function_exists()`) so this can't actually
+  crash the site either way, but the old, unguarded code would win and
+  keep running until the old files are removed regardless. deactivate
+  isn't applicable to the old files themselves (they were never a
+  "plugin" WordPress could deactivate). `WPCC_SHARED_SECRET` in
+  `wp-config.php` and everything already stored in postmeta are
+  unaffected either way.
 
 ## [0.2.0] - 2026-09-02
 
