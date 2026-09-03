@@ -1,10 +1,10 @@
 <?php
 /**
- * MU-Plugin: REST endpoint that receives generated critical CSS from the
- * self-hosted critical-css-service and stores it per-post.
- *
- * Part of a 4-file set (trigger / receiver / inject / shared) - see the
- * repo's README for the full architecture.
+ * REST endpoint that receives generated critical CSS from the self-hosted
+ * critical-css-service and stores it per-post. Part of the WP Critical CSS
+ * plugin - loaded from the main wp-critical-css.php file, one of four
+ * includes (trigger / receiver / inject / shared) - see the repo's README
+ * for the full architecture.
  *
  * Stored per-post (not per-template) - useful if your page builder emits a
  * separate physical CSS file per post, since the critical subset then

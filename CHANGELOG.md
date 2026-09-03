@@ -3,6 +3,46 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] - 2026-09-03
+
+### Fixed
+
+- The homepage never got critical CSS generated for it - `url_to_postid()`
+  can't resolve the root URL to a post_id, whether the homepage is set to
+  a specific static page or shows the latest-posts index (front-page
+  routing goes through a separate WordPress mechanism entirely, not the
+  standard rewrite-rule-based lookup every other page uses). Every
+  sitemap sweep consistently failed on it while every other page
+  succeeded. Now stored and read separately from any specific post's
+  data, so it works either way.
+
+### Changed
+
+- **The WordPress side is now a normal, installable plugin, not
+  must-use.** Download `wp-critical-css-vX.Y.Z.zip` from a release and
+  install it through wp-admin (`Plugins` > `Add New Plugin` > `Upload
+  Plugin`) - no more copying files onto the server by hand. If you're
+  upgrading from an earlier version: remove the four old files from
+  `wp-content/mu-plugins/` and install the plugin instead. Nothing about
+  its behavior, stored data, or REST endpoint changed - only how it's
+  installed.
+- Both the container image and the plugin zip now get a real GitHub
+  Release automatically on every version tag (whichever publish workflow
+  finishes first creates it; the other attaches its own asset) - the
+  release itself previously had to be created by hand after tagging.
+
+### Deploy
+
+- Container image: `ghcr.io/solarssk/wp-critical-css:0.2.1` (rolling
+  `:latest`, `:0.2`)
+- WordPress plugin: `wp-critical-css-0.2.1.zip`, attached to this
+  release.
+- Migration from an mu-plugin install: deactivate isn't applicable (they
+  were never a "plugin" WordPress could deactivate) - just delete the
+  four old files from `wp-content/mu-plugins/` after installing and
+  activating the new plugin. `WPCC_SHARED_SECRET` in `wp-config.php` and
+  everything already stored in postmeta are unaffected.
+
 ## [0.2.0] - 2026-09-02
 
 A full security gap-review pass across the receiver, the generator

@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-    subgraph wp["WordPress (wp-content/mu-plugins/)"]
+    subgraph wp["WordPress (WP Critical CSS plugin)"]
         SP["save_post hook"] --> TR["wpcc-trigger.php"]
         RC["wpcc-receiver.php"]
         IJ["wpcc-inject.php"]
@@ -113,6 +113,6 @@ each.
 
 ## Rollback
 
-Remove the three mu-plugin files from `wp-content/mu-plugins/` and stop
-the container. Nothing else depends on this pipeline - stylesheets simply
-go back to loading render-blocking, exactly as before it existed.
+Deactivate (or delete) the plugin from `Plugins` in wp-admin and stop the
+container. Nothing else depends on this pipeline - stylesheets simply go
+back to loading render-blocking, exactly as before it existed.

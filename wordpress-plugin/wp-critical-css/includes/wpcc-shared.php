@@ -5,21 +5,21 @@
 // 4-space indentation) directly conflicts with that. A file-level rule
 // with no anchor line, so this comment is placed here rather than per-line.
 /**
- * MU-Plugin: CSS sanitization shared by wpcc-receiver.php (write time) and
- * wpcc-inject.php (read time) - see the repo's README for the full
- * architecture of the 4-file set (trigger / receiver / inject / shared).
+ * CSS sanitization shared by wpcc-receiver.php (write time) and
+ * wpcc-inject.php (read time). Part of the WP Critical CSS plugin - loaded
+ * from the main wp-critical-css.php file, one of four includes (trigger /
+ * receiver / inject / shared) - see the repo's README for the full
+ * architecture.
  *
  * Pulled into its own file, required explicitly by the other two, rather
- * than duplicated in each (the previous approach, kept for a "each file is
- * safe standing alone" property) - once this logic grew from a one-line
- * regex into a real character-scanner, duplicating it stopped being a
- * reasonable tradeoff: SonarCloud's duplication gate correctly flagged it,
- * and it's a genuine bug-drift risk in practice, not just a metric - a
- * fix applied to only one copy during development had to be caught and
- * re-applied to the other by hand. WordPress mu-plugins auto-loads every
- * top-level .php file in this directory, so this file also runs safely on
- * its own (it only ever defines functions, no side effects) in addition to
- * being require_once'd below.
+ * than duplicated in each - once this logic grew from a one-line regex
+ * into a real character-scanner, duplicating it stopped being a reasonable
+ * tradeoff: SonarCloud's duplication gate correctly flagged it, and it's a
+ * genuine bug-drift risk in practice, not just a metric - a fix applied to
+ * only one copy during development had to be caught and re-applied to the
+ * other by hand. Only ever defines functions, no side effects, so loading
+ * it more than once (both wpcc-receiver.php and wpcc-inject.php each
+ * require_once it themselves too) is harmless either way.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {

@@ -27,8 +27,11 @@ render engine via its `penthouse-esm` dependency), Express 5, node-cron 4.
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough.
 In short: configure `.env` and a matching `WPCC_SHARED_SECRET` in
 `wp-config.php`, run the container (published image, build-from-repo, or
-local build), then copy `wordpress-mu-plugins/*.php` into
-`wp-content/mu-plugins/`.
+local build), then install the **WP Critical CSS** plugin: download
+`wp-critical-css-vX.Y.Z.zip` from a
+[release](https://github.com/solarssk/wp-critical-css/releases), then in
+wp-admin go to `Plugins` > `Add New Plugin` > `Upload Plugin` and activate
+- no server file access needed.
 
 ## Files
 
@@ -39,13 +42,15 @@ local build), then copy `wordpress-mu-plugins/*.php` into
   file.
 - `docker-compose.example.yml` - the service block to add to your existing
   WordPress `docker-compose.yml`.
-- `wordpress-mu-plugins/` - drop these into `wp-content/mu-plugins/` on
-  your WordPress install: `wpcc-trigger.php`, `wpcc-receiver.php`,
-  `wpcc-inject.php`, `wpcc-shared.php`.
-- `.github/workflows/` - CI, CodeQL and Semgrep SAST, and the
-  scan-then-publish pipeline that builds and ships the image to GHCR. See
-  [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) for what each one
-  checks.
+- `wordpress-plugin/wp-critical-css/` - a normal, installable WordPress
+  plugin (`wp-critical-css.php` plus `includes/wpcc-trigger.php`,
+  `wpcc-receiver.php`, `wpcc-inject.php`, `wpcc-shared.php`) - install it
+  through wp-admin like any other plugin, not by copying files onto the
+  server by hand.
+- `.github/workflows/` - CI, CodeQL and Semgrep SAST, the scan-then-publish
+  pipeline that builds and ships the image to GHCR, and the one that builds
+  the plugin zip. See [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md)
+  for what each one checks.
 - `.github/dependabot.yml` - weekly update PRs for the npm dependencies,
   the Docker base image, and the pinned GitHub Actions themselves.
 

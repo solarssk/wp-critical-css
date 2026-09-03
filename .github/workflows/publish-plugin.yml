@@ -1,0 +1,97 @@
+name: Publish plugin
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Ref to build the plugin zip from (branch, tag, or SHA). Only a ref matching a semver tag actually publishes to the GitHub Release - anything else just builds the zip as a workflow artifact.'
+        required: false
+        default: refs/heads/main
+
+permissions:
+  contents: write
+
+jobs:
+  build-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Resolve version
+        id: resolve
+        run: |
+          REF="${{ inputs.ref || github.ref }}"
+          if [[ "$REF" =~ ^refs/tags/v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+            VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+            {
+              echo "publish=true"
+              echo "version=$VERSION"
+              echo "major=${BASH_REMATCH[1]}"
+              echo "tag=v$VERSION"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Catches the exact mistake Codex caught in service/package.json for
+      # the 0.2.0 release (tagged without bumping the version field first) -
+      # here it's a hard failure instead of a follow-up fix, since nothing
+      # downstream re-derives the plugin's displayed version from the tag.
+      - name: Verify plugin header version matches the tag
+        if: steps.resolve.outputs.publish == 'true'
+        run: |
+          HEADER_VERSION=$(grep -oP '^\s*\*\s*Version:\s*\K\S+' wordpress-plugin/wp-critical-css/wp-critical-css.php)
+          if [ "$HEADER_VERSION" != "${{ steps.resolve.outputs.version }}" ]; then
+            echo "::error::wp-critical-css.php's own Version header ($HEADER_VERSION) doesn't match the pushed tag (${{ steps.resolve.outputs.version }}) - bump the header before tagging."
+            exit 1
+          fi
+
+      # WordPress' own "upload a zip" installer (and the wp-admin plugin
+      # list after activation) expects exactly one top-level directory
+      # matching the plugin slug, not the files loose at the zip root -
+      # wordpress-plugin/wp-critical-css/ already has that shape, so this
+      # just zips it as-is without restructuring anything.
+      - name: Build plugin zip
+        run: |
+          cd wordpress-plugin
+          zip -r "wp-critical-css-${{ steps.resolve.outputs.version }}.zip" wp-critical-css/ -x '*.DS_Store'
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wp-critical-css-plugin
+          path: wordpress-plugin/wp-critical-css-*.zip
+          retention-days: 90
+
+      # Creates the GitHub Release if this is the first of this repo's
+      # workflows to finish for the tag, or just attaches the zip if
+      # publish-container.yml's own SBOM-upload step (or a re-run of this
+      # workflow) already created it - gh release view/create/upload make
+      # this safe to run from both workflows on the same tag push without
+      # coordinating which one "owns" creating the release. --generate-notes
+      # produces a real PR-based changelog automatically so a release always
+      # exists even if nobody gets around to writing prose for it by hand -
+      # replace it with curated notes from CHANGELOG.md afterward if wanted.
+      - name: Create or update the GitHub Release with the plugin zip
+        if: steps.resolve.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          ZIP="wordpress-plugin/wp-critical-css-${{ steps.resolve.outputs.version }}.zip"
+          PRERELEASE_ARGS=()
+          if [ "${{ steps.resolve.outputs.major }}" = "0" ]; then
+            PRERELEASE_ARGS=(--prerelease)
+          fi
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --generate-notes "${PRERELEASE_ARGS[@]}" -- "$ZIP"
+          fi

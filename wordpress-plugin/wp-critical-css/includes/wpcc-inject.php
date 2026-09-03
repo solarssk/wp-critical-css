@@ -1,8 +1,8 @@
 <?php
 /**
- * MU-Plugin: Inline stored critical CSS and defer the full stylesheets.
- *
- * Part of a 4-file set (trigger / receiver / inject / shared) - see the
+ * Inline stored critical CSS and defer the full stylesheets. Part of the
+ * WP Critical CSS plugin - loaded from the main wp-critical-css.php file,
+ * one of four includes (trigger / receiver / inject / shared) - see the
  * repo's README for the full architecture.
  *
  * Mobile and desktop critical CSS are both inlined, each wrapped in its own

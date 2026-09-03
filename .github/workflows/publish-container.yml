@@ -27,7 +27,7 @@ on:
         default: refs/heads/main
 
 permissions:
-  contents: read
+  contents: write
   packages: write
   security-events: write
   id-token: write
@@ -60,6 +60,8 @@ jobs:
               echo "publish=true"
               echo "version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
               echo "major_minor=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+              echo "major=${BASH_REMATCH[1]}"
+              echo "tag=v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
             } >> "$GITHUB_OUTPUT"
           else
             echo "publish=false" >> "$GITHUB_OUTPUT"
@@ -179,3 +181,29 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+      # Creates the GitHub Release if this is the first of this repo's
+      # workflows to finish for the tag, or just attaches the SBOM if
+      # publish-plugin.yml's own zip-upload step (or a re-run of this
+      # workflow) already created it - gh release view/create/upload make
+      # this safe to run from both workflows on the same tag push without
+      # coordinating which one "owns" creating the release. --generate-notes
+      # produces a real PR-based changelog automatically so a release always
+      # exists even if nobody gets around to writing prose for it by hand -
+      # replace it with curated notes from CHANGELOG.md afterward if wanted.
+      - name: Create or update the GitHub Release with the SBOM
+        if: steps.resolve.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          PRERELEASE_ARGS=()
+          if [ "${{ steps.resolve.outputs.major }}" = "0" ]; then
+            PRERELEASE_ARGS=(--prerelease)
+          fi
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" sbom.cdx.json --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --generate-notes "${PRERELEASE_ARGS[@]}" -- sbom.cdx.json
+          fi

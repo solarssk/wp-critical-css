@@ -1,12 +1,10 @@
 <?php
 /**
- * MU-Plugin: Notify the self-hosted critical-CSS generator when a post is
- * published or updated.
- *
- * Part of a 4-file set (trigger / receiver / inject / shared) replacing WP
- * Rocket's paid Remove Unused CSS with a self-hosted equivalent - see the repo's
- * README for the full architecture and the companion Node service that
- * actually renders pages and extracts CSS.
+ * Notify the self-hosted critical-CSS generator when a post is published
+ * or updated. Part of the WP Critical CSS plugin - loaded from the main
+ * wp-critical-css.php file, one of four includes (trigger / receiver /
+ * inject / shared) - see the repo's README for the full architecture and
+ * the companion Node service that actually renders pages and extracts CSS.
  *
  * Notifies the generator via WP-Cron, not directly from save_post, so
  * publishing is never slowed down by CSS generation - see the note in
@@ -15,7 +13,7 @@
  *
  * WPCC_SHARED_SECRET must be defined in wp-config.php (same convention as
  * AUTH_KEY/DB credentials - a real secret has no business living in a
- * tracked mu-plugin file). If it's missing, this plugin fails closed: no
+ * tracked plugin file). If it's missing, this plugin fails closed: no
  * webhook is sent, rather than silently falling back to a baked-in value.
  */
 
