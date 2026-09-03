@@ -48,6 +48,21 @@ jobs:
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Curated release notes/title live in .github/release-notes/, one pair of files per tag, written by hand as part of preparing the release (see docs/DEPLOYMENT.md) - matches the convention this repo's own admitto project uses. Failing here instead of silently falling back to --generate-notes keeps every release's notes and title actually curated rather than GitHub's raw PR-title changelog. Runs before the build/scan work below so a missing file fails fast.
+      - name: Verify release artifacts
+        if: steps.resolve.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          TITLE_FILE=".github/release-notes/${TAG}.title"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          for f in "$TITLE_FILE" "$NOTES_FILE"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::$f is missing or empty - add it before tagging $TAG (see docs/DEPLOYMENT.md's Releases section)."
+              exit 1
+            fi
+          done
+
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -150,7 +165,7 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-      # Creates the GitHub Release if this is the first of this repo's workflows to finish for the tag, or just attaches the SBOM if publish-plugin.yml's own zip-upload step already created it. --generate-notes produces a real PR-based changelog automatically so a release always exists even if nobody gets around to writing prose for it by hand - replace it with curated notes from CHANGELOG.md afterward if wanted.
+      # Creates the GitHub Release if this is the first of this repo's workflows to finish for the tag, or just attaches the SBOM if publish-plugin.yml's own zip-upload step already created it. Title and notes come from the curated .github/release-notes/ files verified above, not --generate-notes's raw PR-title changelog - --latest is explicit because GitHub only auto-assigns the "Latest" badge to the newest non-prerelease release, and this repo doesn't mark 0.x.x tags as pre-release (each one is a real, deployed release, not an unstable preview).
       #
       # Tries create first and falls back to upload on failure, rather than checking `gh release view` beforehand - both this workflow and publish-plugin.yml run from the same tag push, so a genuine race is possible: both could see "no release yet" and both then call `gh release create`, and that command has no upsert option - the loser would otherwise exit here under `set -e` with its own asset never attached. Falling back to upload on any create failure (not just a pre-checked "already exists") handles that race without needing to tell the two workflows apart or add locking.
       - name: Create or update the GitHub Release with the SBOM
@@ -160,8 +175,10 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.resolve.outputs.tag }}"
-          if gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --generate-notes -- sbom.cdx.json; then
-            echo "Created release $TAG with the SBOM attached."
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          DISPLAY_TITLE="$(bash scripts/release-display-title.sh "${{ steps.resolve.outputs.version }}")"
+          if gh release create "$TAG" --repo "${{ github.repository }}" --title "$DISPLAY_TITLE" --notes-file "$NOTES_FILE" --latest -- sbom.cdx.json; then
+            echo "Created release $TAG ($DISPLAY_TITLE) with the SBOM attached."
           else
             echo "release create failed - assuming a concurrent run (publish-plugin.yml, or a retry of this workflow) won the race and already created $TAG; retrying as an upload instead."
             gh release upload "$TAG" sbom.cdx.json --repo "${{ github.repository }}" --clobber

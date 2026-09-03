@@ -51,6 +51,21 @@ jobs:
             exit 1
           fi
 
+      # Curated release notes/title live in .github/release-notes/, one pair of files per tag, written by hand as part of preparing the release (see docs/DEPLOYMENT.md) - matches the convention this repo's own admitto project uses. Failing here instead of silently falling back to --generate-notes keeps every release's notes and title actually curated rather than GitHub's raw PR-title changelog.
+      - name: Verify release artifacts
+        if: steps.resolve.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          TITLE_FILE=".github/release-notes/${TAG}.title"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          for f in "$TITLE_FILE" "$NOTES_FILE"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::$f is missing or empty - add it before tagging $TAG (see docs/DEPLOYMENT.md's Releases section)."
+              exit 1
+            fi
+          done
+
       # WordPress' own "upload a zip" installer (and the wp-admin plugin list after activation) expects exactly one top-level directory matching the plugin slug, not the files loose at the zip root - wordpress-plugin/wp-critical-css/ already has that shape, so this just zips it as-is without restructuring anything.
       - name: Build plugin zip
         run: |
@@ -63,7 +78,7 @@ jobs:
           path: wordpress-plugin/wp-critical-css-*.zip
           retention-days: 90
 
-      # Creates the GitHub Release if this is the first of this repo's workflows to finish for the tag, or just attaches the zip if publish-container.yml's own SBOM-upload step already created it. --generate-notes produces a real PR-based changelog automatically so a release always exists even if nobody gets around to writing prose for it by hand - replace it with curated notes from CHANGELOG.md afterward if wanted.
+      # Creates the GitHub Release if this is the first of this repo's workflows to finish for the tag, or just attaches the zip if publish-container.yml's own SBOM-upload step already created it. Title and notes come from the curated .github/release-notes/ files verified above, not --generate-notes's raw PR-title changelog - --latest is explicit because GitHub only auto-assigns the "Latest" badge to the newest non-prerelease release, and this repo doesn't mark 0.x.x tags as pre-release (each one is a real, deployed release, not an unstable preview).
       #
       # Tries create first and falls back to upload on failure, rather than checking `gh release view` beforehand - both this workflow and publish-container.yml run from the same tag push, so a genuine race is possible: both could see "no release yet" and both then call `gh release create`, and that command has no upsert option - the loser would otherwise exit here under `set -e` with its own asset never attached. Falling back to upload on any create failure (not just a pre-checked "already exists") handles that race without needing to tell the two workflows apart or add locking.
       - name: Create or update the GitHub Release with the plugin zip
@@ -74,8 +89,10 @@ jobs:
           set -euo pipefail
           TAG="${{ steps.resolve.outputs.tag }}"
           ZIP="wordpress-plugin/wp-critical-css-${{ steps.resolve.outputs.version }}.zip"
-          if gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --generate-notes -- "$ZIP"; then
-            echo "Created release $TAG with the plugin zip attached."
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          DISPLAY_TITLE="$(bash scripts/release-display-title.sh "${{ steps.resolve.outputs.version }}")"
+          if gh release create "$TAG" --repo "${{ github.repository }}" --title "$DISPLAY_TITLE" --notes-file "$NOTES_FILE" --latest -- "$ZIP"; then
+            echo "Created release $TAG ($DISPLAY_TITLE) with the plugin zip attached."
           else
             echo "release create failed - assuming a concurrent run (publish-container.yml, or a retry of this workflow) won the race and already created $TAG; retrying as an upload instead."
             gh release upload "$TAG" "$ZIP" --repo "${{ github.repository }}" --clobber
