@@ -42,7 +42,6 @@ jobs:
               echo "publish=true"
               echo "version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
               echo "major_minor=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-              echo "major=${BASH_REMATCH[1]}"
               echo "tag=v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
             } >> "$GITHUB_OUTPUT"
           else
@@ -161,11 +160,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.resolve.outputs.tag }}"
-          PRERELEASE_ARGS=()
-          if [ "${{ steps.resolve.outputs.major }}" = "0" ]; then
-            PRERELEASE_ARGS=(--prerelease)
-          fi
-          if gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --generate-notes "${PRERELEASE_ARGS[@]}" -- sbom.cdx.json; then
+          if gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --generate-notes -- sbom.cdx.json; then
             echo "Created release $TAG with the SBOM attached."
           else
             echo "release create failed - assuming a concurrent run (publish-plugin.yml, or a retry of this workflow) won the race and already created $TAG; retrying as an upload instead."

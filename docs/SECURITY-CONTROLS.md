@@ -56,7 +56,7 @@ sides, so it's treated like any other credential throughout.
 | SBOM | every published image | `publish-container.yml` (CycloneDX via Trivy) |
 | Build provenance | every published image | `publish-container.yml` (`actions/attest-build-provenance`, signed) |
 | Plugin release tagged without bumping its own version | every version tag | `.github/workflows/publish-plugin.yml` - fails the build if `wp-critical-css.php`'s `Version:` header doesn't match the pushed tag, instead of silently shipping a mismatched zip |
-| GitHub Release creation | every version tag | either `publish-container.yml` or `publish-plugin.yml`, whichever finishes first (`gh release create ... --generate-notes`) - the other attaches its own asset (SBOM, or the plugin zip) to that same release; a `0.x.x` tag is marked pre-release automatically |
+| GitHub Release creation | every version tag | either `publish-container.yml` or `publish-plugin.yml`, whichever finishes first (`gh release create ... --generate-notes`) - the other attaches its own asset (SBOM, or the plugin zip) to that same release |
 | Dependency/base-image/action/Semgrep-toolchain updates | weekly | `.github/dependabot.yml` (npm, docker, github-actions, pip - the last one tracks Semgrep's own version, pinned in `.github/semgrep/requirements.txt` rather than inline in the workflow) |
 | Third-party action supply chain | every workflow | every `uses:` is pinned to a full commit SHA, never a mutable tag |
 
