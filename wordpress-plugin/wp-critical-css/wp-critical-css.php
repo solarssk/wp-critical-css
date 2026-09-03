@@ -1,9 +1,5 @@
 <?php
-// NOSONAR php:S105 - WordPress Coding Standards mandate tabs, not spaces,
-// for PHP indentation; every file under wordpress-plugin/ already uses
-// tabs consistently, and this rule (tagged "psr2" - PSR-2 recommends
-// 4-space indentation) directly conflicts with that. A file-level rule
-// with no anchor line, so this comment is placed here rather than per-line.
+// NOSONAR php:S105 - WordPress Coding Standards mandate tabs, not spaces, for PHP indentation; every file under wordpress-plugin/ already uses tabs consistently, and this rule (tagged "psr2" - PSR-2 recommends 4-space indentation) directly conflicts with that. A file-level rule with no anchor line, so this comment is placed here rather than per-line.
 /**
  * Plugin Name:       WP Critical CSS
  * Plugin URI:        https://github.com/solarssk/wp-critical-css
@@ -17,10 +13,7 @@
  * License URI:       https://opensource.org/licenses/MIT
  * Text Domain:       wp-critical-css
  *
- * This is the only file WordPress loads directly - everything else lives
- * under includes/ and is pulled in from here. See
- * https://github.com/solarssk/wp-critical-css for the full architecture,
- * deployment guide, and the companion service.
+ * This is the only file WordPress loads directly - everything else lives under includes/ and is pulled in from here. See https://github.com/solarssk/wp-critical-css for the full architecture, deployment guide, and the companion service.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -34,13 +27,7 @@ require_once __DIR__ . '/includes/wpcc-inject.php';
 
 if ( ! function_exists( 'wpcc_admin_notice_missing_secret' ) ) {
 	/**
-	 * The rest of this plugin already fails closed everywhere
-	 * WPCC_SHARED_SECRET matters (see wpcc-trigger.php/wpcc-receiver.php's
-	 * own doc comments) - this only adds a visible reason why nothing is
-	 * happening, instead of a silent no-op an admin has no way to notice
-	 * from the UI. Deliberately just a notice, not a hard admin_init
-	 * redirect/deactivation - a site mid-setup (constant not added yet)
-	 * shouldn't have this plugin fight the admin trying to configure it.
+	 * The rest of this plugin already fails closed everywhere WPCC_SHARED_SECRET matters (see wpcc-trigger.php/wpcc-receiver.php's own doc comments) - this only adds a visible reason why nothing is happening, instead of a silent no-op an admin has no way to notice from the UI. Deliberately just a notice, not a hard admin_init redirect/deactivation - a site mid-setup (constant not added yet) shouldn't have this plugin fight the admin trying to configure it.
 	 */
 	function wpcc_admin_notice_missing_secret() { // NOSONAR php:S100 - WordPress Coding Standards mandate snake_case; matches every other function in this plugin
 		if ( defined( 'WPCC_SHARED_SECRET' ) && '' !== WPCC_SHARED_SECRET ) {

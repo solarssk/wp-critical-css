@@ -5,19 +5,7 @@ on:
     tags:
       - 'v*.*.*'
   schedule:
-    # Weekly re-scan of the actual published image (ghcr.io/...:latest -
-    # what users actually pulled), offset from codeql.yml's (0 3) and
-    # semgrep.yml's (0 5) own schedules. Without this, a CVE disclosed in
-    # the pinned base image or its OS packages weeks after the last
-    # release tag stays invisible to this pipeline until someone manually
-    # dispatches it or cuts a new release - this is the only workflow that
-    # scans the actual container image. Deliberately NOT a rebuild from
-    # source on this trigger (see the "Build or pull image for scanning"
-    # step below) - a fresh `docker build` re-runs the Dockerfile's own
-    # `apt-get update && apt-get install --only-upgrade`, which would pull
-    # in today's patched OS packages regardless of what's actually baked
-    # into the image currently deployed, silently defeating the entire
-    # point of this weekly check.
+    # Weekly re-scan of the actual published image (ghcr.io/...:latest - what users actually pulled), offset from codeql.yml's (0 3) and semgrep.yml's (0 5) own schedules. Without this, a CVE disclosed in the pinned base image or its OS packages weeks after the last release tag stays invisible to this pipeline until someone manually dispatches it or cuts a new release - this is the only workflow that scans the actual container image. Deliberately NOT a rebuild from source on this trigger (see the "Build or pull image for scanning" step below) - a fresh `docker build` re-runs the Dockerfile's own `apt-get update && apt-get install --only-upgrade`, which would pull in today's patched OS packages regardless of what's actually baked into the image currently deployed, silently defeating the entire point of this weekly check.
     - cron: '0 4 * * 1'
   workflow_dispatch:
     inputs:
@@ -46,26 +34,10 @@ jobs:
         id: resolve
         run: |
           REF="${{ inputs.ref || github.ref }}"
-          # Strips an optional "refs/tags/" prefix before matching - a real
-          # push event's github.ref is always the fully-qualified form, but
-          # workflow_dispatch's `ref` is a plain string field, not a ref
-          # picker, so an operator following this repo's own docs (which
-          # just say "supply an existing tag") could very plausibly type
-          # the bare tag (v0.2.1) instead - verified this is genuinely
-          # ambiguous by re-reading that wording, not assumed. Parameter
-          # expansion leaves REF untouched when the prefix isn't present,
-          # so this accepts both forms without a second branch.
+          # Strips an optional "refs/tags/" prefix before matching - a real push event's github.ref is always the fully-qualified form, but workflow_dispatch's `ref` is a plain string field, not a ref picker, so an operator following this repo's own docs (which just say "supply an existing tag") could very plausibly type the bare tag (v0.2.1) instead - verified this is genuinely ambiguous by re-reading that wording, not assumed. Parameter expansion leaves REF untouched when the prefix isn't present, so this accepts both forms without a second branch.
           BARE_REF="${REF#refs/tags/}"
           if [[ "$BARE_REF" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
-            # version/major_minor computed explicitly here, from the
-            # resolved ref (which correctly reflects a manual
-            # workflow_dispatch ref override), unlike
-            # docker/metadata-action's own {{version}} pattern - that
-            # reads github.ref_name directly, which on a workflow_dispatch
-            # run is the dispatch branch (e.g. main), not the tag passed
-            # via the `ref` input. Without this, a manual re-publish of an
-            # existing tag would push :latest and a :sha tag but silently
-            # skip the version tags entirely.
+            # version/major_minor computed explicitly here, from the resolved ref (which correctly reflects a manual workflow_dispatch ref override), unlike docker/metadata-action's own {{version}} pattern - that reads github.ref_name directly, which on a workflow_dispatch run is the dispatch branch (e.g. main), not the tag passed via the `ref` input. Without this, a manual re-publish of an existing tag would push :latest and a :sha tag but silently skip the version tags entirely.
             {
               echo "publish=true"
               echo "version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
@@ -97,16 +69,9 @@ jobs:
             type=raw,value=${{ steps.resolve.outputs.major_minor }}
             type=sha,format=short,prefix=
 
-      # Build once, locally, and scan THAT image before it ever reaches the
-      # registry - the image is only pushed a second time, further down,
-      # if the CRITICAL-severity gate below passes. On a plain branch/SHA
-      # dispatch (publish=false) this is the only build that happens.
+      # Build once, locally, and scan THAT image before it ever reaches the registry - the image is only pushed a second time, further down, if the CRITICAL-severity gate below passes. On a plain branch/SHA dispatch (publish=false) this is the only build that happens.
       #
-      # NOT on a schedule trigger, deliberately: that run's whole purpose
-      # is to catch drift in what's already deployed, so it pulls and
-      # re-tags the actual published `:latest` image instead of building a
-      # fresh one from source - see the `schedule:` trigger's own comment
-      # above for why a rebuild here would silently defeat that.
+      # NOT on a schedule trigger, deliberately: that run's whole purpose is to catch drift in what's already deployed, so it pulls and re-tags the actual published `:latest` image instead of building a fresh one from source - see the `schedule:` trigger's own comment above for why a rebuild here would silently defeat that.
       - name: Build image for scanning
         if: github.event_name != 'schedule'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -131,11 +96,7 @@ jobs:
           image-ref: ghcr.io/${{ github.repository }}:ci-scan
           format: sarif
           output: trivy-results.sarif
-          # MEDIUM included here (unlike the CRITICAL-only gate further
-          # down) so it's at least visible on the Security tab, not just
-          # excluded from failing the build - previously CRITICAL,HIGH
-          # only, which meant a MEDIUM finding never appeared anywhere in
-          # this repo's CI at all, not even informationally.
+          # MEDIUM included here (unlike the CRITICAL-only gate further down) so it's at least visible on the Security tab, not just excluded from failing the build - previously CRITICAL,HIGH only, which meant a MEDIUM finding never appeared anywhere in this repo's CI at all, not even informationally.
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
 
@@ -159,9 +120,7 @@ jobs:
           path: sbom.cdx.json
           retention-days: 90
 
-      # Hard gate: fails the job (before any push) on fixable CRITICAL
-      # findings. ignore-unfixed avoids permanently red builds from
-      # unpatched base-image CVEs with no fix available yet.
+      # Hard gate: fails the job (before any push) on fixable CRITICAL findings. ignore-unfixed avoids permanently red builds from unpatched base-image CVEs with no fix available yet.
       - name: Trivy gate (fixable CRITICAL only)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -192,23 +151,9 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-      # Creates the GitHub Release if this is the first of this repo's
-      # workflows to finish for the tag, or just attaches the SBOM if
-      # publish-plugin.yml's own zip-upload step already created it.
-      # --generate-notes produces a real PR-based changelog automatically
-      # so a release always exists even if nobody gets around to writing
-      # prose for it by hand - replace it with curated notes from
-      # CHANGELOG.md afterward if wanted.
+      # Creates the GitHub Release if this is the first of this repo's workflows to finish for the tag, or just attaches the SBOM if publish-plugin.yml's own zip-upload step already created it. --generate-notes produces a real PR-based changelog automatically so a release always exists even if nobody gets around to writing prose for it by hand - replace it with curated notes from CHANGELOG.md afterward if wanted.
       #
-      # Tries create first and falls back to upload on failure, rather than
-      # checking `gh release view` beforehand - both this workflow and
-      # publish-plugin.yml run from the same tag push, so a genuine race is
-      # possible: both could see "no release yet" and both then call
-      # `gh release create`, and that command has no upsert option - the
-      # loser would otherwise exit here under `set -e` with its own asset
-      # never attached. Falling back to upload on any create failure (not
-      # just a pre-checked "already exists") handles that race without
-      # needing to tell the two workflows apart or add locking.
+      # Tries create first and falls back to upload on failure, rather than checking `gh release view` beforehand - both this workflow and publish-plugin.yml run from the same tag push, so a genuine race is possible: both could see "no release yet" and both then call `gh release create`, and that command has no upsert option - the loser would otherwise exit here under `set -e` with its own asset never attached. Falling back to upload on any create failure (not just a pre-checked "already exists") handles that race without needing to tell the two workflows apart or add locking.
       - name: Create or update the GitHub Release with the SBOM
         if: steps.resolve.outputs.publish == 'true'
         env:
