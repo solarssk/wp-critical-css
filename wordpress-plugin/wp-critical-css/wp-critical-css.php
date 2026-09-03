@@ -1,4 +1,9 @@
 <?php
+// NOSONAR php:S105 - WordPress Coding Standards mandate tabs, not spaces,
+// for PHP indentation; every file under wordpress-plugin/ already uses
+// tabs consistently, and this rule (tagged "psr2" - PSR-2 recommends
+// 4-space indentation) directly conflicts with that. A file-level rule
+// with no anchor line, so this comment is placed here rather than per-line.
 /**
  * Plugin Name:       WP Critical CSS
  * Plugin URI:        https://github.com/solarssk/wp-critical-css
@@ -37,7 +42,7 @@ if ( ! function_exists( 'wpcc_admin_notice_missing_secret' ) ) {
 	 * redirect/deactivation - a site mid-setup (constant not added yet)
 	 * shouldn't have this plugin fight the admin trying to configure it.
 	 */
-	function wpcc_admin_notice_missing_secret() {
+	function wpcc_admin_notice_missing_secret() { // NOSONAR php:S100 - WordPress Coding Standards mandate snake_case; matches every other function in this plugin
 		if ( defined( 'WPCC_SHARED_SECRET' ) && '' !== WPCC_SHARED_SECRET ) {
 			return;
 		}
