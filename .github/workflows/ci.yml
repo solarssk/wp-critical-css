@@ -79,21 +79,21 @@ jobs:
           files: service/junit.xml
 
   php-lint:
-    name: PHP syntax check (mu-plugins)
+    name: PHP syntax check (plugin)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Lint every mu-plugin file
+      - name: Lint every plugin file
         run: |
           set -euo pipefail
-          for f in wordpress-mu-plugins/*.php; do
+          while IFS= read -r -d '' f; do
             echo "::group::php -l $f"
             php -l "$f"
             echo "::endgroup::"
-          done
+          done < <(find wordpress-plugin -name '*.php' -print0)
 
   docker-build:
     name: Docker build smoke test

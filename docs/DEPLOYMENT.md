@@ -24,9 +24,7 @@ Never commit the real `.env` file.
 
 ## 2. Configure WordPress
 
-Add the same secret to `wp-config.php` - this is not optional. Both
-mu-plugins fail closed (do nothing) if the constant is missing, rather
-than falling back to a value baked into source:
+Add the same secret to `wp-config.php` - this is not optional. The plugin fails closed (does nothing) if the constant is missing, rather than falling back to a value baked into source - you'll see an admin notice about it once the plugin below is active.
 
 ```php
 define( 'WPCC_SHARED_SECRET', '<same value as SHARED_SECRET in .env>' );
@@ -63,14 +61,15 @@ curl -s http://localhost:3939/health
 
 Should return `{"status":"ok","queueLength":0,"processing":false}`.
 
-## 5. Install the mu-plugins
+## 5. Install the plugin
 
-Copy all four files from `wordpress-mu-plugins/` into your site's
-`wp-content/mu-plugins/` directory (including `wpcc-shared.php` - the
-other two `require_once` it, but WordPress's mu-plugins loader also picks
-up every top-level `.php` file in that directory on its own, so it needs
-to actually be present, not just referenced). Must-use plugins load
-automatically - no activation step, no plugins-page entry.
+This is a normal, installable WordPress plugin - no server file access needed:
+
+1. Download `wp-critical-css-vX.Y.Z.zip` from a [release](https://github.com/solarssk/wp-critical-css/releases).
+2. In wp-admin: `Plugins` > `Add New Plugin` > `Upload Plugin`, select the zip, `Install Now`.
+3. `Activate`.
+
+If `WPCC_SHARED_SECRET` isn't defined yet (step 2 above), an admin notice says so - it's harmless, the plugin just won't do anything until it's set.
 
 ## 6. Backfill existing content
 
@@ -106,28 +105,15 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-`.github/workflows/publish-container.yml` takes it from there: builds the
-image, scans it with Trivy (a full SARIF report goes to the Security tab,
-and a hard gate blocks the push on any fixable CRITICAL finding), then
-pushes to `ghcr.io/solarssk/wp-critical-css` with a CycloneDX SBOM and
-signed build provenance attached. See
-[SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for the full CI/CD control
-list.
+Two workflows take it from there, both triggered by the same tag push:
 
-What actually publishes is the resolved ref matching a semver tag
-(`vX.Y.Z`), not the trigger type - a manual `workflow_dispatch` supplying
-an existing tag as its `ref` input republishes exactly like a fresh tag
-push would (careful with this: dispatching an *older* tag republishes
-`latest` back to it too). Dispatching a branch/SHA instead runs the same
-build+scan but never publishes - useful for checking a branch's CVE
-exposure, or for refreshing the Security tab after a Dockerfile fix lands
-on `main`. The workflow also runs on its own weekly schedule (re-scanning
-the actual published image, not a rebuild) - see
-[SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for why; that trigger never
-publishes either.
+- `.github/workflows/publish-container.yml` builds the image, scans it with Trivy (a full SARIF report goes to the Security tab, and a hard gate blocks the push on any fixable CRITICAL finding), then pushes to `ghcr.io/solarssk/wp-critical-css` with signed build provenance attached.
+- `.github/workflows/publish-plugin.yml` verifies the plugin's own `Version:` header matches the tag (fails the build if you forgot to bump it), then zips `wordpress-plugin/wp-critical-css/`.
+
+Whichever of the two finishes first creates the GitHub Release for the tag (`gh release create ... --generate-notes`, so it always exists with at least a real PR-based changelog even if nobody writes prose for it); the other one just attaches its own asset (the SBOM, or the plugin zip) to that same release. A `0.x.x` tag is marked as a GitHub pre-release automatically. See [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for the full CI/CD control list.
+
+What actually publishes is the resolved ref matching a semver tag (`vX.Y.Z`), not the trigger type - a manual `workflow_dispatch` supplying an existing tag as its `ref` input republishes exactly like a fresh tag push would (careful with this: dispatching an *older* tag republishes `latest` back to it too). Dispatching a branch/SHA instead runs the same build+scan but never publishes - useful for checking a branch's CVE exposure, or for refreshing the Security tab after a Dockerfile fix lands on `main`. The workflow also runs on its own weekly schedule (re-scanning the actual published image, not a rebuild) - see [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for why; that trigger never publishes either.
 
 ## Rollback
 
-Remove the four mu-plugin files from `wp-content/mu-plugins/` and stop
-the container. Nothing else depends on this pipeline - stylesheets simply
-go back to loading render-blocking, exactly as before it existed.
+Deactivate (or delete) the plugin from `Plugins` in wp-admin and stop the container. Nothing else depends on this pipeline - stylesheets simply go back to loading render-blocking, exactly as before it existed.
