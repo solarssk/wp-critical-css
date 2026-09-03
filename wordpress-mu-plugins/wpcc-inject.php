@@ -32,13 +32,29 @@ if ( ! defined( 'WPCC_BREAKPOINT' ) ) {
 add_action( 'wp_head', 'wpcc_inline_critical_css', 1 );
 
 function wpcc_inline_critical_css() {
-	if ( is_admin() || ! is_singular() ) {
+	if ( is_admin() ) {
 		return;
 	}
 
-	$post_id = get_queried_object_id();
-	$mobile  = wpcc_sanitize_css( get_post_meta( $post_id, '_wpcc_critical_css_mobile', true ) );
-	$desktop = wpcc_sanitize_css( get_post_meta( $post_id, '_wpcc_critical_css_desktop', true ) );
+	// Checked before is_singular(): when the homepage is set to a
+	// specific static page (Settings > Reading > "A static page"),
+	// is_front_page() and is_singular() are BOTH true there - front-page
+	// handling has to win, since that's the only place
+	// wpcc_receiver_store_front_page_css() actually wrote this site's
+	// homepage CSS to (see wpcc-receiver.php - the homepage is never
+	// resolvable to a post_id there, whether it's a static page or the
+	// latest-posts index, so it was never stored under any post's meta in
+	// the first place).
+	if ( is_front_page() ) {
+		$mobile  = wpcc_sanitize_css( get_option( 'wpcc_front_page_css_mobile', '' ) );
+		$desktop = wpcc_sanitize_css( get_option( 'wpcc_front_page_css_desktop', '' ) );
+	} elseif ( is_singular() ) {
+		$post_id = get_queried_object_id();
+		$mobile  = wpcc_sanitize_css( get_post_meta( $post_id, '_wpcc_critical_css_mobile', true ) );
+		$desktop = wpcc_sanitize_css( get_post_meta( $post_id, '_wpcc_critical_css_desktop', true ) );
+	} else {
+		return;
+	}
 
 	if ( ! $mobile && ! $desktop ) {
 		return;

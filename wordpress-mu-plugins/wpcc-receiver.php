@@ -241,6 +241,33 @@ if ( ! function_exists( 'wpcc_receiver_store_css' ) ) {
 	}
 }
 
+if ( ! function_exists( 'wpcc_receiver_store_front_page_css' ) ) {
+	/**
+	 * The homepage isn't a post_id wpcc_receiver_store_css() can key on -
+	 * see the doc comment on the front-page check in wpcc_receive() for
+	 * why. Stored as options instead, mirroring WP Rocket's own approach
+	 * to the exact same generator-can't-resolve-the-homepage problem (its
+	 * critical-CSS feature writes a dedicated front_page.css file rather
+	 * than trying to attach the homepage's CSS to any particular post).
+	 * `autoload => false`: this is only ever read on the one front-page
+	 * request, not worth carrying into every request's autoloaded options
+	 * blob the way small, always-needed options are.
+	 *
+	 * @param string $css_mobile
+	 * @param string $css_desktop
+	 * @return void
+	 */
+	function wpcc_receiver_store_front_page_css( $css_mobile, $css_desktop ) { // NOSONAR php:S100 - see wpcc_receiver_auth_error() above
+		if ( '' !== $css_mobile ) {
+			update_option( 'wpcc_front_page_css_mobile', $css_mobile, false );
+		}
+		if ( '' !== $css_desktop ) {
+			update_option( 'wpcc_front_page_css_desktop', $css_desktop, false );
+		}
+		update_option( 'wpcc_front_page_css_generated_at', time(), false );
+	}
+}
+
 /**
  * @param WP_REST_Request $request
  * @return WP_REST_Response
@@ -276,9 +303,25 @@ function wpcc_receive( WP_REST_Request $request ) { // NOSONAR php:S1142 - each 
 		return new WP_REST_Response( array( 'error' => 'url and at least one of css_mobile/css_desktop are required' ), 400 );
 	}
 
-	// Only single posts/pages resolve here - archive pages (tags,
-	// categories, the homepage) can't be looked up this way and will
-	// always 404. Filter those out on the generator side (see the
+	// The homepage is never resolvable via url_to_postid() below, EVEN
+	// WHEN it's set to a specific static page (Settings > Reading > "A
+	// static page") - front-page routing goes through a separate
+	// mechanism (is_front_page()/page_on_front), not the standard
+	// rewrite-rule-based URL-to-post lookup every other single post/page
+	// uses. When the homepage instead shows the latest-posts index, there
+	// was never a single post_id to attach this to in the first place.
+	// Confirmed against WP Rocket's own critical-CSS generator, which
+	// hits the identical limitation and - rather than trying to force a
+	// post_id fit - stores the homepage's CSS entirely separately from
+	// any specific post (see wpcc_receiver_store_front_page_css() above).
+	if ( untrailingslashit( $url ) === untrailingslashit( home_url() ) ) {
+		wpcc_receiver_store_front_page_css( $css_mobile, $css_desktop );
+		return new WP_REST_Response( array( 'status' => 'stored', 'target' => 'front_page' ), 200 );
+	}
+
+	// Only single posts/pages resolve here otherwise - archive pages
+	// (tags, categories, author, date) can't be looked up this way and
+	// will always 404. Filter those out on the generator side (see the
 	// sitemap-sweep filtering in service/server.js) rather than trying to
 	// handle them here.
 	$post_id = url_to_postid( $url );
