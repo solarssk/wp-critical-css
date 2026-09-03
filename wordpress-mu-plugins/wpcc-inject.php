@@ -45,7 +45,17 @@ function wpcc_inline_critical_css() {
 	// resolvable to a post_id there, whether it's a static page or the
 	// latest-posts index, so it was never stored under any post's meta in
 	// the first place).
-	if ( is_front_page() ) {
+	//
+	// !is_paged() matters when the homepage shows the latest-posts index:
+	// is_front_page() stays true on its paginated pages too (/page/2/,
+	// /page/3/, ...), which carry different post excerpts/images in the
+	// loop - and therefore potentially different above-the-fold content -
+	// than page 1, the only one the generator ever actually rendered.
+	// Without this, those pages would get page-1's CSS inlined and their
+	// real stylesheets deferred based on it, same failure mode
+	// wpcc_defer_stylesheet() is written to avoid everywhere else: a
+	// safety net that doesn't actually match what's on the page.
+	if ( is_front_page() && ! is_paged() ) {
 		$mobile  = wpcc_sanitize_css( get_option( 'wpcc_front_page_css_mobile', '' ) );
 		$desktop = wpcc_sanitize_css( get_option( 'wpcc_front_page_css_desktop', '' ) );
 	} elseif ( is_singular() ) {
