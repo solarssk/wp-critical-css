@@ -9,8 +9,13 @@
  * for consistency with the rest of this suite.
  */
 
-// NOSONAR php:S101 - matches WP core's own test-suite naming (WP_UnitTestCase itself, and every core test class under tests/phpunit/tests/), underscored not PascalCase; consistent with this plugin's snake_case function-naming NOSONAR (php:S100) elsewhere.
-class WPCC_Shared_Css_Sanitizer_Test extends WP_UnitTestCase {
+class WPCCSharedCssSanitizerTest extends WP_UnitTestCase {
+
+	// Named instead of repeated inline (SonarCloud php:S1192) - only for the
+	// bare "fully sanitized" assertion value; every OTHER occurrence of this
+	// substring below is embedded in a longer, distinct fixture string
+	// (the un-sanitized input), not a real duplicate of this literal.
+	private const SANITIZED_CSS = 'body{color:red}';
 
 	public function test_strips_style_closing_tag_breakout() {
 		// The regex (`#</\s*style#i`) removes the "</style" token itself,
@@ -45,12 +50,12 @@ class WPCC_Shared_Css_Sanitizer_Test extends WP_UnitTestCase {
 
 	public function test_removes_real_import_statement() {
 		$css = '@import url(evil.css);body{color:red}';
-		$this->assertSame( 'body{color:red}', wpcc_sanitize_css( $css ) );
+		$this->assertSame( self::SANITIZED_CSS, wpcc_sanitize_css( $css ) );
 	}
 
 	public function test_removes_import_case_insensitively() {
 		$css = '@IMPORT "evil.css";body{color:red}';
-		$this->assertSame( 'body{color:red}', wpcc_sanitize_css( $css ) );
+		$this->assertSame( self::SANITIZED_CSS, wpcc_sanitize_css( $css ) );
 	}
 
 	public function test_does_not_strip_import_lookalike_word() {
@@ -103,7 +108,7 @@ class WPCC_Shared_Css_Sanitizer_Test extends WP_UnitTestCase {
 		// No trailing ';' at all - wpcc_css_import_statement_end() falls
 		// through to strlen($css), so the whole dangling statement is removed.
 		$css = 'body{color:red}@import "no-semicolon.css"';
-		$this->assertSame( 'body{color:red}', wpcc_sanitize_css( $css ) );
+		$this->assertSame( self::SANITIZED_CSS, wpcc_sanitize_css( $css ) );
 	}
 
 	public function test_combined_breakout_and_import_and_legit_content() {

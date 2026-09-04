@@ -188,3 +188,27 @@ jobs:
           done
           curl -sf http://localhost:3939/health | grep -q '"status":"ok"'
           docker stop wpcc-smoke
+
+  sonarcloud-scan:
+    name: SonarCloud scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # fetch-depth: 0 - SonarCloud's own new-code/blame analysis needs full
+      # git history, not just the tip commit a shallow clone would give it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # CI-based analysis (fed by SONAR_TOKEN below), replacing this
+      # project's previous Automatic Analysis mode - see sonar-project.properties'
+      # own comment for why: Automatic Analysis has no config surface for
+      # issue exclusions at all, which this project needs (php:S105 can't be
+      # fixed in code - WordPress Coding Standards mandate tabs for PHP).
+      # SonarCloud's GitHub App still posts the same "SonarCloud Code
+      # Analysis" PR check/status either way - only the analysis source
+      # changes, not the check branch protection already requires.
+      - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

@@ -7,7 +7,7 @@
  */
 
 // NOSONAR php:S101 - matches WP core's own test-suite naming (WP_UnitTestCase itself, and every core test class under tests/phpunit/tests/), underscored not PascalCase; consistent with this plugin's snake_case function-naming NOSONAR (php:S100) elsewhere.
-class WPCC_Inject_Test extends WP_UnitTestCase {
+class WPCCInjectTest extends WP_UnitTestCase {
 
 	public function set_up() {
 		parent::set_up();

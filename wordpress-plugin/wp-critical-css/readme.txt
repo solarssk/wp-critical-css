@@ -2,13 +2,13 @@
 Contributors: solarssk
 Tags: performance, critical-css, page-speed, core-web-vitals, self-hosted
 Requires at least: 6.0
-Tested up to: 6.9
+Tested up to: 7.1
 Requires PHP: 7.4
 Stable tag: 0.2.1
 License: MIT
 License URI: https://opensource.org/licenses/MIT
 
-Self-hosted critical CSS generator - inlines above-the-fold CSS per post/page and defers the rest, driven by a companion Node/Puppeteer service you run yourself.
+Self-hosted critical CSS generator: inlines above-the-fold CSS per post/page and defers the rest, via a companion Node/Puppeteer service.
 
 == Description ==
 

@@ -6,9 +6,14 @@
  * see MissingSecretTest.php for the "constant entirely absent" scenarios.
  */
 
-// NOSONAR php:S101 - matches WP core's own test-suite naming (WP_UnitTestCase itself, and every core test class under tests/phpunit/tests/), underscored not PascalCase; consistent with this plugin's snake_case function-naming NOSONAR (php:S100) elsewhere.
-class WPCC_Receiver_Test extends WP_UnitTestCase {
+class WPCCReceiverTest extends WP_UnitTestCase {
 	use WPCC_Configured_Secret;
+
+	// Named instead of repeated inline (SonarCloud php:S1192 - each literal
+	// below repeats 3+ times across this file).
+	private const TEST_REMOTE_ADDR    = '203.0.113.5';
+	private const CSS_MOBILE_FIXTURE  = 'body{color:red}';
+	private const CSS_DESKTOP_FIXTURE = 'body{color:blue}';
 
 	/** @var WP_REST_Server */
 	protected $server;
@@ -23,7 +28,7 @@ class WPCC_Receiver_Test extends WP_UnitTestCase {
 
 		// Deterministic REMOTE_ADDR so the auth rate limiter's per-IP
 		// transient key is stable and predictable across tests.
-		$_SERVER['REMOTE_ADDR'] = '203.0.113.5';
+		$_SERVER['REMOTE_ADDR'] = self::TEST_REMOTE_ADDR;
 	}
 
 	public function tear_down() {
@@ -84,7 +89,7 @@ class WPCC_Receiver_Test extends WP_UnitTestCase {
 			WPCC_SHARED_SECRET,
 			array(
 				'url'        => get_permalink( $post_id ),
-				'css_mobile' => 'body{color:red}',
+				'css_mobile' => self::CSS_MOBILE_FIXTURE,
 			)
 		);
 		$this->assertSame( 200, $response->get_status() );
@@ -94,7 +99,7 @@ class WPCC_Receiver_Test extends WP_UnitTestCase {
 		// Pre-seed the auth-failure bucket at the limit, as if 60 prior
 		// wrong-secret attempts from this IP already happened this window -
 		// exercises the boundary without 60 real dispatches.
-		set_transient( 'wpcc_rl_auth_' . sanitize_key( '203.0.113.5' ), time() . ':' . WPCC_RECEIVER_RATE_LIMIT, 120 );
+		set_transient( 'wpcc_rl_auth_' . sanitize_key( self::TEST_REMOTE_ADDR ), time() . ':' . WPCC_RECEIVER_RATE_LIMIT, 120 );
 
 		$response = $this->dispatch( 'still-wrong', array( 'url' => home_url( '/' ) ) );
 
@@ -105,7 +110,7 @@ class WPCC_Receiver_Test extends WP_UnitTestCase {
 	public function test_auth_rate_limit_does_not_apply_to_correct_secret() {
 		// The auth bucket is keyed only on FAILURE - a correct secret must
 		// never be throttled by it, even sitting right at the limit.
-		set_transient( 'wpcc_rl_auth_' . sanitize_key( '203.0.113.5' ), time() . ':' . WPCC_RECEIVER_RATE_LIMIT, 120 );
+		set_transient( 'wpcc_rl_auth_' . sanitize_key( self::TEST_REMOTE_ADDR ), time() . ':' . WPCC_RECEIVER_RATE_LIMIT, 120 );
 
 		$post_id  = self::factory()->post->create(
 			array(
@@ -209,7 +214,7 @@ class WPCC_Receiver_Test extends WP_UnitTestCase {
 	}
 
 	public function test_missing_url_is_rejected_as_invalid_payload() {
-		$response = $this->dispatch( WPCC_SHARED_SECRET, array( 'css_mobile' => 'body{color:red}' ) );
+		$response = $this->dispatch( WPCC_SHARED_SECRET, array( 'css_mobile' => self::CSS_MOBILE_FIXTURE ) );
 		$this->assertSame( 400, $response->get_status() );
 	}
 
@@ -261,8 +266,8 @@ class WPCC_Receiver_Test extends WP_UnitTestCase {
 			WPCC_SHARED_SECRET,
 			array(
 				'url'         => get_permalink( $post_id ),
-				'css_mobile'  => 'body{color:red}',
-				'css_desktop' => 'body{color:blue}',
+				'css_mobile'  => self::CSS_MOBILE_FIXTURE,
+				'css_desktop' => self::CSS_DESKTOP_FIXTURE,
 			)
 		);
 
@@ -271,8 +276,8 @@ class WPCC_Receiver_Test extends WP_UnitTestCase {
 		$this->assertSame( 'stored', $data['status'] );
 		$this->assertSame( $post_id, $data['post_id'] );
 
-		$this->assertSame( 'body{color:red}', get_post_meta( $post_id, '_wpcc_critical_css_mobile', true ) );
-		$this->assertSame( 'body{color:blue}', get_post_meta( $post_id, '_wpcc_critical_css_desktop', true ) );
+		$this->assertSame( self::CSS_MOBILE_FIXTURE, get_post_meta( $post_id, '_wpcc_critical_css_mobile', true ) );
+		$this->assertSame( self::CSS_DESKTOP_FIXTURE, get_post_meta( $post_id, '_wpcc_critical_css_desktop', true ) );
 		$this->assertNotSame( '', get_post_meta( $post_id, '_wpcc_critical_css_generated_at', true ) );
 	}
 
@@ -368,8 +373,8 @@ class WPCC_Receiver_Test extends WP_UnitTestCase {
 			WPCC_SHARED_SECRET,
 			array(
 				'url'         => home_url( '/' ),
-				'css_mobile'  => 'body{color:red}',
-				'css_desktop' => 'body{color:blue}',
+				'css_mobile'  => self::CSS_MOBILE_FIXTURE,
+				'css_desktop' => self::CSS_DESKTOP_FIXTURE,
 			)
 		);
 
@@ -378,8 +383,8 @@ class WPCC_Receiver_Test extends WP_UnitTestCase {
 		$this->assertSame( 'stored', $data['status'] );
 		$this->assertSame( 'front_page', $data['target'] );
 
-		$this->assertSame( 'body{color:red}', get_option( 'wpcc_front_page_css_mobile' ) );
-		$this->assertSame( 'body{color:blue}', get_option( 'wpcc_front_page_css_desktop' ) );
+		$this->assertSame( self::CSS_MOBILE_FIXTURE, get_option( 'wpcc_front_page_css_mobile' ) );
+		$this->assertSame( self::CSS_DESKTOP_FIXTURE, get_option( 'wpcc_front_page_css_desktop' ) );
 		$this->assertNotFalse( get_option( 'wpcc_front_page_css_generated_at' ) );
 	}
 
