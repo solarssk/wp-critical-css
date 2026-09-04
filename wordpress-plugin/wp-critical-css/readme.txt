@@ -4,7 +4,7 @@ Tags: performance, critical-css, page-speed, core-web-vitals, self-hosted
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.2.2
+Stable tag: 0.2.3
 License: MIT
 License URI: https://opensource.org/licenses/MIT
 
