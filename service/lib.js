@@ -269,10 +269,24 @@ export function isBlockedLiteralAddress(hostname) {
  * so mocking it via node:test's mock.method (which needs to redefine the
  * property) isn't possible; passing a replacement in directly sidesteps
  * that instead of fighting it.
+ *
+ * A literal IP address (v4 or v6) is classified directly, WITHOUT ever
+ * calling `lookup` - there's nothing to resolve, the address already IS
+ * the target. This isn't just an optimization: calling isBlockedLiteralAddress()
+ * first and falling through to a DNS lookup on anything it didn't block
+ * (the earlier shape of this function) is actively wrong for a PUBLIC IPv6
+ * literal. A URL's `.hostname` for an IPv6 literal is bracketed (e.g.
+ * "[2606:4700:4700::1111]"), and while isBlockedLiteralAddress() correctly
+ * strips those brackets before classifying, `lookup(hostname, ...)` would
+ * still receive the ORIGINAL bracketed string - which dns.lookup() doesn't
+ * understand and fails to resolve - and the catch below then fails closed,
+ * incorrectly blocking every legitimate public IPv6 literal target.
  */
 export async function isPrivateOrReservedTarget(hostname, lookup = dnsLookupAsync) {
-	if (isBlockedLiteralAddress(hostname)) {
-		return true;
+	const clean = hostname.replace(/^\[/, '').replace(/\]$/, '');
+	const family = isIP(clean);
+	if (family !== 0) {
+		return isPrivateOrReservedAddress(clean, family);
 	}
 	try {
 		const addresses = await lookup(hostname, { all: true });

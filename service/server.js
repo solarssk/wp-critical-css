@@ -47,6 +47,30 @@ const SWEEP_CRON = process.env.SWEEP_CRON || '0 3 * * *';
 const SWEEP_ENABLED = process.env.SWEEP_ENABLED !== 'false';
 const SWEEP_DELAY_MS = Number(process.env.SWEEP_DELAY_MS || 5000);
 
+/**
+ * `Number(envValue || default)` (used elsewhere in this file for
+ * SWEEP_DELAY_MS) silently does the wrong thing for a value meant to
+ * enforce a real safety bound: a mistyped/non-numeric override becomes
+ * NaN, and every `>=` comparison against NaN is false - MAX_QUEUE_LENGTH
+ * below exists specifically to stop the queue from growing without limit,
+ * so parsing it that way would silently disable the exact protection it's
+ * for. A negative override would instead reject every job outright, and
+ * "Infinity" would parse successfully into an unbounded queue. Failing
+ * loudly at startup on any of those, same as the existing
+ * SHARED_SECRET/WP_RECEIVER_URL/ALLOWED_HOSTNAME checks below, surfaces a
+ * misconfiguration immediately instead of it silently doing nothing.
+ */
+function parsePositiveInt(envValue, defaultValue, name) {
+	if (envValue === undefined) {
+		return defaultValue;
+	}
+	const parsed = Number(envValue);
+	if (!Number.isInteger(parsed) || parsed <= 0) {
+		throw new Error(`${name} must be a positive integer if set, got ${JSON.stringify(envValue)}`);
+	}
+	return parsed;
+}
+
 if (!SHARED_SECRET || !WP_RECEIVER_URL || !ALLOWED_HOSTNAME) {
 	throw new Error('SHARED_SECRET, WP_RECEIVER_URL and ALLOWED_HOSTNAME must be set (see .env.example)');
 }
@@ -125,25 +149,34 @@ function ssrfSafeDnsLookup(hostname, options, callback) {
 // picked up) without limit. 500 is generous for the single-worker,
 // modest-hardware deployment this is designed for (see the file-level
 // comment above) while still being a real ceiling, not a symbolic one.
-const MAX_QUEUE_LENGTH = Number(process.env.MAX_QUEUE_LENGTH || 500);
+const MAX_QUEUE_LENGTH = parsePositiveInt(process.env.MAX_QUEUE_LENGTH, 500, 'MAX_QUEUE_LENGTH');
 
 const queue = [];
 let processing = false;
 
+/**
+ * Returns which of these happened, rather than a bare boolean/void, so
+ * callers can react differently - specifically POST /generate below, which
+ * previously returned 202 "queued" unconditionally even when the queue was
+ * actually full and the URL got silently dropped. An authenticated webhook
+ * caller receiving 202 has no reason to retry, so that URL was just gone -
+ * this lets the route report a real, retryable failure instead.
+ */
 function enqueue(url) {
 	if (!isAllowedUrl(url, ALLOWED_HOSTNAME)) {
 		console.warn(`[critical-css] refusing to queue disallowed URL: ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
-		return;
+		return 'disallowed';
 	}
 	if (queue.includes(url)) {
-		return;
+		return 'duplicate';
 	}
 	if (queue.length >= MAX_QUEUE_LENGTH) {
 		console.warn(`[critical-css] queue at its ${MAX_QUEUE_LENGTH}-entry limit, dropping ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
-		return;
+		return 'full';
 	}
 	queue.push(url);
 	processQueue();
+	return 'queued';
 }
 
 async function processQueue() {
@@ -537,7 +570,18 @@ async function runSweep() {
 	console.log(`[critical-css] sweep found ${urls.length} URLs`);
 
 	for (const url of urls) {
-		enqueue(url);
+		// Stops feeding the queue as soon as it's actually full, rather than
+		// continuing to call enqueue() on every remaining URL only to have
+		// each one dropped one at a time - each of those calls would still
+		// pay the SWEEP_DELAY_MS pause for no result. Whatever this sweep
+		// didn't get to stays a candidate for the NEXT sweep (this is
+		// already a periodic backfill, not a one-shot job - see this file's
+		// header comment), which is a better outcome than burning through
+		// the rest of a large sitemap against a queue that has no room.
+		if (enqueue(url) === 'full') {
+			console.warn(`[critical-css] sweep stopping early: queue is full, ${logSafe(url)} and the rest of this batch will be picked up by the next sweep`); // NOSONAR jssecurity:S5145 - see logSafe() above
+			break;
+		}
 		await new Promise((resolve) => setTimeout(resolve, SWEEP_DELAY_MS));
 	}
 }
@@ -565,8 +609,17 @@ app.post('/generate', (req, res) => {
 		return res.status(400).json({ error: `url is required and must be on ${ALLOWED_HOSTNAME}` });
 	}
 
-	enqueue(url);
-	res.status(202).json({ status: 'queued', queueLength: queue.length });
+	const result = enqueue(url);
+	if (result === 'full') {
+		// 503, not 202: the URL was NOT accepted, and this is retryable once
+		// the queue has drained - an authenticated webhook caller getting a
+		// 202 here (this route's previous, unconditional response) had no
+		// reason to ever retry, so a burst that filled the queue meant that
+		// caller's URL was just silently gone.
+		res.set('Retry-After', '30');
+		return res.status(503).json({ error: 'queue is full, retry shortly', queueLength: queue.length });
+	}
+	res.status(202).json({ status: result === 'duplicate' ? 'already queued' : 'queued', queueLength: queue.length });
 });
 
 app.post('/sweep', (req, res) => {

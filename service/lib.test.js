@@ -309,6 +309,32 @@ describe('isPrivateOrReservedTarget', () => {
 		assert.equal(called, false);
 	});
 
+	test('allows a literal PUBLIC IPv6 address (bracketed, as URL.hostname produces it) without ever calling the lookup fn', async () => {
+		// Regression test: a bracketed IPv6 literal ("[2606:4700:...]", the
+		// form URL.hostname actually produces) must be classified directly,
+		// not fall through to a DNS lookup - dns.lookup() doesn't understand
+		// the bracket syntax and fails to resolve it, which an earlier
+		// version of this function's catch block turned into an incorrect
+		// fail-closed block of every public IPv6 literal target.
+		let called = false;
+		const lookup = async () => {
+			called = true;
+			throw new Error('dns.lookup does not understand bracketed literals - should never be called for one');
+		};
+		assert.equal(await isPrivateOrReservedTarget('[2606:4700:4700::1111]', lookup), false);
+		assert.equal(called, false);
+	});
+
+	test('blocks a literal PRIVATE IPv6 address (bracketed) without ever calling the lookup fn', async () => {
+		let called = false;
+		const lookup = async () => {
+			called = true;
+			return [];
+		};
+		assert.equal(await isPrivateOrReservedTarget('[fd00::1]', lookup), true);
+		assert.equal(called, false);
+	});
+
 	test('blocks a hostname resolving to an RFC1918 address', async () => {
 		const lookup = async () => [{ address: '10.1.2.3', family: 4 }];
 		assert.equal(await isPrivateOrReservedTarget('internal.example.com', lookup), true);
