@@ -14,9 +14,28 @@ on:
 permissions:
   contents: write
 
+# Grouped per target, not per workflow: a GitHub concurrency group holds at
+# most one running AND one pending run - it's not a FIFO queue, so a group
+# shared by every ref (this workflow's previous approach) means a third
+# overlapping run (e.g. two tag pushes close together plus a manual
+# dispatch) silently replaces the pending run instead of queueing behind
+# it, dropping a real release with no error anywhere. Grouping per target
+# means a different tag never competes for that one pending slot in the
+# first place - only two runs for the exact same target can still collide,
+# which is the one case actually worth serializing.
+#
+# The ref is canonicalized before grouping: inputs.ref accepts both
+# "v0.2.4" and "refs/tags/v0.2.4" as the same logical target (normalized
+# later, in the "Resolve version" step) - grouping on the raw string would
+# hash those two forms to different groups and defeat the point, so both
+# are folded into the "refs/tags/..." form here too.
+#
+# cancel-in-progress: false so even a genuine same-target collision queues
+# instead of cancelling a publish that already has side effects underway
+# (GitHub Release, plugin zip asset).
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.ref || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ contains(inputs.ref || github.ref, 'refs/tags/') && (inputs.ref || github.ref) || format('refs/tags/{0}', inputs.ref || github.ref) }}
+  cancel-in-progress: false
 
 jobs:
   build-zip:
