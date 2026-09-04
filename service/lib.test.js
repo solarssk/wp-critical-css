@@ -9,6 +9,8 @@ import {
 	isPrivateOrReservedIpv6,
 	isPrivateOrReservedAddress,
 	isBlockedLiteralAddress,
+	isPrivateOrReservedTarget,
+	safeFetch,
 } from './lib.js';
 
 describe('isValidSecret', () => {
@@ -293,5 +295,154 @@ describe('extractUrlsFromUrlset', () => {
 	test('returns an empty array for null/undefined input instead of throwing', () => {
 		assert.deepEqual(extractUrlsFromUrlset(null), []);
 		assert.deepEqual(extractUrlsFromUrlset(undefined), []);
+	});
+});
+
+describe('isPrivateOrReservedTarget', () => {
+	test('blocks a literal loopback address without ever calling the lookup fn', async () => {
+		let called = false;
+		const lookup = async () => {
+			called = true;
+			return [];
+		};
+		assert.equal(await isPrivateOrReservedTarget('127.0.0.1', lookup), true);
+		assert.equal(called, false);
+	});
+
+	test('blocks a hostname resolving to an RFC1918 address', async () => {
+		const lookup = async () => [{ address: '10.1.2.3', family: 4 }];
+		assert.equal(await isPrivateOrReservedTarget('internal.example.com', lookup), true);
+	});
+
+	test('blocks a hostname resolving to the link-local/cloud-metadata range', async () => {
+		const lookup = async () => [{ address: '169.254.169.254', family: 4 }];
+		assert.equal(await isPrivateOrReservedTarget('metadata.internal', lookup), true);
+	});
+
+	test('blocks a hostname resolving to an IPv6 unique-local address', async () => {
+		const lookup = async () => [{ address: 'fd00::1', family: 6 }];
+		assert.equal(await isPrivateOrReservedTarget('v6-internal.example.com', lookup), true);
+	});
+
+	test('blocks a hostname resolving to an IPv6 loopback address', async () => {
+		const lookup = async () => [{ address: '::1', family: 6 }];
+		assert.equal(await isPrivateOrReservedTarget('v6-loopback.example.com', lookup), true);
+	});
+
+	test('blocks if ANY resolved address is private, even alongside a public one', async () => {
+		const lookup = async () => [
+			{ address: '93.184.216.34', family: 4 },
+			{ address: '127.0.0.1', family: 4 },
+		];
+		assert.equal(await isPrivateOrReservedTarget('mixed.example.com', lookup), true);
+	});
+
+	test('allows a hostname resolving only to a public address', async () => {
+		const lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+		assert.equal(await isPrivateOrReservedTarget('example.com', lookup), false);
+	});
+
+	test('fails closed when DNS resolution errors', async () => {
+		const lookup = async () => {
+			throw new Error('ENOTFOUND');
+		};
+		assert.equal(await isPrivateOrReservedTarget('nonexistent.invalid', lookup), true);
+	});
+});
+
+describe('safeFetch', () => {
+	const publicLookup = async () => [{ address: '93.184.216.34', family: 4 }];
+	const unreachableFetch = async () => {
+		throw new Error('fetchImpl should not have been called');
+	};
+
+	test('refuses a non-http(s) target without ever calling fetch', async () => {
+		await assert.rejects(() => safeFetch('ftp://example.com/x', { fetchImpl: unreachableFetch }), /refusing non-http/);
+	});
+
+	test('refuses an invalid URL without ever calling fetch', async () => {
+		await assert.rejects(() => safeFetch('not a url', { fetchImpl: unreachableFetch }), /invalid fetch target/);
+	});
+
+	test('refuses a literal loopback target without ever calling fetch', async () => {
+		await assert.rejects(() => safeFetch('http://127.0.0.1/x', { fetchImpl: unreachableFetch }), /reserved\/private address/);
+	});
+
+	test('refuses a hostname that resolves to a cloud-metadata address', async () => {
+		const lookup = async () => [{ address: '169.254.169.254', family: 4 }];
+		await assert.rejects(
+			() => safeFetch('http://metadata.internal/x', { lookup, fetchImpl: unreachableFetch }),
+			/reserved\/private address/,
+		);
+	});
+
+	test('follows a redirect to a public host and returns the final body', async () => {
+		let calls = 0;
+		const fetchImpl = async () => {
+			calls += 1;
+			if (calls === 1) {
+				return new Response(null, { status: 302, headers: { location: 'https://example.com/final' } });
+			}
+			return new Response('hello', { status: 200 });
+		};
+		const result = await safeFetch('https://example.com/start', { lookup: publicLookup, fetchImpl });
+		assert.equal(result.ok, true);
+		assert.equal(result.status, 200);
+		assert.equal(result.text, 'hello');
+		assert.equal(calls, 2);
+	});
+
+	test('re-validates every redirect hop and refuses one resolving to a private address', async () => {
+		const lookup = async (hostname) =>
+			hostname === 'internal.example.com' ? [{ address: '10.0.0.5', family: 4 }] : [{ address: '93.184.216.34', family: 4 }];
+		let calls = 0;
+		const fetchImpl = async () => {
+			calls += 1;
+			return new Response(null, { status: 302, headers: { location: 'http://internal.example.com/x' } });
+		};
+		await assert.rejects(() => safeFetch('https://example.com/start', { lookup, fetchImpl }), /reserved\/private address/);
+		// The redirect target itself was never actually fetched - only the
+		// first, legitimate hop was.
+		assert.equal(calls, 1);
+	});
+
+	test('refuses a redirect to a different host when expectedHostname is set (sub-sitemap same-origin policy)', async () => {
+		const fetchImpl = async () => new Response(null, { status: 302, headers: { location: 'https://other.example.net/x' } });
+		await assert.rejects(
+			() => safeFetch('https://example.com/start', { expectedHostname: 'example.com', lookup: publicLookup, fetchImpl }),
+			/off-site redirect/,
+		);
+	});
+
+	test('gives up after too many redirects instead of looping forever', async () => {
+		const fetchImpl = async () => new Response(null, { status: 302, headers: { location: 'https://example.com/loop' } });
+		await assert.rejects(() => safeFetch('https://example.com/start', { lookup: publicLookup, fetchImpl }), /too many redirects/);
+	});
+
+	test('enforces the response size limit', async () => {
+		const fetchImpl = async () => new Response('x'.repeat(100), { status: 200 });
+		await assert.rejects(
+			() => safeFetch('https://example.com/big', { lookup: publicLookup, fetchImpl, maxResponseBytes: 10 }),
+			/byte limit/,
+		);
+	});
+
+	test('rejects a redirect response with no Location header', async () => {
+		const fetchImpl = async () => new Response(null, { status: 302 });
+		await assert.rejects(() => safeFetch('https://example.com/start', { lookup: publicLookup, fetchImpl }), /missing a Location header/);
+	});
+
+	test('passes through a non-ok, non-redirect status instead of throwing (caller decides)', async () => {
+		const fetchImpl = async () => new Response('not found', { status: 404 });
+		const result = await safeFetch('https://example.com/missing', { lookup: publicLookup, fetchImpl });
+		assert.equal(result.ok, false);
+		assert.equal(result.status, 404);
+	});
+
+	test('returns an empty body instead of throwing for a bodyless response (e.g. 204)', async () => {
+		const fetchImpl = async () => new Response(null, { status: 204 });
+		const result = await safeFetch('https://example.com/empty', { lookup: publicLookup, fetchImpl });
+		assert.equal(result.ok, true);
+		assert.equal(result.text, '');
 	});
 });

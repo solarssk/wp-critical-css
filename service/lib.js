@@ -1,11 +1,16 @@
 /**
- * Pure, side-effect-free helpers split out of server.js so they can be
- * unit-tested directly - importing server.js itself would run its
- * top-level env-var validation and call app.listen() as a side effect.
+ * Helpers split out of server.js so they can be unit-tested directly -
+ * importing server.js itself would run its top-level env-var validation and
+ * call app.listen() as a side effect. Most of these are pure; a few
+ * (isPrivateOrReservedTarget, safeFetch) do real DNS/network I/O when
+ * called, but neither one performs any I/O merely from being imported, so
+ * the same "testable in isolation from server.js's startup" property still
+ * holds - they're testable via mocking node:dns/promises and global fetch.
  */
 
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
+import { lookup as dnsLookupAsync } from 'node:dns/promises';
 
 /**
  * Constant-time secret comparison - a plain !== leaks how many leading
@@ -238,6 +243,143 @@ export function isBlockedLiteralAddress(hostname) {
 		return false; // not a literal IP at all - nothing for this check to do, it's a real hostname
 	}
 	return isPrivateOrReservedAddress(clean, family);
+}
+
+/**
+ * The literal-IP check plus a DNS lookup against the exact same
+ * private/reserved-address policy, factored out so server.js's Chromium
+ * request-interception guard and safeFetch() below share ONE address
+ * classifier instead of two hand-rolled ones that could quietly drift
+ * apart. Takes a bare hostname (not a full URL) - callers decide what to
+ * do about non-http(s) schemes themselves, since that answer differs by
+ * caller (Chromium legitimately requests data:/blob:/about: internally;
+ * safeFetch should refuse anything but http(s) outright).
+ *
+ * Same DNS-then-connect gap as every other guard in this codebase that
+ * can't hook the actual connection's own resolver (see
+ * ssrfSafeDnsLookup's doc comment in server.js for the one path that
+ * doesn't have this gap, because got supports a real dnsLookup hook): a
+ * sufficiently fast DNS-rebinding attack between this check and the
+ * fetch() call that follows it could theoretically slip a different
+ * address past it. Accepted, documented residual risk, same as
+ * elsewhere.
+ *
+ * `lookup` defaults to the real node:dns/promises lookup and is only ever
+ * overridden by tests - node:dns/promises exports it as non-configurable,
+ * so mocking it via node:test's mock.method (which needs to redefine the
+ * property) isn't possible; passing a replacement in directly sidesteps
+ * that instead of fighting it.
+ */
+export async function isPrivateOrReservedTarget(hostname, lookup = dnsLookupAsync) {
+	if (isBlockedLiteralAddress(hostname)) {
+		return true;
+	}
+	try {
+		const addresses = await lookup(hostname, { all: true });
+		return addresses.some((a) => isPrivateOrReservedAddress(a.address, a.family));
+	} catch {
+		return true; // couldn't resolve it - fail closed, don't let an erroring lookup through
+	}
+}
+
+const SAFE_FETCH_DEFAULT_TIMEOUT_MS = 10_000;
+const SAFE_FETCH_MAX_REDIRECTS = 5;
+const SAFE_FETCH_MAX_RESPONSE_BYTES = 5 * 1024 * 1024; // 5MB - generous for a real sitemap, bounds a malicious/runaway one
+const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
+
+async function readBoundedBody(res, maxBytes) {
+	if (!res.body) {
+		return '';
+	}
+	const reader = res.body.getReader();
+	let total = 0;
+	const chunks = [];
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			total += value.length;
+			if (total > maxBytes) {
+				throw new Error(`wpcc: response body exceeded the ${maxBytes}-byte limit`);
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf-8');
+}
+
+/**
+ * SSRF-hardened fetch for targets this service doesn't fully control (e.g.
+ * URLs read out of a remote sitemap) - NOT used for WP_RECEIVER_URL, which
+ * is trusted operator configuration and, in the common self-hosted
+ * deployment, is *expected* to be a private address (WordPress on an
+ * adjacent container on the same private Docker network) that this
+ * function would otherwise refuse outright.
+ *
+ * Refuses non-http(s) targets and any hop - the initial request or a
+ * redirect - that resolves to a private/reserved address. Redirects are
+ * followed manually (redirect: 'manual' plus this loop) specifically so
+ * EVERY hop gets re-validated, not just the first URL: native fetch()
+ * doesn't expose a per-hop hook the way `got` does elsewhere in this
+ * codebase (see ssrfSafeDnsLookup in server.js), so this is the only way
+ * to guard a redirect chain at all with the built-in client. Bounded
+ * redirect count and response size so a malicious or runaway response
+ * can't hang this indefinitely or exhaust memory.
+ *
+ * `expectedHostname`, when given, additionally refuses ANY hop that isn't
+ * on that exact host - used for sub-sitemap fetches, whose target URL
+ * comes out of a remote sitemap index this service doesn't fully trust,
+ * which shouldn't be able to redirect this service to an arbitrary
+ * off-site (but still public) destination either, not just a private one.
+ *
+ * `fetchImpl`/`lookup` default to the real global fetch and the real DNS
+ * lookup, and are only ever overridden by tests, for the same
+ * non-configurable-export reason described on isPrivateOrReservedTarget
+ * above (global fetch specifically is configurable and mockable, but
+ * threading the same override through both keeps one consistent pattern
+ * instead of two).
+ */
+export async function safeFetch(
+	url,
+	{ expectedHostname, timeoutMs = SAFE_FETCH_DEFAULT_TIMEOUT_MS, maxResponseBytes = SAFE_FETCH_MAX_RESPONSE_BYTES, fetchImpl = fetch, lookup = dnsLookupAsync } = {},
+) {
+	let current;
+	try {
+		current = new URL(url);
+	} catch {
+		throw new Error(`wpcc: invalid fetch target ${logSafe(url)}`);
+	}
+
+	for (let hop = 0; hop <= SAFE_FETCH_MAX_REDIRECTS; hop++) {
+		if (current.protocol !== 'http:' && current.protocol !== 'https:') {
+			throw new Error(`wpcc: refusing non-http(s) fetch target ${logSafe(current.href)}`);
+		}
+		if (expectedHostname && current.hostname !== expectedHostname) {
+			throw new Error(`wpcc: refusing off-site redirect to ${logSafe(current.hostname)}`);
+		}
+		if (await isPrivateOrReservedTarget(current.hostname, lookup)) {
+			throw new Error(`wpcc: refusing to fetch reserved/private address target ${logSafe(current.hostname)}`);
+		}
+
+		const res = await fetchImpl(current, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+
+		if (REDIRECT_STATUS_CODES.has(res.status)) {
+			const location = res.headers.get('location');
+			if (!location) {
+				throw new Error('wpcc: redirect response missing a Location header');
+			}
+			current = new URL(location, current); // resolves a relative Location against the current hop, same as a browser would
+			continue;
+		}
+
+		return { ok: res.ok, status: res.status, text: await readBoundedBody(res, maxResponseBytes) };
+	}
+
+	throw new Error(`wpcc: too many redirects fetching ${logSafe(url)}`);
 }
 
 export function extractUrlsFromUrlset(parsed) {
