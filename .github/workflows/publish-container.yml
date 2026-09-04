@@ -96,12 +96,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Only needed for an actual publish (steps.resolve.outputs.publish ==
+      # 'true'), same as the metadata/push/attest steps below - a
+      # branch/SHA scan-only dispatch has no reason to authenticate to a
+      # second registry it's never going to push to.
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        if: steps.resolve.outputs.publish == 'true'
+        with:
+          registry: docker.io
+          username: solarssk
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Two images, one metadata call: docker/metadata-action computes the
+      # full tag set (latest/version/major_minor/sha) once and applies it to
+      # both, so "Push image" below publishes the identical, single-built
+      # image to both registries in one step - not two separate builds that
+      # could theoretically drift from each other.
       - name: Extract metadata
         id: meta
         if: steps.resolve.outputs.publish == 'true'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: |
+            ghcr.io/${{ github.repository }}
+            docker.io/solarssk/wp-critical-css
           tags: |
             type=raw,value=latest
             type=raw,value=${{ steps.resolve.outputs.version }}
@@ -182,6 +200,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # GHCR only, deliberately - the digest itself is identical on both
+      # registries (same build, same manifest, pushed twice), but GitHub's
+      # native attestation viewing/verification UI and OCI-referrers
+      # support are specific to GHCR; Docker Hub has no equivalent surface
+      # for this today. Anyone who wants to verify provenance can still do
+      # so against the ghcr.io copy regardless of which registry they
+      # pulled the image from, since it's the same digest either way.
       - name: Attest build provenance
         if: steps.resolve.outputs.publish == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

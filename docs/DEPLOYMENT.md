@@ -35,10 +35,12 @@ define( 'WPCC_SHARED_SECRET', '<same value as SHARED_SECRET in .env>' );
 Three options, least to most setup:
 
 **Pull the published image** (built and Trivy-scanned by CI on every
-release tag - see `docker-compose.example.yml`):
+release tag - see `docker-compose.example.yml`), published identically to
+both GHCR and Docker Hub - use whichever your setup already pulls from:
 
 ```bash
 docker pull ghcr.io/solarssk/wp-critical-css:latest
+# or: docker pull solarssk/wp-critical-css:latest
 docker run --env-file .env -p 3939:3939 ghcr.io/solarssk/wp-critical-css:latest
 ```
 
@@ -109,7 +111,7 @@ git push origin vX.Y.Z
 
 Two workflows take it from there, both triggered by the same tag push:
 
-- `.github/workflows/publish-container.yml` builds the image, scans it with Trivy (a full SARIF report goes to the Security tab, and a hard gate blocks the push on any fixable CRITICAL finding), then pushes to `ghcr.io/solarssk/wp-critical-css` with signed build provenance attached.
+- `.github/workflows/publish-container.yml` builds the image once, scans it with Trivy (a full SARIF report goes to the Security tab, and a hard gate blocks the push on any fixable CRITICAL finding), then pushes the same image to both `ghcr.io/solarssk/wp-critical-css` and `docker.io/solarssk/wp-critical-css`. Signed build provenance is attached to the GHCR copy (see the workflow's own comment on that step for why not both).
 - `.github/workflows/publish-plugin.yml` verifies the plugin's own `Version:` header matches the tag (fails the build if you forgot to bump it), then zips `wordpress-plugin/wp-critical-css/`.
 
 Whichever of the two finishes first creates the GitHub Release for the tag, titled via `scripts/release-display-title.sh` (`vX.Y.Z — tagline`, read from the `.title` file above) with the `.md` file's content as its notes, and marked `--latest`; the other one just attaches its own asset (the SBOM, or the plugin zip) to that same release. See [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for the full CI/CD control list.
