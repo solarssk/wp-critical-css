@@ -14,9 +14,17 @@ on:
 permissions:
   contents: write
 
+# Grouped by workflow name alone, not by ref: this workflow has side
+# effects (GitHub Release, plugin zip asset) that must never be cancelled
+# mid-run, and a per-ref group can't be made reliable anyway - inputs.ref
+# accepts both "v0.2.4" and "refs/tags/v0.2.4" as the same logical target
+# (normalized later, in the "Resolve version" step), so they'd hash to two
+# different groups if the group key included the ref. cancel-in-progress:
+# false means concurrent runs queue instead of racing or clobbering each
+# other's publish.
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.ref || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   build-zip:
