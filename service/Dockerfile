@@ -1,7 +1,7 @@
 # Pinned by digest, not just tag, so downstream users and CI get a
 # byte-identical Chrome build. Dependabot's docker ecosystem entry
 # (see /.github/dependabot.yml) tracks and PRs digest bumps for this line.
-FROM ghcr.io/puppeteer/puppeteer:25.9.0@sha256:5c341215d78353c3416b6c92aae9fac66e8f11c146c3753234980443d6792f8f
+FROM ghcr.io/puppeteer/puppeteer:25.10.0@sha256:95af967749f581e78c52ecdabccc7736ecf8162729ee300d0127a46f2d78439e
 
 USER root
 WORKDIR /app
