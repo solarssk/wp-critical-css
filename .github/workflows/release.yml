@@ -29,15 +29,35 @@ on:
 permissions:
   contents: write
   actions: write
+  issues: write
 
+# Keyed per-push (github.sha), not per-repository: a GitHub concurrency
+# group holds at most one running AND one pending run, and a THIRD run
+# queueing while one is running and one is already pending REPLACES the
+# pending run rather than queueing behind it - it's simply discarded,
+# never runs at all. This repo pushes to main often enough (several PRs
+# merged within minutes of each other is the normal case, not an edge
+# case) that a single shared group would risk silently evicting the one
+# push that actually matters - the "release: vX.Y.Z" commit - if two
+# unrelated pushes landed close together around it. Keying per-SHA instead
+# means every push gets its own group, so nothing can ever evict another
+# push's run. The one thing the old shared group protected against - two
+# overlapping runs both trying to create the same GitHub Release - is
+# already handled independently by the "already exists" check in the
+# "Create GitHub Release and tag" step below, so serializing runs against
+# each other was never actually load-bearing for correctness.
 concurrency:
-  group: release-${{ github.repository }}
+  group: release-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
   publish-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Generous: this job can block on "Wait for both publish workflows to
+    # succeed" below for as long as those workflows' own job timeouts allow
+    # (publish-container.yml: 25m, publish-plugin.yml: 10m) plus time spent
+    # locating each dispatched run, sequentially.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -154,14 +174,54 @@ jobs:
       # publishing the tag.
       - name: Trigger container and plugin publish
         if: steps.bump.outputs.skip != 'true'
+        id: dispatch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG='${{ steps.bump.outputs.tag }}'
+          echo "dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           gh workflow run publish-container.yml --ref "$TAG" -f ref="$TAG"
           gh workflow run publish-plugin.yml --ref "$TAG" -f ref="$TAG"
           echo "Dispatched publish-container.yml and publish-plugin.yml for ${TAG}."
+
+      # The dispatch above only creates workflow_dispatch events and returns
+      # immediately - it does not wait for those runs, so without this step
+      # the milestone below would close (marking the version "shipped")
+      # even if the container or plugin publish later failed. `gh workflow
+      # run` doesn't hand back the run it created, so each run is located
+      # by polling `gh run list` for a workflow_dispatch run created at or
+      # after this job's own dispatch timestamp, then `gh run watch
+      # --exit-status` blocks on it and fails this job if that run fails.
+      - name: Wait for both publish workflows to succeed
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SINCE='${{ steps.dispatch.outputs.dispatched_at }}'
+
+          wait_for_workflow() {
+            local workflow="$1"
+            local run_id=""
+            for _ in $(seq 1 30); do
+              run_id="$(gh run list --workflow "$workflow" --limit 10 \
+                --json databaseId,createdAt,event \
+                --jq "[.[] | select(.event == \"workflow_dispatch\" and .createdAt >= \"${SINCE}\")] | sort_by(.createdAt) | .[0].databaseId // empty")"
+              [ -n "$run_id" ] && break
+              sleep 10
+            done
+            if [ -z "$run_id" ]; then
+              echo "::error::Could not find a dispatched run of ${workflow} after 5 minutes."
+              exit 1
+            fi
+            echo "Waiting for ${workflow} run ${run_id}..."
+            gh run watch "$run_id" --exit-status
+          }
+
+          wait_for_workflow publish-container.yml
+          wait_for_workflow publish-plugin.yml
+          echo "Both publish workflows succeeded."
 
       - name: Close matching GitHub milestone
         if: steps.bump.outputs.skip != 'true'
