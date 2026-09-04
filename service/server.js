@@ -22,7 +22,6 @@
  */
 
 import { lookup as dnsLookup } from 'node:dns';
-import { lookup as dnsLookupAsync } from 'node:dns/promises';
 import express from 'express';
 import cron from 'node-cron';
 import { parseStringPromise } from 'xml2js';
@@ -35,6 +34,8 @@ import {
 	extractUrlsFromUrlset,
 	isPrivateOrReservedAddress,
 	isBlockedLiteralAddress,
+	isPrivateOrReservedTarget,
+	safeFetch,
 } from './lib.js';
 
 const PORT = process.env.PORT || 3939;
@@ -45,6 +46,30 @@ const ALLOWED_HOSTNAME = process.env.ALLOWED_HOSTNAME;
 const SWEEP_CRON = process.env.SWEEP_CRON || '0 3 * * *';
 const SWEEP_ENABLED = process.env.SWEEP_ENABLED !== 'false';
 const SWEEP_DELAY_MS = Number(process.env.SWEEP_DELAY_MS || 5000);
+
+/**
+ * `Number(envValue || default)` (used elsewhere in this file for
+ * SWEEP_DELAY_MS) silently does the wrong thing for a value meant to
+ * enforce a real safety bound: a mistyped/non-numeric override becomes
+ * NaN, and every `>=` comparison against NaN is false - MAX_QUEUE_LENGTH
+ * below exists specifically to stop the queue from growing without limit,
+ * so parsing it that way would silently disable the exact protection it's
+ * for. A negative override would instead reject every job outright, and
+ * "Infinity" would parse successfully into an unbounded queue. Failing
+ * loudly at startup on any of those, same as the existing
+ * SHARED_SECRET/WP_RECEIVER_URL/ALLOWED_HOSTNAME checks below, surfaces a
+ * misconfiguration immediately instead of it silently doing nothing.
+ */
+function parsePositiveInt(envValue, defaultValue, name) {
+	if (envValue === undefined) {
+		return defaultValue;
+	}
+	const parsed = Number(envValue);
+	if (!Number.isInteger(parsed) || parsed <= 0) {
+		throw new Error(`${name} must be a positive integer if set, got ${JSON.stringify(envValue)}`);
+	}
+	return parsed;
+}
 
 if (!SHARED_SECRET || !WP_RECEIVER_URL || !ALLOWED_HOSTNAME) {
 	throw new Error('SHARED_SECRET, WP_RECEIVER_URL and ALLOWED_HOSTNAME must be set (see .env.example)');
@@ -118,19 +143,40 @@ function ssrfSafeDnsLookup(hostname, options, callback) {
 	});
 }
 
+// Bounds the single in-memory queue below - without this, a compromised or
+// leaked shared secret hammering /generate, or an unexpectedly huge
+// sitemap, grows the queue (and the memory each entry implies once it's
+// picked up) without limit. 500 is generous for the single-worker,
+// modest-hardware deployment this is designed for (see the file-level
+// comment above) while still being a real ceiling, not a symbolic one.
+const MAX_QUEUE_LENGTH = parsePositiveInt(process.env.MAX_QUEUE_LENGTH, 500, 'MAX_QUEUE_LENGTH');
+
 const queue = [];
 let processing = false;
 
+/**
+ * Returns which of these happened, rather than a bare boolean/void, so
+ * callers can react differently - specifically POST /generate below, which
+ * previously returned 202 "queued" unconditionally even when the queue was
+ * actually full and the URL got silently dropped. An authenticated webhook
+ * caller receiving 202 has no reason to retry, so that URL was just gone -
+ * this lets the route report a real, retryable failure instead.
+ */
 function enqueue(url) {
 	if (!isAllowedUrl(url, ALLOWED_HOSTNAME)) {
 		console.warn(`[critical-css] refusing to queue disallowed URL: ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
-		return;
+		return 'disallowed';
 	}
 	if (queue.includes(url)) {
-		return;
+		return 'duplicate';
+	}
+	if (queue.length >= MAX_QUEUE_LENGTH) {
+		console.warn(`[critical-css] queue at its ${MAX_QUEUE_LENGTH}-entry limit, dropping ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
+		return 'full';
 	}
 	queue.push(url);
 	processQueue();
+	return 'queued';
 }
 
 async function processQueue() {
@@ -153,6 +199,58 @@ async function processQueue() {
 	processing = false;
 }
 
+const RECEIVER_TIMEOUT_MS = 10_000;
+const RECEIVER_MAX_ATTEMPTS = 3; // 1 initial attempt + 2 retries
+const RECEIVER_RETRY_BASE_DELAY_MS = 500;
+
+/**
+ * Not routed through safeFetch() (lib.js) - that function's whole point is
+ * refusing a private/reserved-address target, but WP_RECEIVER_URL is
+ * trusted operator configuration that, in the common self-hosted
+ * deployment, IS a private address by design (WordPress on an adjacent
+ * container on the same private Docker network - see
+ * docker-compose.example.yml). What this needs instead is a timeout and a
+ * small bounded retry: this service has a single queue worker (see the
+ * file-level comment above), so one hung or flaky receiver call would
+ * otherwise stall every URL behind it in the queue indefinitely.
+ *
+ * Only a network error/timeout or a 5xx is retried - a 4xx (bad secret,
+ * malformed payload, wrong post type, etc.) is a permanent rejection a
+ * retry can't fix, and retrying it would just delay surfacing the real
+ * problem.
+ */
+async function postToReceiverWithRetry(body) {
+	let lastError;
+	for (let attempt = 1; attempt <= RECEIVER_MAX_ATTEMPTS; attempt++) {
+		try {
+			const res = await fetch(WP_RECEIVER_URL, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-WPCC-Secret': SHARED_SECRET,
+				},
+				body,
+				signal: AbortSignal.timeout(RECEIVER_TIMEOUT_MS),
+			});
+			if (res.ok || res.status < 500) {
+				return res; // success, or a permanent rejection nothing here can fix
+			}
+			lastError = new Error(`WordPress receiver returned ${res.status}: ${await res.text()}`);
+		} catch (err) {
+			lastError = err; // network error or timeout - worth retrying
+		}
+		if (attempt < RECEIVER_MAX_ATTEMPTS) {
+			// logSafe() here, not just err.message straight - lastError.message
+			// can be the WordPress receiver's own response body (see the 5xx
+			// branch above, which folds `await res.text()` into the Error it
+			// constructs), not only a network-layer error string.
+			console.warn(`[critical-css] receiver attempt ${attempt}/${RECEIVER_MAX_ATTEMPTS} failed: ${logSafe(lastError.message)}, retrying`); // NOSONAR jssecurity:S5145 - see logSafe() above
+			await new Promise((resolve) => setTimeout(resolve, RECEIVER_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)));
+		}
+	}
+	throw lastError;
+}
+
 async function generateAndSubmit(url) {
 	console.log(`[critical-css] generating for ${logSafe(url)}`);
 
@@ -161,14 +259,7 @@ async function generateAndSubmit(url) {
 		generateForViewport(url, VIEWPORTS.desktop),
 	]);
 
-	const res = await fetch(WP_RECEIVER_URL, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			'X-WPCC-Secret': SHARED_SECRET,
-		},
-		body: JSON.stringify({ url, css_mobile: mobile, css_desktop: desktop }),
-	});
+	const res = await postToReceiverWithRetry(JSON.stringify({ url, css_mobile: mobile, css_desktop: desktop }));
 
 	if (!res.ok) {
 		throw new Error(`WordPress receiver returned ${res.status}: ${await res.text()}`);
@@ -244,16 +335,12 @@ async function isChromiumRequestTargetBlocked(url) {
 		return false; // data:, blob:, about:, chrome-error:, etc. - no real network fetch happens for these
 	}
 
-	if (isBlockedLiteralAddress(target.hostname)) {
-		return true;
-	}
-
-	try {
-		const addresses = await dnsLookupAsync(target.hostname, { all: true });
-		return addresses.some((a) => isPrivateOrReservedAddress(a.address, a.family));
-	} catch {
-		return true; // couldn't resolve it - fail closed, don't let an erroring lookup through
-	}
+	// Literal-IP-then-DNS-lookup check shared with safeFetch() in lib.js -
+	// see isPrivateOrReservedTarget's own doc comment for the policy and its
+	// one known gap (a DNS-then-connect TOCTOU window, same as everywhere
+	// else in this codebase that can't hook the actual connection's own
+	// resolver).
+	return isPrivateOrReservedTarget(target.hostname);
 }
 
 const ssrfGuardedPages = new WeakSet();
@@ -413,13 +500,34 @@ async function generateForViewport(url, dimensions) {
 	return css.toString();
 }
 
+// Both bound how much work one sweep can trigger even against a hostile or
+// just unexpectedly huge sitemap - a compromised or misconfigured sitemap
+// index could otherwise point at hundreds of sub-sitemaps, or one
+// enormous urlset could enqueue far more renders than this single-worker
+// queue (see MAX_QUEUE_LENGTH above) could ever work through before the
+// next sweep starts piling more on top.
+const MAX_SUB_SITEMAPS = 50;
+const MAX_SITEMAP_URLS = 5000;
+
 async function fetchSitemapUrls() {
 	if (!SITE_SITEMAP_URL) {
 		return [];
 	}
 
-	const res = await fetch(SITE_SITEMAP_URL);
-	const xml = await res.text();
+	// The sitemap itself is fetched under the same policy as everything
+	// else this service treats as attacker-reachable (see safeFetch's own
+	// doc comment in lib.js): SITE_SITEMAP_URL is operator config, but
+	// what it POINTS AT - and, one level down, what a sitemap INDEX's own
+	// `loc` entries point at - isn't, and previously used a plain fetch()
+	// with none of the SSRF protections the rest of this service already
+	// applies to page/stylesheet fetching (ssrfSafeBeforeRequest/
+	// ssrfSafeDnsLookup) and Chromium's own requests
+	// (isChromiumRequestTargetBlocked). expectedHostname pins every hop -
+	// including the top-level fetch - to the sitemap's own host, so even a
+	// compromised/misconfigured SITE_SITEMAP_URL can't redirect this
+	// service somewhere else entirely.
+	const siteHostname = new URL(SITE_SITEMAP_URL).hostname;
+	const { text: xml } = await safeFetch(SITE_SITEMAP_URL, { expectedHostname: siteHostname });
 	const parsed = await parseStringPromise(xml);
 
 	// Sitemap index (Rank Math and most other SEO plugins use this format):
@@ -429,20 +537,29 @@ async function fetchSitemapUrls() {
 	// never resolve, so the receiver would 404 every one of them after a
 	// full Puppeteer render already paid for both viewports. Adjust this
 	// pattern if your sitemap generator names sub-sitemaps differently.
+	//
+	// The pathname filter below only ever matched the URL's shape, never
+	// its destination - a malicious/compromised sitemap index could point
+	// a "post-sitemap.xml"-shaped loc at an entirely different host (a
+	// private/cloud-metadata address, or just somewhere else public) and
+	// this would happily fetch it. safeFetch's expectedHostname (passed
+	// through to fetchUrlsFromSitemap below) is what actually closes that,
+	// not this filter - the filter still exists purely to skip sitemap
+	// types the receiver can never resolve anyway.
 	if (parsed.sitemapindex) {
 		const subSitemaps = parsed.sitemapindex.sitemap
 			.map((s) => s.loc[0])
-			.filter((loc) => /\/(post|page)-sitemap\d*\.xml$/i.test(loc));
-		const nested = await Promise.all(subSitemaps.map(fetchUrlsFromSitemap));
-		return nested.flat();
+			.filter((loc) => /\/(post|page)-sitemap\d*\.xml$/i.test(loc))
+			.slice(0, MAX_SUB_SITEMAPS);
+		const nested = await Promise.all(subSitemaps.map((loc) => fetchUrlsFromSitemap(loc, siteHostname)));
+		return nested.flat().slice(0, MAX_SITEMAP_URLS);
 	}
 
-	return extractUrlsFromUrlset(parsed);
+	return extractUrlsFromUrlset(parsed).slice(0, MAX_SITEMAP_URLS);
 }
 
-async function fetchUrlsFromSitemap(sitemapUrl) {
-	const res = await fetch(sitemapUrl);
-	const xml = await res.text();
+async function fetchUrlsFromSitemap(sitemapUrl, expectedHostname) {
+	const { text: xml } = await safeFetch(sitemapUrl, { expectedHostname });
 	const parsed = await parseStringPromise(xml);
 	return extractUrlsFromUrlset(parsed);
 }
@@ -453,7 +570,18 @@ async function runSweep() {
 	console.log(`[critical-css] sweep found ${urls.length} URLs`);
 
 	for (const url of urls) {
-		enqueue(url);
+		// Stops feeding the queue as soon as it's actually full, rather than
+		// continuing to call enqueue() on every remaining URL only to have
+		// each one dropped one at a time - each of those calls would still
+		// pay the SWEEP_DELAY_MS pause for no result. Whatever this sweep
+		// didn't get to stays a candidate for the NEXT sweep (this is
+		// already a periodic backfill, not a one-shot job - see this file's
+		// header comment), which is a better outcome than burning through
+		// the rest of a large sitemap against a queue that has no room.
+		if (enqueue(url) === 'full') {
+			console.warn(`[critical-css] sweep stopping early: queue is full, ${logSafe(url)} and the rest of this batch will be picked up by the next sweep`); // NOSONAR jssecurity:S5145 - see logSafe() above
+			break;
+		}
 		await new Promise((resolve) => setTimeout(resolve, SWEEP_DELAY_MS));
 	}
 }
@@ -463,7 +591,7 @@ app.disable('x-powered-by'); // don't advertise the framework/version to every c
 app.use(express.json());
 
 app.get('/health', (req, res) => {
-	res.json({ status: 'ok', queueLength: queue.length, processing });
+	res.json({ status: 'ok', queueLength: queue.length, queueFull: queue.length >= MAX_QUEUE_LENGTH, processing });
 });
 
 app.post('/generate', (req, res) => {
@@ -481,8 +609,17 @@ app.post('/generate', (req, res) => {
 		return res.status(400).json({ error: `url is required and must be on ${ALLOWED_HOSTNAME}` });
 	}
 
-	enqueue(url);
-	res.status(202).json({ status: 'queued', queueLength: queue.length });
+	const result = enqueue(url);
+	if (result === 'full') {
+		// 503, not 202: the URL was NOT accepted, and this is retryable once
+		// the queue has drained - an authenticated webhook caller getting a
+		// 202 here (this route's previous, unconditional response) had no
+		// reason to ever retry, so a burst that filled the queue meant that
+		// caller's URL was just silently gone.
+		res.set('Retry-After', '30');
+		return res.status(503).json({ error: 'queue is full, retry shortly', queueLength: queue.length });
+	}
+	res.status(202).json({ status: result === 'duplicate' ? 'already queued' : 'queued', queueLength: queue.length });
 });
 
 app.post('/sweep', (req, res) => {
