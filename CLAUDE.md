@@ -28,11 +28,11 @@ Touch only what the task requires. Match existing conventions instead of introdu
 
 ## 4. You prepare; the user decides and merges
 
-**Never merge a PR yourself. Never push a release tag without an explicit, separate confirmation, no matter how ready it looks.**
+**Never merge a PR yourself — least of all a `release: vX.Y.Z` one, since merging it is now the entire release trigger.**
 
-Every PR in this repo is merged by the user, not by an agent — prepare it, get its checks green, resolve review threads (via the GraphQL `resolveReviewThread` mutation — a plain reply does not clear a `BLOCKED` PR), and then wait. A version tag push is a real, externally-visible action — it publishes to GHCR, to Docker Hub, and creates a GitHub Release — and needs the user's explicit go-ahead in that moment, even if they approved a similar tag push earlier in the same conversation. One approval covers one action, not a standing policy.
+Every PR in this repo is merged by the user, not by an agent — prepare it, get its checks green, resolve review threads (via the GraphQL `resolveReviewThread` mutation — a plain reply does not clear a `BLOCKED` PR), and then wait. [`release.yml`](.github/workflows/release.yml) fires automatically off a `release: vX.Y.Z` commit landing on `main` and takes the rest of the way to GHCR/Docker Hub/GitHub Release from there with no further steps from anyone — so there is no separate tag-push confirmation to ask for anymore, but that also means the release PR itself deserves the scrutiny a manual publish step used to get: verify the version bump is correct and the four places it must match (`AGENTS.md`'s "Changelog and releases") actually match, *before* it's merged, not after.
 
-**The test:** is this action something only the user should click "yes" to, right before it happens?
+**The test:** would you be comfortable with this specific PR merging and immediately, irreversibly publishing — because that's exactly what happens?
 
 ## 5. Compounding engineering
 

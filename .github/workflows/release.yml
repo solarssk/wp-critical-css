@@ -1,0 +1,241 @@
+name: Release
+
+# After a "release: vX.Y.Z" commit lands on main (a release PR bumping
+# service/package.json's version, the plugin's Version header, and
+# readme.txt's Stable tag together - see AGENTS.md's "Changelog and
+# releases" section), create the git tag + GitHub Release and explicitly
+# dispatch publish-container.yml and publish-plugin.yml. GITHUB_TOKEN-
+# authored tag pushes (which `gh release create` performs under the hood)
+# do not themselves start other workflows listening on `push: tags:` -
+# GitHub's own loop-prevention - so both publish workflows need an
+# explicit `gh workflow run` dispatch here instead of relying on their own
+# tag trigger.
+#
+# The release commit isn't necessarily HEAD of the push in general (a
+# "Create a merge commit" merge would land it one or more commits behind
+# the merge commit that actually triggers this push event), so detection
+# below checks every commit the push introduced via the compare API, not
+# just HEAD - it fires the same way regardless of merge method. This repo
+# currently always squash-merges, which appends " (#NNN)" to the PR title
+# as the commit subject; the match below tolerates that suffix. Detection
+# does NOT gate on whether the GitHub Release already exists - a rerun
+# after a partial failure (release created but a downstream dispatch
+# failed) should still retry those steps, not skip them.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+# Keyed per-push (github.sha), not per-repository: a GitHub concurrency
+# group holds at most one running AND one pending run, and a THIRD run
+# queueing while one is running and one is already pending REPLACES the
+# pending run rather than queueing behind it - it's simply discarded,
+# never runs at all. This repo pushes to main often enough (several PRs
+# merged within minutes of each other is the normal case, not an edge
+# case) that a single shared group would risk silently evicting the one
+# push that actually matters - the "release: vX.Y.Z" commit - if two
+# unrelated pushes landed close together around it. Keying per-SHA instead
+# means every push gets its own group, so nothing can ever evict another
+# push's run. The one thing the old shared group protected against - two
+# overlapping runs both trying to create the same GitHub Release - is
+# already handled independently by the "already exists" check in the
+# "Create GitHub Release and tag" step below, so serializing runs against
+# each other was never actually load-bearing for correctness.
+concurrency:
+  group: release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    # Generous: this job can block on "Wait for both publish workflows to
+    # succeed" below for as long as those workflows' own job timeouts allow
+    # (publish-container.yml: 25m, publish-plugin.yml: 10m) plus time spent
+    # locating each dispatched run, sequentially.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Detect release commit
+        id: bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./service/package.json').version")"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::service/package.json has an invalid version: $VERSION"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          TAG_RE="v${VERSION//./\\.}"
+
+          BEFORE='${{ github.event.before }}'
+          AFTER='${{ github.sha }}'
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            MESSAGES="$(git log -1 --format=%s "$AFTER")"
+          else
+            MESSAGES="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE}...${AFTER}" --jq '.commits[].commit.message')"
+          fi
+
+          if ! printf '%s\n' "$MESSAGES" | grep -qiE "^release:[[:space:]]+${TAG_RE}([[:space:]]*\(#[0-9]+\))?\$"; then
+            echo "This push didn't introduce a 'release: ${TAG}' commit - skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "skip=false"
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release commit detected: ${TAG}"
+
+      # Same four places AGENTS.md documents having to match, checked here
+      # before a tag/release is created rather than after - publish-plugin.yml
+      # re-checks the plugin header and Stable tag again at tag time as a
+      # second line of defense (the "Verify plugin header/readme.txt" steps
+      # in that workflow), but catching a mismatch here means no public
+      # tag/release exists yet that would need unwinding.
+      - name: Verify release artifacts and version lockstep
+        if: steps.bump.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.bump.outputs.version }}'
+          TAG='${{ steps.bump.outputs.tag }}'
+
+          TITLE_FILE=".github/release-notes/${TAG}.title"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          for f in "$TITLE_FILE" "$NOTES_FILE"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::$f is missing or empty - add it as part of the release PR."
+              exit 1
+            fi
+          done
+
+          if ! grep -q "^## \[${VERSION}\] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${VERSION}] - ...' heading."
+            exit 1
+          fi
+
+          HEADER_VERSION=$(grep -oP '^\s*\*\s*Version:\s*\K\S+' wordpress-plugin/wp-critical-css/wp-critical-css.php)
+          if [ "$HEADER_VERSION" != "$VERSION" ]; then
+            echo "::error::Plugin header Version ($HEADER_VERSION) doesn't match service/package.json ($VERSION)."
+            exit 1
+          fi
+
+          STABLE_TAG=$(grep -oP '^Stable tag:\s*\K\S+' wordpress-plugin/wp-critical-css/readme.txt)
+          if [ "$STABLE_TAG" != "$VERSION" ]; then
+            echo "::error::readme.txt Stable tag ($STABLE_TAG) doesn't match service/package.json ($VERSION)."
+            exit 1
+          fi
+
+          echo "Release artifacts and version lockstep OK for ${TAG}."
+
+      - name: Create GitHub Release and tag
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.bump.outputs.tag }}'
+          VERSION='${{ steps.bump.outputs.version }}'
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          DISPLAY_TITLE="$(bash scripts/release-display-title.sh "$VERSION")"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists - skipping create."
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --title "$DISPLAY_TITLE" \
+            --notes-file "$NOTES_FILE" \
+            --latest
+          echo "Created $TAG ($DISPLAY_TITLE)."
+
+      # `gh release create` above tags and pushes with GITHUB_TOKEN, which
+      # does NOT trigger publish-container.yml/publish-plugin.yml's own
+      # `push: tags:` listeners - dispatch both explicitly instead. Each
+      # dispatch needs `-f ref="$TAG"` alongside `--ref "$TAG"`: `--ref`
+      # only selects which commit's workflow *definition* runs, but both
+      # workflows resolve their actual publish target from the `inputs.ref`
+      # field, which defaults to `refs/heads/main` when not explicitly
+      # supplied - without `-f ref=` each would silently resolve back to
+      # main (publish=false) and skip publishing entirely instead of
+      # publishing the tag.
+      - name: Trigger container and plugin publish
+        if: steps.bump.outputs.skip != 'true'
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.bump.outputs.tag }}'
+          echo "dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          gh workflow run publish-container.yml --ref "$TAG" -f ref="$TAG"
+          gh workflow run publish-plugin.yml --ref "$TAG" -f ref="$TAG"
+          echo "Dispatched publish-container.yml and publish-plugin.yml for ${TAG}."
+
+      # The dispatch above only creates workflow_dispatch events and returns
+      # immediately - it does not wait for those runs, so without this step
+      # the milestone below would close (marking the version "shipped")
+      # even if the container or plugin publish later failed. `gh workflow
+      # run` doesn't hand back the run it created, so each run is located
+      # by polling `gh run list` for a workflow_dispatch run created at or
+      # after this job's own dispatch timestamp, then `gh run watch
+      # --exit-status` blocks on it and fails this job if that run fails.
+      - name: Wait for both publish workflows to succeed
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SINCE='${{ steps.dispatch.outputs.dispatched_at }}'
+
+          wait_for_workflow() {
+            local workflow="$1"
+            local run_id=""
+            for _ in $(seq 1 30); do
+              run_id="$(gh run list --workflow "$workflow" --limit 10 \
+                --json databaseId,createdAt,event \
+                --jq "[.[] | select(.event == \"workflow_dispatch\" and .createdAt >= \"${SINCE}\")] | sort_by(.createdAt) | .[0].databaseId // empty")"
+              [ -n "$run_id" ] && break
+              sleep 10
+            done
+            if [ -z "$run_id" ]; then
+              echo "::error::Could not find a dispatched run of ${workflow} after 5 minutes."
+              exit 1
+            fi
+            echo "Waiting for ${workflow} run ${run_id}..."
+            gh run watch "$run_id" --exit-status
+          }
+
+          wait_for_workflow publish-container.yml
+          wait_for_workflow publish-plugin.yml
+          echo "Both publish workflows succeeded."
+
+      - name: Close matching GitHub milestone
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.bump.outputs.tag }}'
+          MID="$(gh api "repos/${GITHUB_REPOSITORY}/milestones" \
+            --jq ".[] | select(.title == \"${TAG}\" and .state == \"open\") | .number" \
+            | head -n 1)"
+          if [ -z "$MID" ]; then
+            echo "No open milestone titled ${TAG} - skipping."
+            exit 0
+          fi
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/milestones/${MID}" -f state=closed
+          echo "Closed milestone ${TAG} (#${MID})"
