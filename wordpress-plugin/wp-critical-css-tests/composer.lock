@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "926aa733edd35e192863b3df0b959d41",
+    "content-hash": "a3bff03f972e76fa8c9c39032cdb808f",
     "packages": [],
     "packages-dev": [
         {
@@ -175,24 +175,24 @@
         },
         {
             "name": "johnpbloch/wordpress-core",
-            "version": "6.9.7",
+            "version": "7.1.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/johnpbloch/wordpress-core.git",
-                "reference": "6b9fb51da302606a7f4e43da0153a77281d24fdd"
+                "reference": "ecdd7896958ec6c002b421eb7912b00dda7187b9"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/johnpbloch/wordpress-core/zipball/6b9fb51da302606a7f4e43da0153a77281d24fdd",
-                "reference": "6b9fb51da302606a7f4e43da0153a77281d24fdd",
+                "url": "https://api.github.com/repos/johnpbloch/wordpress-core/zipball/ecdd7896958ec6c002b421eb7912b00dda7187b9",
+                "reference": "ecdd7896958ec6c002b421eb7912b00dda7187b9",
                 "shasum": ""
             },
             "require": {
                 "ext-json": "*",
-                "php": ">=7.2.24"
+                "php": ">=7.4"
             },
             "provide": {
-                "wordpress/core-implementation": "6.9.7"
+                "wordpress/core-implementation": "7.1.0"
             },
             "type": "wordpress-core",
             "notification-url": "https://packagist.org/downloads/",
@@ -219,7 +219,7 @@
                 "source": "https://core.trac.wordpress.org/browser",
                 "wiki": "https://codex.wordpress.org/"
             },
-            "time": "2026-08-12T22:40:30+00:00"
+            "time": "2026-08-19T20:43:15+00:00"
         },
         {
             "name": "johnpbloch/wordpress-core-installer",
