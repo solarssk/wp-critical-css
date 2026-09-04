@@ -301,6 +301,19 @@ jobs:
           extensions: mysqli, zip
           coverage: ${{ matrix.coverage && 'pcov' || 'none' }}
           tools: composer
+          # pcov only instruments files under pcov.directory, which defaults
+          # to the process's own working directory - this job's working
+          # directory is wordpress-plugin/wp-critical-css-tests/, but the
+          # actual plugin source it needs to cover lives in the SIBLING
+          # wordpress-plugin/wp-critical-css/ directory, entirely outside
+          # that default scope. Without this, every single line in the real
+          # plugin source reports as uncovered regardless of how much the
+          # test suite actually exercises it (confirmed directly: every
+          # line in coverage.xml showed count="0", not just new/changed
+          # ones) - phpunit.xml.dist's own <coverage><include> filter picks
+          # the right files to REPORT on, but can't make pcov collect data
+          # it was never configured to instrument in the first place.
+          ini-values: pcov.directory=${{ github.workspace }}/wordpress-plugin
 
       - name: Install dependencies
         run: composer install --no-interaction --no-progress
