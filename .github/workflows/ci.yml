@@ -395,6 +395,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [build-test, phpunit]
+    # GitHub withholds repository secrets entirely from fork-triggered and
+    # Dependabot pull_request runs (same platform behavior the Codecov steps
+    # in build-test above already document/rely on) - SONAR_TOKEN is no
+    # exception, and the scan action treats a missing one as a hard error,
+    # not a graceful skip. The `secrets` context isn't available in a
+    # job-level `if:` at all (confirmed directly via actionlint: "context
+    # secrets is not allowed here"), so this checks the two conditions
+    # GitHub actually withholds secrets for instead - not the base repo
+    # (a fork), or the Dependabot bot actor (withheld even though
+    # Dependabot PRs land in this same repo, not a fork). A plain `push`
+    # (e.g. after a PR merges to main) always has secrets, regardless.
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     steps:
       # fetch-depth: 0 - SonarCloud's own new-code/blame analysis needs full
       # git history, not just the tip commit a shallow clone would give it.
