@@ -75,6 +75,16 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # Consumed by the sonarcloud-scan job below (via needs: + download-artifact)
+      # so it can report real JS coverage instead of the 0% SonarCloud's
+      # default quality gate would otherwise see for every line in service/.
+      - name: Upload JS coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: js-coverage
+          path: service/lcov.info
+          retention-days: 1
+
       # No job-level env/if-gate on the secret: an earlier version set
       # CODECOV_TOKEN as a job-level env var so the upload step below could
       # be gated with `if: env.CODECOV_TOKEN != ''` - but a job-level env
@@ -212,3 +222,217 @@ jobs:
           done
           curl -sf http://localhost:3939/health | grep -q '"status":"ok"'
           docker stop wpcc-smoke
+
+  # Moved here from the former php-tests.yml (a separate workflow file) so
+  # sonarcloud-scan below can `needs:` this job directly and download its
+  # coverage artifact - GitHub Actions `needs:`/same-run artifact sharing
+  # only works within a single workflow file, and the PHP side of this
+  # project's SonarCloud coverage would otherwise have no reliable way to
+  # reach a job living in a different workflow.
+  #
+  # WordPress Playground CLI (npx @wp-playground/cli@latest php --auto-mount
+  # -- vendor/bin/phpunit ...) was tried first, per the Playground Handbook's
+  # own guide (developer.wordpress.org/playground/handbook/guides/phpunit-testing/)
+  # - it genuinely boots a real, ephemeral WordPress instance and can run an
+  # arbitrary PHP script/PHPUnit binary inside it (confirmed: --auto-mount
+  # correctly mounts this plugin, and vendor/bin/phpunit --version runs fine).
+  # But actually bootstrapping the real WP core PHPUnit test suite inside it
+  # - requiring wp-phpunit/wp-phpunit's own includes/bootstrap.php, the step
+  # every WP_UnitTestCase-based test needs - reproducibly crashed the whole
+  # process with zero output and a bare exit code 1, both called directly
+  # and via PHPUnit, across explicit --verbosity=debug, a disabled sandbox,
+  # and an enlarged Node heap; a minimal script that stops short of that
+  # step works fine, isolating the crash to that one step specifically.
+  # That's a concrete, reproduced blocker, not "seemed complicated" - so
+  # this job uses the documented fallback instead: shivammathur/setup-php +
+  # wp-phpunit/wp-phpunit (composer) + johnpbloch/wordpress-core (composer,
+  # for the actual WP core source wp-phpunit itself doesn't ship) + a MySQL
+  # service container, matching the classic install-wp-tests.sh shape.
+  phpunit:
+    name: PHPUnit (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # This plugin's own declared minimums - see wp-critical-css.php's
+          # "Requires PHP"/"Requires at least" header.
+          - label: 'PHP 7.4, WordPress 6.0'
+            php-version: '7.4'
+            wp-constraint: '6.0.*'
+            coverage: false
+          # Current widely-supported PHP (not the bleeding-edge 8.5 release)
+          # + whatever WordPress core actually reports as latest stable.
+          # The one leg that generates a coverage report - one is enough
+          # for SonarCloud's new-code coverage metric, and running the
+          # coverage driver on both legs would just double the cost for no
+          # extra signal.
+          - label: 'PHP 8.3, WordPress latest'
+            php-version: '8.3'
+            wp-constraint: ''
+            coverage: true
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: wpcc_test
+          MYSQL_USER: wpcc_test
+          MYSQL_PASSWORD: wpcc_test
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    defaults:
+      run:
+        working-directory: wordpress-plugin/wp-critical-css-tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mysqli, zip
+          coverage: ${{ matrix.coverage && 'pcov' || 'none' }}
+          tools: composer
+          # pcov only instruments files under pcov.directory, which defaults
+          # to the process's own working directory - this job's working
+          # directory is wordpress-plugin/wp-critical-css-tests/, but the
+          # actual plugin source it needs to cover lives in the SIBLING
+          # wordpress-plugin/wp-critical-css/ directory, entirely outside
+          # that default scope. Without this, every single line in the real
+          # plugin source reports as uncovered regardless of how much the
+          # test suite actually exercises it (confirmed directly: every
+          # line in coverage.xml showed count="0", not just new/changed
+          # ones) - phpunit.xml.dist's own <coverage><include> filter picks
+          # the right files to REPORT on, but can't make pcov collect data
+          # it was never configured to instrument in the first place.
+          ini-values: pcov.directory=${{ github.workspace }}/wordpress-plugin
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+
+      # Only the PHP 7.4 / WP 6.0 leg needs this - composer.json's own
+      # unconstrained ^6.0 already resolves to WordPress core's actual
+      # latest stable release for the other leg. --with-all-dependencies so
+      # this can downgrade phpunit/phpunit's own transitive deps too, if a
+      # newer one of those needed a newer WP/PHP than 6.0/7.4 provides.
+      - name: Pin WordPress core + test suite to ${{ matrix.wp-constraint }}
+        if: matrix.wp-constraint != ''
+        run: |
+          composer require --dev \
+            "wp-phpunit/wp-phpunit:${{ matrix.wp-constraint }}" \
+            "johnpbloch/wordpress-core:${{ matrix.wp-constraint }}" \
+            --no-interaction --with-all-dependencies
+
+      - name: Run PHPUnit
+        run: vendor/bin/phpunit -c phpunit.xml.dist ${{ matrix.coverage && '--coverage-clover=coverage.xml' || '' }}
+
+      - name: Upload PHP coverage report
+        if: matrix.coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: php-coverage
+          path: wordpress-plugin/wp-critical-css-tests/coverage.xml
+          retention-days: 1
+
+  phpcs:
+    name: PHPCS (WordPress Coding Standards)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: wordpress-plugin/wp-critical-css-tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+
+      - name: Run PHPCS
+        run: vendor/bin/phpcs
+
+  plugin-check:
+    name: WordPress Plugin Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Runs Plugin Check (github.com/WordPress/plugin-check) via a wp-env
+      # instance it manages itself - complements WPCS above rather than
+      # duplicating it: catches plugin-header/readme/i18n/enqueue/security
+      # checks specific to the .org plugin guidelines that generic PHPCS
+      # rules don't cover. build-dir points at wordpress-plugin/wp-critical-css
+      # specifically (not wp-critical-css-tests) - that's exactly the
+      # directory publish-plugin.yml zips verbatim as the real, shipped
+      # plugin (see its own "Build plugin zip" step), so it needs to be
+      # clean of composer.json/vendor/tests/etc - which is also why those
+      # live in the sibling wp-critical-css-tests/ directory instead of
+      # here, rather than being excluded from this scan after the fact.
+      - uses: wordpress/plugin-check-action@10857da14b6c2246d15402b3e69f777edcf8c12e # v1.1.9
+        with:
+          build-dir: './wordpress-plugin/wp-critical-css'
+
+  sonarcloud-scan:
+    name: SonarCloud scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [build-test, phpunit]
+    # GitHub withholds repository secrets entirely from fork-triggered and
+    # Dependabot pull_request runs (same platform behavior the Codecov steps
+    # in build-test above already document/rely on) - SONAR_TOKEN is no
+    # exception, and the scan action treats a missing one as a hard error,
+    # not a graceful skip. The `secrets` context isn't available in a
+    # job-level `if:` at all (confirmed directly via actionlint: "context
+    # secrets is not allowed here"), so this checks the two conditions
+    # GitHub actually withholds secrets for instead - not the base repo
+    # (a fork), or the Dependabot bot actor (withheld even though
+    # Dependabot PRs land in this same repo, not a fork). A plain `push`
+    # (e.g. after a PR merges to main) always has secrets, regardless.
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    steps:
+      # fetch-depth: 0 - SonarCloud's own new-code/blame analysis needs full
+      # git history, not just the tip commit a shallow clone would give it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: js-coverage
+          path: service
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: php-coverage
+          path: wordpress-plugin/wp-critical-css-tests
+
+      # CI-based analysis (fed by SONAR_TOKEN below), replacing this
+      # project's previous Automatic Analysis mode - see sonar-project.properties'
+      # own comment for why: Automatic Analysis has no config surface for
+      # issue exclusions at all, which this project needs (php:S105 can't be
+      # fixed in code - WordPress Coding Standards mandate tabs for PHP).
+      # SonarCloud's GitHub App still posts the same "SonarCloud Code
+      # Analysis" PR check/status either way - only the analysis source
+      # changes, not the check branch protection already requires.
+      - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

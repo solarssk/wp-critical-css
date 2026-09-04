@@ -50,8 +50,8 @@ if ( ! function_exists( 'wpcc_receiver_fixed_window_limited' ) ) {
 
 		if ( is_string( $state ) && false !== strpos( $state, ':' ) ) {
 			list( $stored_start, $stored_count ) = explode( ':', $state, 2 );
-			$window_start = (int) $stored_start;
-			$count        = (int) $stored_count;
+			$window_start                        = (int) $stored_start;
+			$count                               = (int) $stored_count;
 		}
 
 		if ( 0 === $window_start || ( $now - $window_start ) >= WPCC_RECEIVER_RATE_WINDOW ) {
@@ -75,9 +75,9 @@ if ( ! function_exists( 'wpcc_receiver_auth_rate_limited' ) ) {
 	 * @return bool True if this caller has failed the secret check too often recently and should be rejected outright.
 	 */
 	function wpcc_receiver_auth_rate_limited() { // NOSONAR php:S100 - see wpcc_receiver_fixed_window_limited() above
-		// A transient key just needs to be short and collision-resistant enough for a coarse per-IP bucket, not cryptographically strong - sanitize_key() (strip to a-z0-9_-) is the WordPress-native way to get there without reaching for a hash function at all.
-		$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : 'unknown';
-		return wpcc_receiver_fixed_window_limited( 'wpcc_rl_auth_' . sanitize_key( $ip ), WPCC_RECEIVER_RATE_LIMIT );
+		// A transient key just needs to be short and collision-resistant enough for a coarse per-IP bucket, not cryptographically strong - sanitize_key() (strip to a-z0-9_-) is the WordPress-native way to get there without reaching for a hash function at all. wp_unslash() first and sanitize_key() applied to the read itself (not deferred to the call site below) so nothing unsanitized from $_SERVER ever gets held in a local variable, even briefly.
+		$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_key( wp_unslash( (string) $_SERVER['REMOTE_ADDR'] ) ) : 'unknown';
+		return wpcc_receiver_fixed_window_limited( 'wpcc_rl_auth_' . $ip, WPCC_RECEIVER_RATE_LIMIT );
 	}
 }
 
@@ -92,17 +92,20 @@ if ( ! function_exists( 'wpcc_receiver_write_rate_limited' ) ) {
 	}
 }
 
-add_action( 'rest_api_init', function () {
-	register_rest_route(
-		'wpcc/v1',
-		'/critical-css',
-		array(
-			'methods'             => 'POST',
-			'callback'            => 'wpcc_receive',
-			'permission_callback' => '__return_true',
-		)
-	);
-} );
+add_action(
+	'rest_api_init',
+	function () {
+		register_rest_route(
+			'wpcc/v1',
+			'/critical-css',
+			array(
+				'methods'             => 'POST',
+				'callback'            => 'wpcc_receive',
+				'permission_callback' => '__return_true',
+			)
+		);
+	}
+);
 
 if ( ! function_exists( 'wpcc_receiver_auth_error' ) ) {
 	/**
@@ -212,21 +215,45 @@ function wpcc_receive( WP_REST_Request $request ) { // NOSONAR php:S1142 - each 
 	// The homepage is never resolvable via url_to_postid() below, EVEN WHEN it's set to a specific static page (Settings > Reading > "A static page") - front-page routing goes through a separate mechanism (is_front_page()/page_on_front), not the standard rewrite-rule-based URL-to-post lookup every other single post/page uses. When the homepage instead shows the latest-posts index, there was never a single post_id to attach this to in the first place. Confirmed against WP Rocket's own critical-CSS generator, which hits the identical limitation and - rather than trying to force a post_id fit - stores the homepage's CSS entirely separately from any specific post (see wpcc_receiver_store_front_page_css() above).
 	if ( untrailingslashit( $url ) === untrailingslashit( home_url() ) ) {
 		wpcc_receiver_store_front_page_css( $css_mobile, $css_desktop );
-		return new WP_REST_Response( array( 'status' => 'stored', 'target' => 'front_page' ), 200 );
+		return new WP_REST_Response(
+			array(
+				'status' => 'stored',
+				'target' => 'front_page',
+			),
+			200
+		);
 	}
 
 	// Only single posts/pages resolve here otherwise - archive pages (tags, categories, author, date) can't be looked up this way and will always 404. Filter those out on the generator side (see the sitemap-sweep filtering in service/server.js) rather than trying to handle them here.
 	$post_id = url_to_postid( $url );
 
 	if ( ! $post_id ) {
-		return new WP_REST_Response( array( 'error' => 'could not resolve url to a post', 'url' => $url ), 404 );
+		return new WP_REST_Response(
+			array(
+				'error' => 'could not resolve url to a post',
+				'url'   => $url,
+			),
+			404
+		);
 	}
 
 	if ( ! wpcc_receiver_post_is_eligible( $post_id ) ) {
-		return new WP_REST_Response( array( 'error' => 'post is not an eligible published post/page', 'url' => $url ), 404 );
+		return new WP_REST_Response(
+			array(
+				'error' => 'post is not an eligible published post/page',
+				'url'   => $url,
+			),
+			404
+		);
 	}
 
 	wpcc_receiver_store_css( $post_id, $css_mobile, $css_desktop );
 
-	return new WP_REST_Response( array( 'status' => 'stored', 'post_id' => $post_id ), 200 );
+	return new WP_REST_Response(
+		array(
+			'status'  => 'stored',
+			'post_id' => $post_id,
+		),
+		200
+	);
 }

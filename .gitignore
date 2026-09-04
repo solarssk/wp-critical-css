@@ -3,3 +3,13 @@ node_modules/
 .DS_Store
 lcov.info
 junit.xml
+
+# PHP/WordPress test tooling (wordpress-plugin/wp-critical-css-tests/ - kept
+# out of wordpress-plugin/wp-critical-css/ itself, since that's the exact
+# directory publish-plugin.yml zips as the real, shipped plugin).
+# composer.json, composer.lock, and tests/php/wp-tests-config.php
+# (placeholder local-dev DB creds only, all env-overridable - see its own
+# docblock) ARE tracked, only the tooling's installed/downloaded output is not.
+wordpress-plugin/wp-critical-css-tests/vendor/
+wordpress-plugin/wp-critical-css-tests/tests/php/wordpress-core/
+wordpress-plugin/wp-critical-css-tests/.phpunit.result.cache

@@ -1,0 +1,106 @@
+<?xml version="1.0"?>
+<ruleset name="WP Critical CSS">
+	<description>WordPress Coding Standards for the WP Critical CSS plugin.</description>
+
+	<!--
+	Two trees: this directory itself (the test suite + tooling) and the
+	sibling ../wp-critical-css (the actual plugin source, wp-critical-css.php
+	+ includes/*.php) - kept as separate directories so the real plugin
+	directory ships clean (see wp-critical-css-tests/tests/php/bootstrap.php's
+	own docblock on _wpcc_manually_load_plugin() for why), but WPCS still
+	needs to lint both.
+	-->
+	<file>.</file>
+	<file>../wp-critical-css</file>
+
+	<!-- Composer/test tooling, not plugin source. -->
+	<exclude-pattern>/vendor/*</exclude-pattern>
+	<exclude-pattern>/tests/php/wordpress-core/*</exclude-pattern>
+
+	<arg value="sp"/>
+	<arg name="colors"/>
+	<arg name="extensions" value="php"/>
+
+	<!-- This plugin's own minimum, matches wp-critical-css.php's "Requires PHP" header. -->
+	<config name="testVersion" value="7.4-"/>
+
+	<!--
+	WordPress-Extra (naming, security, arrays, PHP compat - real functional
+	sniffs), not the full "WordPress" ruleset, which also pulls in
+	WordPress-Docs. WordPress-Docs mandates a full docblock with a parameter
+	comment on every single function/parameter and a full-stop-terminated
+	sentence on every inline comment; this plugin's existing comment style
+	(long, prose-form doc comments explaining *why*, established well before
+	this PHPCS setup - see e.g. wpcc-receiver.php's own file-level docblock)
+	already documents intent thoroughly but doesn't follow that exact
+	mechanical shape, and reformatting every comment in the plugin purely to
+	satisfy it is out of scope for adding test coverage and static analysis.
+	This is WPCS's own documented split (see WordPress/ruleset.xml, which
+	composes WordPress-Docs + WordPress-Extra into "WordPress"), not a
+	one-off carve-out.
+	-->
+	<rule ref="WordPress-Extra">
+		<!--
+		Every function in this plugin's own includes/*.php that carries a
+		NOSONAR suppression (see e.g. wpcc-shared.php's own file-level NOSONAR
+		docblock, or wpcc-trigger.php's wpcc_schedule_notify()) places that
+		comment on the function-declaration line, right after the opening
+		brace - a repo-wide convention established well before this PHPCS
+		setup, consistently in every affected file, keeping each suppression
+		visually attached to the function it justifies. This sniff wants the
+		opening brace to be the last character on the line with nothing
+		following, which is a real conflict with that convention (not a false
+		positive), not the NOSONAR placement itself being wrong - moving 15+
+		existing comments to a new line each, repo-wide, purely to satisfy
+		this one formatting sniff is out of scope for adding test coverage
+		and static analysis.
+		-->
+		<exclude name="Squiz.Functions.MultiLineFunctionDeclaration.ContentAfterBrace"/>
+	</rule>
+
+	<!--
+	Test-only files under tests/php/ intentionally don't follow every
+	plugin-source convention: leading-underscore helper names matching the
+	WP core test suite's own convention (see tests/php/bootstrap.php's
+	_wpcc_manually_load_plugin()), file names that don't start with
+	class-/interface- despite declaring a class, and passing secrets/URLs
+	directly to REST test doubles rather than real, nonce-verified requests.
+	-->
+	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+		<exclude-pattern>/tests/php/*</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.Files.FileName">
+		<exclude-pattern>/tests/php/*</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.Security.NonceVerification">
+		<exclude-pattern>/tests/php/*</exclude-pattern>
+	</rule>
+
+	<!--
+	tests/php/bootstrap.php runs before WordPress (or WP_Filesystem) is
+	loaded at all - it's what LOADS WordPress - so the WP-runtime
+	alternatives these two sniffs steer toward don't exist yet at the point
+	they'd apply here. putenv() is how wp-phpunit/wp-phpunit's own
+	WP_PHPUNIT__DIR/WP_PHPUNIT__TESTS_CONFIG configuration works (see its
+	own README); fwrite( STDERR, ... ) reports a fatal "test suite not
+	found" error before there's any WP_Filesystem to report it through.
+	-->
+	<rule ref="WordPress.PHP.DiscouragedPHPFunctions.runtime_configuration_putenv">
+		<exclude-pattern>/tests/php/bootstrap\.php</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.WP.AlternativeFunctions.file_system_operations_fwrite">
+		<exclude-pattern>/tests/php/bootstrap\.php</exclude-pattern>
+	</rule>
+
+	<!--
+	InjectTest.php's stylesheet-tag strings are wpcc_defer_stylesheet()'s
+	own test fixtures - raw string literals fed straight into the function
+	under test to check its regex logic, never actually output to a
+	browser or registered with WordPress. This sniff's real target (a
+	theme/plugin hand-writing a <link> tag instead of wp_enqueue_style())
+	doesn't apply to a string that's never echoed.
+	-->
+	<rule ref="WordPress.WP.EnqueuedResources.NonEnqueuedStylesheet">
+		<exclude-pattern>/tests/php/InjectTest\.php</exclude-pattern>
+	</rule>
+</ruleset>
