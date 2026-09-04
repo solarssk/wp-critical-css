@@ -1,4 +1,5 @@
 <?php
+// NOSONAR php:S105 - WordPress Coding Standards mandate tabs, not spaces, for PHP indentation; every file under wordpress-plugin/ already uses tabs consistently, and this rule (tagged "psr2" - PSR-2 recommends 4-space indentation) directly conflicts with that. A file-level rule with no anchor line, so this comment is placed here rather than per-line.
 /**
  * Tests for includes/wpcc-trigger.php: the save_post -> WP-Cron scheduling
  * path (wpcc_schedule_notify()) and the cron-dispatched webhook itself
@@ -6,12 +7,13 @@
  * see MissingSecretTest.php for the "constant entirely absent" scenario.
  */
 
+// NOSONAR php:S101 - matches WP core's own test-suite naming (WP_UnitTestCase itself, and every core test class under tests/phpunit/tests/), underscored not PascalCase; consistent with this plugin's snake_case function-naming NOSONAR (php:S100) elsewhere.
 class WPCC_Trigger_Test extends WP_UnitTestCase {
 	use WPCC_Configured_Secret;
 
 	protected function count_scheduled_dispatches( $post_id ) {
 		$count = 0;
-		foreach ( (array) _get_cron_array() as $timestamp => $hooks ) {
+		foreach ( (array) _get_cron_array() as $hooks ) {
 			foreach ( (array) ( $hooks['wpcc_dispatch_webhook'] ?? array() ) as $event ) {
 				if ( isset( $event['args'][0] ) && (int) $event['args'][0] === (int) $post_id ) {
 					++$count;
@@ -143,7 +145,7 @@ class WPCC_Trigger_Test extends WP_UnitTestCase {
 		$captured = null;
 		add_filter(
 			'pre_http_request',
-			function ( $preempt, $args, $url ) use ( &$captured ) {
+			function ( $preempt, $args, $url ) use ( &$captured ) { // NOSONAR php:S1172 - $preempt is part of the pre_http_request filter's own required signature; only $args/$url are needed here.
 				$captured = array(
 					'url'  => $url,
 					'args' => $args,
@@ -174,7 +176,7 @@ class WPCC_Trigger_Test extends WP_UnitTestCase {
 		add_filter(
 			'pre_http_request',
 			// phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed -- $args/$url are part of the pre_http_request filter's own required signature; only $preempt is needed here.
-			function ( $preempt, $args, $url ) use ( &$called ) {
+			function ( $preempt, $args, $url ) use ( &$called ) { // NOSONAR php:S1172 - see the phpcs:ignore comment above.
 				$called = true;
 				return $preempt;
 			},

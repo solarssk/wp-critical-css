@@ -26,18 +26,18 @@ npm ci
 npm test
 ```
 
-For the WordPress plugin (`wordpress-plugin/wp-critical-css/`), PHPUnit runs against a real, ephemeral WordPress install - point it at a local MySQL/MariaDB database first (defaults to a `wpcc_test`/`wpcc_test`/`wpcc_test` DB on `127.0.0.1`; override via `WPCC_TEST_DB_*` env vars - see `tests/php/wp-tests-config.php`):
+For the WordPress plugin, its test/lint tooling lives in the sibling `wordpress-plugin/wp-critical-css-tests/` directory, not inside `wordpress-plugin/wp-critical-css/` itself - that directory is exactly what `publish-plugin.yml` zips verbatim as the real, shipped plugin, so it stays free of `composer.json`/`vendor`/test files. PHPUnit runs against a real, ephemeral WordPress install - point it at a local MySQL/MariaDB database first (defaults to a `wpcc_test`/`wpcc_test`/`wpcc_test` DB on `127.0.0.1`; override via `WPCC_TEST_DB_*` env vars - see `tests/php/wp-tests-config.php`):
 
 ```bash
-cd wordpress-plugin/wp-critical-css
+cd wordpress-plugin/wp-critical-css-tests
 composer install
 vendor/bin/phpunit
 ```
 
-Coding standards for the plugin:
+Coding standards (lints both this directory and the actual plugin source in `../wp-critical-css/`):
 
 ```bash
-cd wordpress-plugin/wp-critical-css
+cd wordpress-plugin/wp-critical-css-tests
 composer install
 vendor/bin/phpcs
 ```

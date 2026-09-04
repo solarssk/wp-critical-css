@@ -27,7 +27,7 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "composer"
-    directory: "/wordpress-plugin/wp-critical-css"
+    directory: "/wordpress-plugin/wp-critical-css-tests"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

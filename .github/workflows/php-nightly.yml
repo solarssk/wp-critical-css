@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: wordpress-plugin/wp-critical-css
+        working-directory: wordpress-plugin/wp-critical-css-tests
     services:
       mysql:
         image: mysql:8.0

@@ -1,4 +1,5 @@
 <?php
+// NOSONAR php:S105 - WordPress Coding Standards mandate tabs, not spaces, for PHP indentation; every file under wordpress-plugin/ already uses tabs consistently, and this rule (tagged "psr2" - PSR-2 recommends 4-space indentation) directly conflicts with that. A file-level rule with no anchor line, so this comment is placed here rather than per-line.
 /**
  * Tests for wpcc_sanitize_css() and wpcc_strip_import_statements()
  * (includes/wpcc-shared.php) - the character-scanner that both the
@@ -8,6 +9,7 @@
  * for consistency with the rest of this suite.
  */
 
+// NOSONAR php:S101 - matches WP core's own test-suite naming (WP_UnitTestCase itself, and every core test class under tests/phpunit/tests/), underscored not PascalCase; consistent with this plugin's snake_case function-naming NOSONAR (php:S100) elsewhere.
 class WPCC_Shared_Css_Sanitizer_Test extends WP_UnitTestCase {
 
 	public function test_strips_style_closing_tag_breakout() {

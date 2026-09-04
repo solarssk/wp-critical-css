@@ -1,10 +1,12 @@
 <?php
+// NOSONAR php:S105 - WordPress Coding Standards mandate tabs, not spaces, for PHP indentation; every file under wordpress-plugin/ already uses tabs consistently, and this rule (tagged "psr2" - PSR-2 recommends 4-space indentation) directly conflicts with that. A file-level rule with no anchor line, so this comment is placed here rather than per-line.
 /**
  * Tests for the wpcc/v1/critical-css REST route (includes/wpcc-receiver.php).
  * WPCC_SHARED_SECRET is always configured here (WPCC_Configured_Secret) -
  * see MissingSecretTest.php for the "constant entirely absent" scenarios.
  */
 
+// NOSONAR php:S101 - matches WP core's own test-suite naming (WP_UnitTestCase itself, and every core test class under tests/phpunit/tests/), underscored not PascalCase; consistent with this plugin's snake_case function-naming NOSONAR (php:S100) elsewhere.
 class WPCC_Receiver_Test extends WP_UnitTestCase {
 	use WPCC_Configured_Secret;
 

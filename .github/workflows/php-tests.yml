@@ -67,7 +67,7 @@ jobs:
           --health-retries=5
     defaults:
       run:
-        working-directory: wordpress-plugin/wp-critical-css
+        working-directory: wordpress-plugin/wp-critical-css-tests
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,7 +105,7 @@ jobs:
     timeout-minutes: 5
     defaults:
       run:
-        working-directory: wordpress-plugin/wp-critical-css
+        working-directory: wordpress-plugin/wp-critical-css-tests
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -136,10 +136,13 @@ jobs:
       # instance it manages itself - complements WPCS above rather than
       # duplicating it: catches plugin-header/readme/i18n/enqueue/security
       # checks specific to the .org plugin guidelines that generic PHPCS
-      # rules don't cover.
+      # rules don't cover. build-dir points at wordpress-plugin/wp-critical-css
+      # specifically (not wp-critical-css-tests) - that's exactly the
+      # directory publish-plugin.yml zips verbatim as the real, shipped
+      # plugin (see its own "Build plugin zip" step), so it needs to be
+      # clean of composer.json/vendor/tests/etc - which is also why those
+      # live in the sibling wp-critical-css-tests/ directory instead of
+      # here, rather than being excluded from this scan after the fact.
       - uses: wordpress/plugin-check-action@10857da14b6c2246d15402b3e69f777edcf8c12e # v1.1.9
         with:
           build-dir: './wordpress-plugin/wp-critical-css'
-          exclude-directories: |
-            vendor
-            tests

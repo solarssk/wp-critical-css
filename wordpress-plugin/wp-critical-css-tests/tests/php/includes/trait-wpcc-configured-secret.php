@@ -1,4 +1,5 @@
 <?php
+// NOSONAR php:S105 - WordPress Coding Standards mandate tabs, not spaces, for PHP indentation; every file under wordpress-plugin/ already uses tabs consistently, and this rule (tagged "psr2" - PSR-2 recommends 4-space indentation) directly conflicts with that. A file-level rule with no anchor line, so this comment is placed here rather than per-line.
 /**
  * Shared by every test class that needs WPCC_SHARED_SECRET to already be a
  * real, non-empty value (i.e. every scenario except "the constant is
@@ -24,7 +25,7 @@ trait WPCC_Configured_Secret {
 	// method name and signature the WP core test suite's own
 	// set_up_before_class() looks for via method_exists(); renaming either
 	// would silently stop this from ever being called. See abstract-testcase.php.
-	public static function wpSetUpBeforeClass( $factory ) { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, Generic.CodeAnalysis.UnusedFunctionParameter.Found, WordPress.NamingConventions.PrefixAllGlobals.ShortPrefixPassed
+	public static function wpSetUpBeforeClass( $factory ) { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid, Generic.CodeAnalysis.UnusedFunctionParameter.Found, WordPress.NamingConventions.PrefixAllGlobals.ShortPrefixPassed -- NOSONAR php:S1172 - see the comment above.
 		if ( ! defined( 'WPCC_SHARED_SECRET' ) ) {
 			define( 'WPCC_SHARED_SECRET', 'wpcc-test-shared-secret-value' );
 		}

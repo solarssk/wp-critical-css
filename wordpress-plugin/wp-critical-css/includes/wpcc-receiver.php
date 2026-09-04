@@ -75,9 +75,9 @@ if ( ! function_exists( 'wpcc_receiver_auth_rate_limited' ) ) {
 	 * @return bool True if this caller has failed the secret check too often recently and should be rejected outright.
 	 */
 	function wpcc_receiver_auth_rate_limited() { // NOSONAR php:S100 - see wpcc_receiver_fixed_window_limited() above
-		// A transient key just needs to be short and collision-resistant enough for a coarse per-IP bucket, not cryptographically strong - sanitize_key() (strip to a-z0-9_-) is the WordPress-native way to get there without reaching for a hash function at all.
-		$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : 'unknown';
-		return wpcc_receiver_fixed_window_limited( 'wpcc_rl_auth_' . sanitize_key( $ip ), WPCC_RECEIVER_RATE_LIMIT );
+		// A transient key just needs to be short and collision-resistant enough for a coarse per-IP bucket, not cryptographically strong - sanitize_key() (strip to a-z0-9_-) is the WordPress-native way to get there without reaching for a hash function at all. wp_unslash() first and sanitize_key() applied to the read itself (not deferred to the call site below) so nothing unsanitized from $_SERVER ever gets held in a local variable, even briefly.
+		$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_key( wp_unslash( (string) $_SERVER['REMOTE_ADDR'] ) ) : 'unknown';
+		return wpcc_receiver_fixed_window_limited( 'wpcc_rl_auth_' . $ip, WPCC_RECEIVER_RATE_LIMIT );
 	}
 }
 

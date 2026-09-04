@@ -2,7 +2,16 @@
 <ruleset name="WP Critical CSS">
 	<description>WordPress Coding Standards for the WP Critical CSS plugin.</description>
 
+	<!--
+	Two trees: this directory itself (the test suite + tooling) and the
+	sibling ../wp-critical-css (the actual plugin source, wp-critical-css.php
+	+ includes/*.php) - kept as separate directories so the real plugin
+	directory ships clean (see wp-critical-css-tests/tests/php/bootstrap.php's
+	own docblock on _wpcc_manually_load_plugin() for why), but WPCS still
+	needs to lint both.
+	-->
 	<file>.</file>
+	<file>../wp-critical-css</file>
 
 	<!-- Composer/test tooling, not plugin source. -->
 	<exclude-pattern>/vendor/*</exclude-pattern>

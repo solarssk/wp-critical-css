@@ -1,4 +1,5 @@
 <?php
+// NOSONAR php:S105 - WordPress Coding Standards mandate tabs, not spaces, for PHP indentation; every file under wordpress-plugin/ already uses tabs consistently, and this rule (tagged "psr2" - PSR-2 recommends 4-space indentation) directly conflicts with that. A file-level rule with no anchor line, so this comment is placed here rather than per-line.
 /**
  * PHPUnit bootstrap for the WP Critical CSS plugin.
  *
@@ -34,7 +35,7 @@ if ( ! $_tests_dir || ! file_exists( $_tests_dir . '/includes/functions.php' ) )
 	// problem being reported), so this is plain CLI output, not a
 	// WordPress response - esc_html() isn't available here either way.
 	fwrite( STDERR, 'Could not find the WordPress test suite (WP_PHPUNIT__DIR=' . (string) $_tests_dir . ").\n" ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- see comment above.
-	fwrite( STDERR, "Did you run `composer install` in wordpress-plugin/wp-critical-css first?\n" );
+	fwrite( STDERR, "Did you run `composer install` in wordpress-plugin/wp-critical-css-tests first?\n" );
 	exit( 1 );
 }
 
@@ -50,13 +51,21 @@ require_once $_tests_dir . '/includes/functions.php';
  * itself finishes bootstrapping, so its hooks (register_rest_route,
  * add_action('save_post', ...), etc.) are registered in time for tests to
  * exercise them.
+ *
+ * This tooling deliberately lives in a sibling wp-critical-css-tests/
+ * directory, not inside wp-critical-css/ itself - the latter is exactly the
+ * directory publish-plugin.yml zips verbatim as the real, shipped plugin
+ * (see its own "Build plugin zip" step), so composer.json/vendor/tests/etc.
+ * would otherwise ship to real installs. dirname(__DIR__, 3) . '/wp-critical-css'
+ * reaches across to that sibling: __DIR__ is .../wp-critical-css-tests/tests/php,
+ * so 3 levels up is wordpress-plugin/.
  */
-function _wpcc_manually_load_plugin() { // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.ShortPrefixPassed -- test-only helper, leading underscore matches the WP core test-suite's own convention (e.g. tests/phpunit/tests/*), not a plugin runtime symbol.
-	require dirname( __DIR__, 2 ) . '/wp-critical-css.php';
+function _wpcc_manually_load_plugin() { // NOSONAR php:S100 - leading underscore matches the WP core test-suite's own convention for its own internal helpers (e.g. _delete_all_data() in abstract-testcase.php), not this plugin's runtime naming. WordPress.NamingConventions.PrefixAllGlobals is already excluded for tests/php/* in .phpcs.xml.dist.
+	require_once dirname( __DIR__, 3 ) . '/wp-critical-css/wp-critical-css.php';
 }
 tests_add_filter( 'muplugins_loaded', '_wpcc_manually_load_plugin' );
 
-require $_tests_dir . '/includes/bootstrap.php';
+require_once $_tests_dir . '/includes/bootstrap.php';
 
 // Shared by most test classes (WPCC_Configured_Secret trait) - see its own
 // docblock. Required here, not autoloaded, since it needs to exist before
