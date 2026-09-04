@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/9.6/phpunit.xsd"
+	bootstrap="tests/php/bootstrap.php"
+	colors="true"
+	beStrictAboutOutputDuringTests="true"
+	convertDeprecationsToExceptions="false"
+>
+	<testsuites>
+		<testsuite name="wp-critical-css">
+			<!--
+			Listed explicitly, in this exact order, rather than as a single
+			<directory> glob: WPCC_SHARED_SECRET is a define()d constant, so it
+			can only ever be truly *undefined* once per PHPUnit process.
+			MissingSecretTest.php depends on that and must run before any other
+			file (all of which define it via the WPCC_Configured_Secret trait,
+			once, on first use) - see MissingSecretTest.php's own docblock.
+			-->
+			<file>./tests/php/MissingSecretTest.php</file>
+			<file>./tests/php/SharedCssSanitizerTest.php</file>
+			<file>./tests/php/ReceiverTest.php</file>
+			<file>./tests/php/TriggerTest.php</file>
+			<file>./tests/php/InjectTest.php</file>
+			<file>./tests/php/AdminNoticeTest.php</file>
+		</testsuite>
+	</testsuites>
+	<coverage>
+		<include>
+			<directory suffix=".php">./includes</directory>
+			<file>./wp-critical-css.php</file>
+		</include>
+	</coverage>
+</phpunit>

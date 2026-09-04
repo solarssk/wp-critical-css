@@ -1,0 +1,145 @@
+name: PHP tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # WordPress Playground CLI (npx @wp-playground/cli@latest php --auto-mount
+  # -- vendor/bin/phpunit ...) was tried first, per the Playground Handbook's
+  # own guide (developer.wordpress.org/playground/handbook/guides/phpunit-testing/)
+  # - it genuinely boots a real, ephemeral WordPress instance and can run an
+  # arbitrary PHP script/PHPUnit binary inside it (confirmed: `--auto-mount`
+  # correctly mounts this plugin, and `vendor/bin/phpunit --version` runs
+  # fine). But actually bootstrapping the real WP core PHPUnit test suite
+  # inside it - requiring wp-phpunit/wp-phpunit's own includes/bootstrap.php,
+  # the step every WP_UnitTestCase-based test needs - reproducibly crashed
+  # the whole process with zero output and a bare exit code 1, both called
+  # directly and via PHPUnit, across explicit --verbosity=debug, a disabled
+  # sandbox, and an enlarged Node heap; a minimal script that stops short of
+  # that step works fine, isolating the crash to that one step specifically.
+  # That's a concrete, reproduced blocker, not "seemed complicated" - so this
+  # workflow uses the documented fallback instead: shivammathur/setup-php +
+  # wp-phpunit/wp-phpunit (composer) + johnpbloch/wordpress-core (composer,
+  # for the actual WP core source wp-phpunit itself doesn't ship) + a MySQL
+  # service container, matching the classic install-wp-tests.sh shape.
+  phpunit:
+    name: PHPUnit (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # This plugin's own declared minimums - see wp-critical-css.php's
+          # "Requires PHP"/"Requires at least" header.
+          - label: 'PHP 7.4, WordPress 6.0'
+            php-version: '7.4'
+            wp-constraint: '6.0.*'
+          # Current widely-supported PHP (not the bleeding-edge 8.5 release)
+          # + whatever WordPress core actually reports as latest stable.
+          - label: 'PHP 8.3, WordPress latest'
+            php-version: '8.3'
+            wp-constraint: ''
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: wpcc_test
+          MYSQL_USER: wpcc_test
+          MYSQL_PASSWORD: wpcc_test
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    defaults:
+      run:
+        working-directory: wordpress-plugin/wp-critical-css
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mysqli, zip
+          coverage: none
+          tools: composer
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+
+      # Only the PHP 7.4 / WP 6.0 leg needs this - composer.json's own
+      # unconstrained ^6.0 already resolves to WordPress core's actual
+      # latest stable release for the other leg. --with-all-dependencies so
+      # this can downgrade phpunit/phpunit's own transitive deps too, if a
+      # newer one of those needed a newer WP/PHP than 6.0/7.4 provides.
+      - name: Pin WordPress core + test suite to ${{ matrix.wp-constraint }}
+        if: matrix.wp-constraint != ''
+        run: |
+          composer require --dev \
+            "wp-phpunit/wp-phpunit:${{ matrix.wp-constraint }}" \
+            "johnpbloch/wordpress-core:${{ matrix.wp-constraint }}" \
+            --no-interaction --with-all-dependencies
+
+      - name: Run PHPUnit
+        run: vendor/bin/phpunit -c phpunit.xml.dist
+
+  phpcs:
+    name: PHPCS (WordPress Coding Standards)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: wordpress-plugin/wp-critical-css
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+
+      - name: Run PHPCS
+        run: vendor/bin/phpcs
+
+  plugin-check:
+    name: WordPress Plugin Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Runs Plugin Check (github.com/WordPress/plugin-check) via a wp-env
+      # instance it manages itself - complements WPCS above rather than
+      # duplicating it: catches plugin-header/readme/i18n/enqueue/security
+      # checks specific to the .org plugin guidelines that generic PHPCS
+      # rules don't cover.
+      - uses: wordpress/plugin-check-action@10857da14b6c2246d15402b3e69f777edcf8c12e # v1.1.9
+        with:
+          build-dir: './wordpress-plugin/wp-critical-css'
+          exclude-directories: |
+            vendor
+            tests

@@ -1,0 +1,80 @@
+name: PHP nightly
+
+# WordPress-nightly compatibility only, on a weekly schedule - deliberately
+# NOT part of php-tests.yml's PR-blocking matrix (see that workflow's own
+# comments for the PHPUnit approach this shares), so PR CI never goes flaky
+# because of upstream nightly instability. Matches this repo's existing
+# codeql.yml/semgrep.yml weekly-schedule convention.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  phpunit-nightly:
+    name: PHPUnit (PHP 8.3, WordPress nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: wordpress-plugin/wp-critical-css
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: wpcc_test
+          MYSQL_USER: wpcc_test
+          MYSQL_PASSWORD: wpcc_test
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          extensions: mysqli, zip
+          coverage: none
+          tools: composer
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+
+      # johnpbloch/wordpress-core and wp-phpunit/wp-phpunit (installed above)
+      # are community-maintained mirrors that only publish once a version is
+      # actually tagged - there's no "nightly" channel there. The classic,
+      # official way to test against WordPress trunk is exactly what
+      # install-wp-tests.sh itself does under the hood: a plain SVN checkout
+      # of develop.svn.wordpress.org, which carries BOTH core (src/) and the
+      # matching PHPUnit test suite (tests/phpunit/) together, always in
+      # sync with each other. WP_PHPUNIT__DIR and WPCC_TEST_ABSPATH (both
+      # already supported by tests/php/bootstrap.php / wp-tests-config.php)
+      # just get pointed at this checkout instead of the composer-installed
+      # one for this one job.
+      - name: Checkout WordPress trunk (core + matching test suite)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq subversion
+          svn export --quiet https://develop.svn.wordpress.org/trunk/ /tmp/wordpress-nightly
+
+      - name: Run PHPUnit against WordPress trunk
+        env:
+          WP_PHPUNIT__DIR: /tmp/wordpress-nightly/tests/phpunit
+          WPCC_TEST_ABSPATH: /tmp/wordpress-nightly/src/
+        run: vendor/bin/phpunit -c phpunit.xml.dist

@@ -25,6 +25,7 @@ if ( ! function_exists( 'wpcc_schedule_notify' ) ) {
 	 * @param WP_Post $post
 	 * @param bool    $update Unused - kept because save_post always calls with 3 args (add_action's own accepted_args below); dropping it from the signature would obscure that.
 	 */
+	// phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed -- $update is a required part of the save_post action's own signature; same reasoning as the NOSONAR S1172 note below.
 	function wpcc_schedule_notify( $post_id, $post, $update ) { // NOSONAR php:S100,S1142,S1172 - WordPress Coding Standards mandate snake_case; each return is a distinct short-circuit (no secret configured / autosave-or-revision / not published / wrong post type), not a single-exit candidate; $update is a required part of the save_post action's own signature, see the docblock above
 		if ( ! defined( 'WPCC_SHARED_SECRET' ) || '' === WPCC_SHARED_SECRET ) {
 			return;
