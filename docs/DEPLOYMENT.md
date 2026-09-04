@@ -100,21 +100,23 @@ On a real post/page that's been processed, view source and check for:
 Only the latest tagged release is supported - deploy from a signed
 semver tag (`vX.Y.Z`), not `main`.
 
-Before tagging, add this release's notes: `.github/release-notes/vX.Y.Z.title` (one line, the release's display tagline) and `.github/release-notes/vX.Y.Z.md` (the CHANGELOG.md section for this version, plus a trailing `[Full changelog](https://github.com/solarssk/wp-critical-css/blob/vX.Y.Z/CHANGELOG.md)` link) - see any existing file under `.github/release-notes/` for the exact shape. Both publish workflows fail fast if either file is missing, rather than falling back to GitHub's raw auto-generated PR changelog.
+Releases are cut by merging a `release: vX.Y.Z` PR to `main` - nothing further is done by hand. That PR bumps, together: `service/package.json`'s version, the plugin's `Version:` header, its `readme.txt` `Stable tag:`, the `CHANGELOG.md` entry, and adds this release's notes - `.github/release-notes/vX.Y.Z.title` (one line, the release's display tagline) and `.github/release-notes/vX.Y.Z.md` (the CHANGELOG.md section for this version, plus a trailing `[Full changelog](https://github.com/solarssk/wp-critical-css/blob/vX.Y.Z/CHANGELOG.md)` link) - see any existing file under `.github/release-notes/` for the exact shape.
 
-Then tag `main` and push the tag.
+Merging that PR is the entire trigger. `.github/workflows/release.yml` fires on the resulting push to `main`, detects the `release: vX.Y.Z` commit, verifies everything above is present and in lockstep, creates the tag and GitHub Release, and dispatches both publish workflows:
+
+- `.github/workflows/publish-container.yml` builds the image once, scans it with Trivy (a full SARIF report goes to the Security tab, and a hard gate blocks the push on any fixable CRITICAL finding), then pushes the same image to both `ghcr.io/solarssk/wp-critical-css` and `docker.io/solarssk/wp-critical-css`. Signed build provenance is attached to the GHCR copy (see the workflow's own comment on that step for why not both).
+- `.github/workflows/publish-plugin.yml` re-verifies the plugin's own `Version:` header and `readme.txt` Stable tag against the tag (fails the build if either was somehow still wrong), then zips `wordpress-plugin/wp-critical-css/`.
+
+Whichever of the two finishes first attaches its own asset (the SBOM, or the plugin zip) to the GitHub Release `release.yml` already created (titled via `scripts/release-display-title.sh`: `vX.Y.Z — tagline`, read from the `.title` file above); the other just uploads alongside it. See [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for the full CI/CD control list.
+
+**Manual fallback**, only if `release.yml` itself is broken: tag and push by hand -
 
 ```bash
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-Two workflows take it from there, both triggered by the same tag push:
-
-- `.github/workflows/publish-container.yml` builds the image once, scans it with Trivy (a full SARIF report goes to the Security tab, and a hard gate blocks the push on any fixable CRITICAL finding), then pushes the same image to both `ghcr.io/solarssk/wp-critical-css` and `docker.io/solarssk/wp-critical-css`. Signed build provenance is attached to the GHCR copy (see the workflow's own comment on that step for why not both).
-- `.github/workflows/publish-plugin.yml` verifies the plugin's own `Version:` header matches the tag (fails the build if you forgot to bump it), then zips `wordpress-plugin/wp-critical-css/`.
-
-Whichever of the two finishes first creates the GitHub Release for the tag, titled via `scripts/release-display-title.sh` (`vX.Y.Z — tagline`, read from the `.title` file above) with the `.md` file's content as its notes, and marked `--latest`; the other one just attaches its own asset (the SBOM, or the plugin zip) to that same release. See [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for the full CI/CD control list.
+- both publish workflows also listen on `push: tags: v*.*.*` directly, so this alone still publishes everything (just without `release.yml`'s pre-tag lockstep verification or its milestone auto-close).
 
 What actually publishes is the resolved ref matching a semver tag (`vX.Y.Z`), not the trigger type - a manual `workflow_dispatch` supplying an existing tag as its `ref` input republishes exactly like a fresh tag push would (careful with this: dispatching an *older* tag republishes `latest` back to it too). Dispatching a branch/SHA instead runs the same build+scan but never publishes - useful for checking a branch's CVE exposure, or for refreshing the Security tab after a Dockerfile fix lands on `main`. The workflow also runs on its own weekly schedule (re-scanning the actual published image, not a rebuild) - see [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for why; that trigger never publishes either.
 

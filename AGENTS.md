@@ -70,12 +70,11 @@ Labels: `type: bug` `type: chore` `type: docs` `type: feature` · `area: service
 
 **Closing a milestone (cutting a release), in order:**
 
-1. Open a `release/vX.Y.Z` branch/PR titled `release: vX.Y.Z` bumping, together: `service/package.json` (+`package-lock.json`), the plugin's `Version:` header, its `readme.txt` `Stable tag:`, and adding both the `CHANGELOG.md` entry and a curated `.github/release-notes/vX.Y.Z.{title,md}` pair (both publish workflows fail fast if either file is missing — see `docs/DEPLOYMENT.md`'s Releases section for the exact required shape).
-2. Get it merged.
-3. `git tag vX.Y.Z && git push origin vX.Y.Z` — this is a real, externally-visible action (publishes to GHCR, Docker Hub, and creates the GitHub Release) and needs explicit user confirmation before an agent runs it, every time.
-4. `publish-container.yml` and `publish-plugin.yml` both trigger off that tag push and take it from there.
+1. Open a `release/vX.Y.Z` branch/PR titled `release: vX.Y.Z` bumping, together: `service/package.json` (+`package-lock.json`), the plugin's `Version:` header, its `readme.txt` `Stable tag:`, and adding both the `CHANGELOG.md` entry and a curated `.github/release-notes/vX.Y.Z.{title,md}` pair (`release.yml` and both publish workflows fail fast if any of these is missing or out of lockstep — see `docs/DEPLOYMENT.md`'s Releases section for the exact required shape).
+2. Get it merged. **That merge is the whole release trigger** — [`release.yml`](.github/workflows/release.yml) fires on the resulting push to `main`, detects the `release: vX.Y.Z` commit, verifies the artifacts above, creates the tag + GitHub Release, dispatches `publish-container.yml` and `publish-plugin.yml` (which publish to GHCR/Docker Hub and build the plugin zip), and closes the matching milestone. No manual tag push, no second confirmation step — merging the release PR itself is the one human action that starts real, externally-visible publishing, so review it with that weight.
+3. If `release.yml` fails partway (e.g. a downstream dispatch step), it's safe to just re-push the same commit or re-run the workflow — it doesn't gate on whether the release already exists, so it retries whatever didn't finish without recreating what did.
 
-Do not hand-write a release body that diverges from what's in `.github/release-notes/` — `scripts/release-display-title.sh` and both publish workflows read those files as the single source of truth for the GitHub Release's title/notes.
+Do not hand-write a release body that diverges from what's in `.github/release-notes/` — `scripts/release-display-title.sh`, `release.yml`, and both publish workflows all read those files as the single source of truth for the GitHub Release's title/notes.
 
 ## Compounding rules
 
@@ -83,6 +82,8 @@ When an agent repeats a mistake in this repo, add a precise rule here (or to `CL
 
 - SonarCloud runs CI-based analysis (`sonar-project.properties` + the `sonarcloud-scan` job in `ci.yml`), not Automatic Analysis — a `// NOSONAR <rule>` comment does nothing for a rule that reports with no anchor line (check via the SonarCloud issues-search API before assuming a NOSONAR comment works: `line: null` means it won't). Use `sonar.issue.ignore.multicriteria` in `sonar-project.properties` instead for those.
 - `pcov` (PHP coverage) only instruments files under its own working directory by default — the plugin's test suite runs from `wordpress-plugin/wp-critical-css-tests/`, but the real source it needs to cover lives in the sibling `wordpress-plugin/wp-critical-css/`. `ini-values: pcov.directory=...` has to point at their common parent explicitly, or every line of the real plugin silently reports 0% regardless of what the tests actually exercise.
+- `gh workflow run <file> --ref <tag>` only picks which commit's workflow *definition* runs — it does **not** set that workflow's own `inputs.<name>` fields. `publish-container.yml`/`publish-plugin.yml` both resolve their actual publish target from an `inputs.ref` field that defaults to `refs/heads/main`, so a dispatch from `release.yml` needs `-f ref="$TAG"` too, or the dispatched run silently resolves back to main and skips publishing instead of publishing the tag.
+- A squash-merged PR's commit subject becomes `<PR title> (#<number>)`, not the bare title — any commit-message pattern match (like `release.yml`'s release-commit detection) needs to tolerate that suffix, or it will never match on this repo's actual merge history.
 
 ## Claude Code
 
