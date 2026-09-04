@@ -42,8 +42,32 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      # registry.npmjs.org's own advisory-bulk endpoint (what npm audit
+      # calls) has hit transient outages more than once in practice - a
+      # 503, or a bare network timeout, both surfacing as npm's own generic
+      # "audit endpoint returned an error" line regardless of which one it
+      # was. That's not this repo's dependency tree failing an audit, it's
+      # npm's infrastructure having a bad moment - retrying a few times
+      # with a short pause resolves it without weakening the check (a
+      # REAL vulnerability finding never produces that exact line, so it
+      # still fails immediately on attempt 1, no wasted retry time).
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        run: |
+          set +e
+          for attempt in 1 2 3; do
+            npm audit --audit-level=high > audit-output.log 2>&1
+            status=$?
+            cat audit-output.log
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ] && grep -q "audit endpoint returned an error" audit-output.log; then
+              echo "::warning::npm audit hit a transient advisory-endpoint error (attempt $attempt/3) - retrying in 15s"
+              sleep 15
+              continue
+            fi
+            exit "$status"
+          done
 
       - name: Syntax-check server.js
         run: node --check server.js
