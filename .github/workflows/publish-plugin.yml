@@ -66,12 +66,30 @@ jobs:
           fi
 
       # Catches the exact mistake Codex caught in service/package.json for the 0.2.0 release (tagged without bumping the version field first) - here it's a hard failure instead of a follow-up fix, since nothing downstream re-derives the plugin's displayed version from the tag.
+      # Two independent fields, two independent ways to forget one of them:
+      # wp-critical-css.php's Version header (WordPress reads this for the
+      # installed-plugin version, e.g. in wp-admin's Plugins list) and
+      # readme.txt's Stable tag (WordPress.org-format field, unused since
+      # this plugin isn't distributed there - but the official Plugin
+      # Check tool still validates it against the header and fails the
+      # build on a mismatch, exactly what happened preparing v0.2.2: the
+      # header was bumped, readme.txt's Stable tag wasn't, caught only by
+      # that CI job, not by anything release-blocking here).
       - name: Verify plugin header version matches the tag
         if: steps.resolve.outputs.publish == 'true'
         run: |
           HEADER_VERSION=$(grep -oP '^\s*\*\s*Version:\s*\K\S+' wordpress-plugin/wp-critical-css/wp-critical-css.php)
           if [ "$HEADER_VERSION" != "${{ steps.resolve.outputs.version }}" ]; then
             echo "::error::wp-critical-css.php's own Version header ($HEADER_VERSION) doesn't match the pushed tag (${{ steps.resolve.outputs.version }}) - bump the header before tagging."
+            exit 1
+          fi
+
+      - name: Verify readme.txt's Stable tag matches the tag
+        if: steps.resolve.outputs.publish == 'true'
+        run: |
+          STABLE_TAG=$(grep -oP '^Stable tag:\s*\K\S+' wordpress-plugin/wp-critical-css/readme.txt)
+          if [ "$STABLE_TAG" != "${{ steps.resolve.outputs.version }}" ]; then
+            echo "::error::readme.txt's Stable tag ($STABLE_TAG) doesn't match the pushed tag (${{ steps.resolve.outputs.version }}) - bump it before tagging (WordPress Plugin Check validates this against the Version header too)."
             exit 1
           fi
 
