@@ -1,4 +1,7 @@
-<p align="center"><strong>WP Critical CSS</strong></p>
+<p align="center">
+  <img src="docs/assets/logo-light.svg#gh-light-mode-only" alt="WP Critical CSS" height="64">
+  <img src="docs/assets/logo-dark.svg#gh-dark-mode-only" alt="WP Critical CSS" height="64">
+</p>
 
 <p align="center">
   <a href="https://github.com/solarssk/wp-critical-css/actions/workflows/ci.yml"><img src="https://github.com/solarssk/wp-critical-css/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
