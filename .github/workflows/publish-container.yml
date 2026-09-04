@@ -21,6 +21,10 @@ permissions:
   id-token: write
   attestations: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   scan-and-publish:
     runs-on: ubuntu-latest

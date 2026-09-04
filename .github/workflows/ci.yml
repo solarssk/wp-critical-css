@@ -82,6 +82,27 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: service/junit.xml
 
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Defense-in-depth alongside GitHub's own secret scanning + push
+      # protection (both already enabled at the repo level) - this backstops
+      # a contributor working from a fork or with push protection bypassed
+      # some other way. PR comments disabled so this job doesn't need
+      # `pull-requests: write` on top of the workflow's existing minimal
+      # `contents: read`. No GITLEAKS_LICENSE needed - only required for
+      # organization-owned repos, and this one is on a personal account.
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false
+
   php-lint:
     name: PHP syntax check (plugin)
     runs-on: ubuntu-latest
