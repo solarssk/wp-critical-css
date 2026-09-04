@@ -27,8 +27,20 @@
 	</testsuites>
 	<coverage>
 		<include>
-			<directory suffix=".php">./includes</directory>
-			<file>./wp-critical-css.php</file>
+			<!--
+			Relative to THIS file's own directory (wp-critical-css-tests/),
+			not the shipped plugin's own root - the plugin source lives in
+			the sibling wp-critical-css/ directory (kept out of this one so
+			publish-plugin.yml's zip of wp-critical-css/ never includes any
+			dev/test tooling - see this repo's .gitignore for the same
+			reasoning). ../wp-critical-css/, not ./ - these paths silently
+			matched nothing before this comment was added, since neither
+			./includes nor ./wp-critical-css.php exist in this directory at
+			all - PHPUnit doesn't error on an empty coverage filter, it just
+			silently reports 0% for everything.
+			-->
+			<directory suffix=".php">../wp-critical-css/includes</directory>
+			<file>../wp-critical-css/wp-critical-css.php</file>
 		</include>
 	</coverage>
 </phpunit>
