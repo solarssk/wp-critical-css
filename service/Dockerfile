@@ -1,7 +1,17 @@
 # Pinned by digest, not just tag, so downstream users and CI get a
 # byte-identical Chrome build. Dependabot's docker ecosystem entry
-# (see /.github/dependabot.yml) tracks and PRs digest bumps for this line.
-FROM ghcr.io/puppeteer/puppeteer:25.9.0@sha256:5c341215d78353c3416b6c92aae9fac66e8f11c146c3753234980443d6792f8f
+# (see /.github/dependabot.yml) tracks and PRs digest bumps for this line -
+# but ONLY this line: it can't also bump service/package.json's own
+# puppeteer dependency in the same PR, and this base image's tag/digest is
+# tied to a SPECIFIC Chrome build that has to match whatever puppeteer-core
+# version npm actually installs below. Dependabot's own 25.9.0->25.10.0 PR
+# (#43) bumped only this FROM line and broke the real Puppeteer smoke test
+# with "Could not find Chrome (ver. 152.0.7977.54)" - confirmed directly:
+# package-lock.json on that PR's branch still had puppeteer-core@25.9.0
+# locked, whose own installer registers a DIFFERENT Chrome build than what
+# this newer base image ships. Bump both together, always - see the
+# puppeteer dependency in package.json just below.
+FROM ghcr.io/puppeteer/puppeteer:25.10.0@sha256:95af967749f581e78c52ecdabccc7736ecf8162729ee300d0127a46f2d78439e
 
 USER root
 WORKDIR /app
