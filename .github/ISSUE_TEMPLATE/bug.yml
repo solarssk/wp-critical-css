@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in the service, the plugin, or the pipeline between them is broken.
+labels: ["type: bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: input
+    id: container-tag
+    attributes:
+      label: Container image tag
+      description: e.g. ghcr.io/solarssk/wp-critical-css:0.2.1 (or :latest if you're not pinned)
+      placeholder: "0.2.1"
+    validations:
+      required: false
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: WP Critical CSS plugin version
+      description: Shown on the Plugins page in wp-admin.
+      placeholder: "0.2.1"
+    validations:
+      required: false
+
+  - type: input
+    id: wp-version
+    attributes:
+      label: WordPress version
+      placeholder: "6.7"
+    validations:
+      required: false
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Concrete steps, including relevant config (redacted secrets) or a sample URL if the bug is page-specific.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Container logs, wp-admin errors, or browser console output.
+    validations:
+      required: false

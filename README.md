@@ -1,5 +1,9 @@
 # wp-critical-css
 
+[![CI](https://github.com/solarssk/wp-critical-css/actions/workflows/ci.yml/badge.svg)](https://github.com/solarssk/wp-critical-css/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/solarssk/wp-critical-css)](https://github.com/solarssk/wp-critical-css/releases)
+[![License: MIT](https://img.shields.io/github/license/solarssk/wp-critical-css)](LICENSE)
+
 Self-hosted critical CSS generator for WordPress. Replaces WP Rocket's paid
 Remove Unused CSS / QUIC.cloud's metered free tier with a locally-run
 equivalent: a real headless browser renders each URL and extracts the
