@@ -139,7 +139,7 @@ function enqueue(url) {
 		return;
 	}
 	if (queue.length >= MAX_QUEUE_LENGTH) {
-		console.warn(`[critical-css] queue at its ${MAX_QUEUE_LENGTH}-entry limit, dropping ${logSafe(url)}`);
+		console.warn(`[critical-css] queue at its ${MAX_QUEUE_LENGTH}-entry limit, dropping ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
 		return;
 	}
 	queue.push(url);
@@ -207,7 +207,11 @@ async function postToReceiverWithRetry(body) {
 			lastError = err; // network error or timeout - worth retrying
 		}
 		if (attempt < RECEIVER_MAX_ATTEMPTS) {
-			console.warn(`[critical-css] receiver attempt ${attempt}/${RECEIVER_MAX_ATTEMPTS} failed: ${lastError.message}, retrying`); // NOSONAR jssecurity:S5145 - lastError.message never contains request-body content
+			// logSafe() here, not just err.message straight - lastError.message
+			// can be the WordPress receiver's own response body (see the 5xx
+			// branch above, which folds `await res.text()` into the Error it
+			// constructs), not only a network-layer error string.
+			console.warn(`[critical-css] receiver attempt ${attempt}/${RECEIVER_MAX_ATTEMPTS} failed: ${logSafe(lastError.message)}, retrying`); // NOSONAR jssecurity:S5145 - see logSafe() above
 			await new Promise((resolve) => setTimeout(resolve, RECEIVER_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)));
 		}
 	}
