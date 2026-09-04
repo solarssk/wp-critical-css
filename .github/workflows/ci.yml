@@ -17,6 +17,7 @@ jobs:
   build-test:
     name: Build & audit (Node)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: service
@@ -31,8 +32,15 @@ jobs:
           cache: npm
           cache-dependency-path: service/package-lock.json
 
+      # --no-audit: npm ci runs its own audit by default (documented npm
+      # behavior), which would otherwise hit the npm advisory endpoint
+      # twice back-to-back with the dedicated "Audit dependencies" step
+      # below - redundant work, and doubles this job's exposure to that
+      # endpoint's own latency/outages (observed once taking several
+      # minutes on both calls, dominating this job's total runtime even
+      # though the tests themselves run in well under a second).
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Audit dependencies
         run: npm audit --audit-level=high
@@ -77,14 +85,16 @@ jobs:
       # here too.
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1.2.1
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: service/junit.xml
+          report_type: test_results
 
   secret-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -106,6 +116,7 @@ jobs:
   php-lint:
     name: PHP syntax check (plugin)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -120,10 +131,17 @@ jobs:
             echo "::endgroup::"
           done < <(find wordpress-plugin -name '*.php' -print0)
 
+  # Runs in parallel with build-test/php-lint rather than after them: the
+  # image is built solely from service/, which build-test already validates
+  # independently (audit, syntax check, unit tests) - there's no dependency
+  # between the two that waiting would actually protect, and branch
+  # protection requires every job green regardless of run order. Shortens
+  # the critical path by however long Node+PHP take (previously the
+  # dominant chunk of an unusual run, on top of this job's own ~80s).
   docker-build:
     name: Docker build smoke test
-    needs: [build-test, php-lint]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
