@@ -4,7 +4,7 @@
  * Plugin Name:       WP Critical CSS
  * Plugin URI:        https://github.com/solarssk/wp-critical-css
  * Description:       Self-hosted critical CSS generator - inlines above-the-fold CSS per post and defers the rest, driven by a companion Node/Puppeteer service. Requires WPCC_SHARED_SECRET in wp-config.php and the critical-css-service container running - see the plugin's README before activating.
- * Version:           0.2.1
+ * Version:           0.2.2
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            solarssk
