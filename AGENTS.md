@@ -5,6 +5,11 @@ Instructions for AI agents in this repository (Claude Code, Cursor, Codex, Copil
 Repo: https://github.com/solarssk/wp-critical-css
 **Product version:** git tag `vX.Y.Z` + `service/package.json` `"version"` + `wordpress-plugin/wp-critical-css/wp-critical-css.php`'s `Version:` header + that plugin's `readme.txt` `Stable tag:` — all four must match before tagging. See "Changelog and releases" below.
 
+## Repository standard
+
+This repository follows the solarssk engineering standard: https://github.com/solarssk/playbook
+Tier: 2 (see playbook/docs/tiers.md)
+
 ## Project
 
 Self-hosted critical CSS generator for WordPress: replaces WP Rocket's paid Remove Unused CSS / QUIC.cloud's metered free tier. Two halves that ship and version independently but always move together in one PR/release:
