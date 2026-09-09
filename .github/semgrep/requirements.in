@@ -8,4 +8,4 @@
 # (moot now - setuptools isn't installed) and a HIGH-severity protobuf
 # JSON-recursion CVE (the newer OpenTelemetry line this semgrep release
 # pulls in allows protobuf>=6, resolving to a version past the fix).
-semgrep==1.176.0
+semgrep==1.176.1
