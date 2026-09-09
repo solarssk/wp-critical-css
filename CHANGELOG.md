@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.4] - 2026-09-09
+
+### Security
+
+- **`undici` is bumped to 7.29.1**, closing 10 vulnerabilities Snyk flagged in this service's dependency tree - all rooted in the same transitive package (pulled in via `critical` -> `oust` -> `cheerio`), including a critical Improper Certificate Validation issue (CWE-295, CVSS 9.1). The patched version already satisfies `cheerio`'s existing dependency range, so this is a lockfile-only bump - no other dependency or application code changed.
+
+### Deploy
+
+- Container image: `ghcr.io/solarssk/wp-critical-css:0.2.4` (rolling `:latest`, `:0.2`), also published to `docker.io/solarssk/wp-critical-css:0.2.4`.
+- WordPress plugin: `wp-critical-css-0.2.4.zip`, attached to this release.
+- No migration steps - fully backward compatible with 0.2.3's stored data, configuration, and REST contract. Only the service's `undici` dependency changed; no application or plugin behavior changed.
+
 ## [0.2.3] - 2026-09-04
 
 ### Changed
