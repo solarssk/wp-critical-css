@@ -426,148 +426,202 @@ export function extractUrlsFromUrlset(parsed) {
  * their own source comment calls this a deliberate "false positives over
  * false negatives" choice, not an oversight.
  *
- * Confirmed against a real page: generating desktop (1280px) critical CSS
- * for a Bootstrap-breakpoint theme kept every `@media (max-width:991.98px)`
- * / `767.98px` / `575.98px` mobile-only rule verbatim, roughly doubling
- * desktop output size versus the same generation with this filter applied
- * (289KB -> 144KB on the page this was diagnosed against) - well past the
- * WordPress receiver's 200KB-per-field cap
- * (wordpress-plugin/wp-critical-css/includes/wpcc-receiver.php's
- * WPCC_RECEIVER_MAX_CSS_BYTES), which rejects the whole submission with a
- * 413 the moment either field crosses it.
- *
  * `css-mediaquery` - the same library penthouse-esm itself depends on for
- * this exact kind of match - decides the real answer for every media
- * feature (not just the min-width-only cases penthouse's own remover
- * handles), so this only needs to close the specific max-width gap left
- * open above rather than reimplement matching from scratch.
+ * this exact kind of match - can decide the real answer for a media
+ * feature at a SINGLE point. That turned out to be the wrong question to
+ * ask it: see isMediaQueryApplicable's own doc comment below for why this
+ * has to reason about a whole SERVED RANGE of widths, not the one point
+ * this service happens to render at, and therefore mostly rolls its own
+ * interval logic instead of delegating to css-mediaquery's match().
  */
 
 /**
- * Only these features are fully and objectively determined by a static
- * width x height render - so only a query built ENTIRELY out of them is
- * ever evaluated below. Confirmed directly against css-mediaquery's own
- * source (matchQuery() in its index.js): any feature simply absent from
- * the `values` object it's given - which for us would be anything not
- * explicitly listed here, e.g. `hover`, `pointer`, `prefers-color-scheme`,
- * `prefers-reduced-motion`, `resolution`, `color` - hits its `if (!value)
- * return false` branch and silently reports "doesn't match", not "can't
- * tell". Originally trusted a bare width/height matchConfig to fail open
- * on those via isMediaQueryApplicable's own try/catch, which was wrong:
- * css-mediaquery never throws for a merely-absent feature, it just
- * confidently answers false - so a real `@media (orientation: landscape)`
- * or `(prefers-color-scheme: dark)` block was being silently dropped from
- * the DESKTOP render even when the emulated viewport genuinely was
- * landscape, and unconditionally from every render for anything
- * preference/capability-based, none of which this headless, single-shot
- * render has any real signal for regardless. Restricting evaluation to
- * this allowlist - and leaving every other feature unevaluated (kept,
- * same as penthouse's own stance) - is what actually fixes that, not the
- * try/catch, which only ever covered a genuinely unparsable string.
+ * Mirrors wpcc-inject.php's own WPCC_BREAKPOINT default (782px) - see that
+ * file's doc comment. Critical to why isMediaQueryApplicable below reasons
+ * about a RANGE, not the single width this service happens to render at:
+ * wpcc-inject.php doesn't serve the desktop critical CSS only to a
+ * 1280px-wide visitor - it wraps the whole desktop result in `@media
+ * (min-width:783px)` and serves it to EVERY visitor from 783px up,
+ * unbounded (a 900px tablet included); the mobile result is wrapped in
+ * `@media (max-width:782px)` and served from 0px up to 782px. A nested
+ * `@media` block this service keeps in the desktop critical CSS is still
+ * evaluated live, correctly, by each real visitor's own browser against
+ * their own actual width - so a query that's false at exactly 1280px but
+ * true somewhere else in [783,Infinity) still needs to reach that
+ * visitor's browser; stripping it isn't a size optimization for them, it's
+ * FOUC (the exact failure mode this whole file exists to prevent, just
+ * reintroduced from a different direction). Only a query that can be
+ * PROVEN impossible across the entire served range is safe to remove.
+ *
+ * An operator who has overridden WPCC_BREAKPOINT in wp-config.php (the
+ * file's own comment invites this: "adjust ... if your theme's real
+ * breakpoint differs") gets a mismatched range here - this service has no
+ * way to discover that PHP-side constant's actual deployed value.
+ * Documented, accepted gap, same as every other place in this codebase
+ * that settles for a conservative default over a fully general solution.
  */
-const VIEWPORT_DERIVABLE_MEDIA_FEATURES = new Set(['width', 'height', 'device-width', 'device-height', 'orientation', 'aspect-ratio', 'device-aspect-ratio']);
+export const SERVED_WIDTH_RANGES = {
+	mobile: { min: 0, max: 782 },
+	desktop: { min: 783, max: Number.POSITIVE_INFINITY },
+};
 
 /**
- * A second, independent reason (beyond the feature allowlist above) to
- * never hand a query to css-mediaquery's match(): a `not ...` (inverse)
- * branch. Confirmed directly against css-mediaquery's own matchQuery() -
- * `if ((typeMatch && inverse) || !(typeMatch || inverse)) return false`
- * fires and returns false BEFORE the feature expressions are ever
- * evaluated, for any inverse query whose type matches (which, since this
- * service always renders as `type: 'screen'`, is every `not screen ...`/
- * `not all ...` query) - so `not screen and (max-width: 991.98px)` reports
- * false unconditionally, regardless of viewport, instead of correctly
- * matching whenever the un-negated condition is false. `not print`
- * (`inverse: true`, no expressions) hits the same early return via its
- * second disjunct. Reproduced directly: both report `false` for every
- * viewport tested, when real CSS semantics say they should often be
- * `true`. This isn't a feature-classification gap this file can patch by
- * adding more entries to the allowlist above - it's a defect in the
- * library's own negation logic - so the only safe move is the same one
- * taken for anything else this module can't trust an answer for: never
- * evaluate an inverse query, always keep it.
+ * A minimal, local port of css-mediaquery's own toPx() (index.js) - not
+ * exported by the library, so this can't just call theirs directly.
+ * Deliberately mirrors their conversion table exactly (same units, same
+ * multipliers, including their unusual `pt` handling) so a px value
+ * computed here means the same thing their own match() would have
+ * computed for the same input, had this still been delegating to it.
+ * Only needs to handle a WIDTH value - see isMediaQueryApplicable's doc
+ * comment for why width is the only feature this file still reasons about
+ * numerically at all.
  */
-function isEntirelyStaticallyEvaluable(mediaQueryParams) {
-	try {
-		return mediaQuery
-			.parse(mediaQueryParams)
-			.every((branch) => !branch.inverse && branch.expressions.every((expression) => VIEWPORT_DERIVABLE_MEDIA_FEATURES.has(expression.feature)));
-	} catch {
-		return false; // can't even tell what features/negation it uses - don't risk evaluating it, isMediaQueryApplicable below keeps it either way
+function toPx(length) {
+	const value = Number.parseFloat(length);
+	const units = String(length).match(/(em|rem|px|cm|mm|in|pt|pc)?$/)[1];
+	switch (units) {
+		case 'em':
+		case 'rem':
+			return value * 16;
+		case 'cm':
+			return (value * 96) / 2.54;
+		case 'mm':
+			return (value * 96) / 2.54 / 10;
+		case 'in':
+			return value * 96;
+		case 'pt':
+			return value * 72;
+		case 'pc':
+			return (value * 72) / 12;
+		default:
+			return value;
 	}
 }
 
 /**
- * `orientation`/`aspect-ratio`/`device-aspect-ratio` need an explicit value
- * in css-mediaquery's `values` config the same way width/height do - it
- * never derives them from width/height itself (confirmed directly: with
- * only `width`/`height` supplied, `(orientation: landscape)` reported
- * false even for a 1280x800 config, which IS landscape). `device-width`/
- * `device-height` get the same value as `width`/`height` - this service
- * never sets Puppeteer's deviceScaleFactor or emulates a separate device
- * viewport, so the render viewport and "device" viewport are the same
- * thing here. `height >= width` for the portrait case (not the other way
- * around) matches how an exactly-square viewport is actually classified -
- * CSS Media Queries Level 4 section 4.4 defines orientation as portrait whenever
- * height is greater than or equal to width, landscape in every other
- * case (verified directly against the spec text, not assumed - the more
- * intuitive-sounding "width >= height is landscape" is backwards for the
- * square case).
+ * Does this one OR-branch of a (possibly comma-separated) media query
+ * rule out every real visitor in `widthRange`? Two independent things
+ * have to be ruled out, each handled explicitly rather than by asking
+ * css-mediaquery's match() to do it - handing it to match() is exactly
+ * how two previous bugs shipped in this file (see git history / PR #61's
+ * review thread): a feature that's simply absent from a values config
+ * reports a confident "false", not "unknown", and match()'s own `not`
+ * handling returns false before ever evaluating feature expressions
+ * whenever the branch's type matches:
+ *
+ * - Media TYPE: a plain `print` branch can never apply to any real
+ *   (screen) visitor, in either width bucket - ruled out purely by type,
+ *   before width is even considered. A NEGATED branch needs this applied
+ *   through De Morgan's law, not just inverted wholesale: `not (type AND
+ *   feature1 AND feature2 ...)` is `NOT type OR NOT feature1 OR ...`, so
+ *   for a real (fixed) screen visitor - where "NOT type" is itself a
+ *   fixed true/false, not something that varies per visitor the way width
+ *   does - `not print and (...)` is unconditionally true (NOT print is
+ *   already true for a screen visitor, so the whole OR is true regardless
+ *   of the feature part), while `not screen and (...)` / `not all and
+ *   (...)` can ONLY be true via the feature part (NOT type is false for a
+ *   screen visitor there), which is where the next point's fail-open
+ *   stance takes over. `not screen`/`not all` ALONE, with no feature part
+ *   to fall back on, is therefore always false for a real screen visitor
+ *   - the one inverse case this function can still rule out completely.
+ * - Media FEATURES other than `width`: `device-width` looks like a
+ *   sibling of `width` but ISN'T bucketed by wpcc-inject.php's wrapper at
+ *   all - a real visitor's device-width (their screen's full resolution)
+ *   is unrelated to their browser window's current CSS width, which is
+ *   the only thing that wrapper actually constrains. Anything
+ *   orientation/aspect-ratio/height-based is even less constrained: real
+ *   visitor height is completely unbounded in BOTH buckets (a narrow
+ *   window can be any height at all), so no `@media (height: ...)`-family
+ *   condition can ever be proven impossible from width alone. Only a
+ *   bare `width` feature (any modifier) is something wpcc-inject.php's
+ *   own wrapper genuinely bounds for a real visitor - so it's the only
+ *   feature this function will ever say "yes, ruled out" for; every
+ *   other feature falls through to "can't rule this branch out".
+ * - A `not screen and (...)`/`not all and (...)` branch (type-wise, only
+ *   provable via the feature part per the point above) would need De
+ *   Morgan's law applied per remaining feature to negate the WIDTH range
+ *   correctly too, not just fail open on any non-width feature - not
+ *   worth the complexity for a shape no real-world CSS this project has
+ *   ever seen actually uses; falls through to "can't rule this branch
+ *   out" rather than attempting it.
  */
-function viewportMediaFeatureValues(viewport) {
-	const ratio = `${viewport.width}/${viewport.height}`;
-	return {
-		type: 'screen',
-		width: `${viewport.width}px`,
-		height: `${viewport.height}px`,
-		'device-width': `${viewport.width}px`,
-		'device-height': `${viewport.height}px`,
-		orientation: viewport.height >= viewport.width ? 'portrait' : 'landscape',
-		'aspect-ratio': ratio,
-		'device-aspect-ratio': ratio,
-	};
+function branchCanApplyToVisitor(branch, widthRange) {
+	const typeIsScreenOrAll = branch.type === 'all' || branch.type === 'screen';
+
+	if (branch.inverse) {
+		if (!typeIsScreenOrAll) {
+			return true; // e.g. `not print` - NOT type is already true for a real screen visitor, so the negated compound is true regardless of any feature part
+		}
+		if (branch.expressions.length === 0) {
+			return false; // e.g. `not screen`/`not all` alone - NOT type is false for a screen visitor here, and there's no feature part left to make the negation true some other way
+		}
+		return true; // `not screen and (...)`/`not all and (...)` - see this function's own doc comment for why this falls open instead of applying De Morgan's law to the width range too
+	}
+	if (!typeIsScreenOrAll) {
+		return false; // e.g. plain `print` - can never apply to a real (screen) visitor
+	}
+
+	let lo = Number.NEGATIVE_INFINITY;
+	let hi = Number.POSITIVE_INFINITY;
+	for (const expression of branch.expressions) {
+		if (expression.feature !== 'width') {
+			return true;
+		}
+		const px = toPx(expression.value);
+		if (expression.modifier === 'min') {
+			lo = Math.max(lo, px);
+		} else if (expression.modifier === 'max') {
+			hi = Math.min(hi, px);
+		} else {
+			// A bare `width: Npx` (no min-/max- modifier) - an exact-match
+			// feature, rare in real CSS but valid: pins both bounds to the
+			// same value.
+			lo = Math.max(lo, px);
+			hi = Math.min(hi, px);
+		}
+	}
+	// Standard interval-overlap test between [lo, hi] (this branch's own
+	// implied width range) and widthRange (the bucket's served range).
+	return hi >= widthRange.min && lo <= widthRange.max;
 }
 
-export function isMediaQueryApplicable(mediaQueryParams, viewport) {
-	if (!isEntirelyStaticallyEvaluable(mediaQueryParams)) {
-		return true; // references a feature this static render has no real signal for, is a `not ...` query css-mediaquery can't negate correctly, or couldn't be parsed - keep it rather than guess
-	}
+/**
+ * True unless every OR-branch of `mediaQueryParams` can be PROVEN to
+ * never apply to any real visitor within `widthRange` - see
+ * branchCanApplyToVisitor's doc comment for exactly what "proven" means
+ * here (media type, and width-only feature expressions; everything else
+ * is left alone). `widthRange` is one of SERVED_WIDTH_RANGES above, not
+ * the single point this service rendered at - see that constant's own
+ * doc comment for why the distinction matters.
+ */
+export function isMediaQueryApplicable(mediaQueryParams, widthRange) {
 	try {
-		// Not dead code despite isEntirelyStaticallyEvaluable above already
-		// having parsed this same string successfully - confirmed
-		// directly: css-mediaquery's match() can still throw on a value that
-		// PARSES fine but isn't a valid ratio for the aspect-ratio/
-		// device-aspect-ratio features (e.g. a real page's malformed
-		// `@media (aspect-ratio: not-a-ratio)`) - its own toDecimal() helper
-		// only guards the `Number(ratio)` path, not the regex-match fallback,
-		// which throws on anything that's neither a bare number nor an
-		// `N/M` string.
-		return mediaQuery.match(mediaQueryParams, viewportMediaFeatureValues(viewport));
+		return mediaQuery.parse(mediaQueryParams).some((branch) => branchCanApplyToVisitor(branch, widthRange));
 	} catch {
-		return true; // same fail-open stance penthouse's own remover takes for anything it can't classify
+		return true; // unparsable - keep it, same fail-open stance penthouse's own remover takes for anything it can't classify
 	}
 }
 
 /**
  * A postcss plugin (per critical's own `postcss` postprocessing option -
  * see options.postcss in critical/src/core.js's create()) that removes any
- * `@media` block isMediaQueryApplicable() above says doesn't apply to
- * `viewport`. Wired into generateForViewport() in server.js, once per
- * viewport, so each call only strips rules inapplicable to ITS OWN
- * rendered viewport - the mobile generation's own narrower `max-width`
- * breakpoints are untouched.
+ * `@media` block isMediaQueryApplicable() above proves can never apply to
+ * any real visitor served `widthRange`. Wired into generateForViewport()
+ * in server.js, once per bucket, with that bucket's own
+ * SERVED_WIDTH_RANGES entry (not its render viewport) - see that
+ * constant's doc comment for why the two aren't the same thing.
  *
  * Runs after penthouse's extraction but before critical's own final
  * CleanCSS minify pass, so whatever empty/now-duplicate media blocks this
  * leaves behind get cleaned up by that existing step already - no extra
  * cleanup needed here.
  */
-export function stripInapplicableMediaQueries(viewport) {
+export function stripInapplicableMediaQueries(widthRange) {
 	return {
 		postcssPlugin: 'wpcc-strip-inapplicable-media-queries',
 		AtRule: {
 			media(atRule) {
-				if (!isMediaQueryApplicable(atRule.params, viewport)) {
+				if (!isMediaQueryApplicable(atRule.params, widthRange)) {
 					atRule.remove();
 				}
 			},
