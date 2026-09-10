@@ -36,6 +36,8 @@ import {
 	isBlockedLiteralAddress,
 	isPrivateOrReservedTarget,
 	safeFetch,
+	stripInapplicableMediaQueries,
+	SERVED_WIDTH_RANGES,
 } from './lib.js';
 
 const PORT = process.env.PORT || 3939;
@@ -255,8 +257,8 @@ async function generateAndSubmit(url) {
 	console.log(`[critical-css] generating for ${logSafe(url)}`);
 
 	const [mobile, desktop] = await Promise.all([
-		generateForViewport(url, VIEWPORTS.mobile),
-		generateForViewport(url, VIEWPORTS.desktop),
+		generateForViewport(url, VIEWPORTS.mobile, SERVED_WIDTH_RANGES.mobile),
+		generateForViewport(url, VIEWPORTS.desktop, SERVED_WIDTH_RANGES.desktop),
 	]);
 
 	const res = await postToReceiverWithRetry(JSON.stringify({ url, css_mobile: mobile, css_desktop: desktop }));
@@ -469,11 +471,21 @@ async function getSsrfSafeBrowser() {
 	return cachedBrowserPromise;
 }
 
-async function generateForViewport(url, dimensions) {
+async function generateForViewport(url, dimensions, servedWidthRange) {
 	const { css } = await generateCriticalCss({
 		src: url,
 		inline: false,
 		dimensions: [dimensions],
+		// See stripInapplicableMediaQueries's own doc comment in lib.js: closes
+		// a gap in penthouse's own media-query pruning (a standalone
+		// `max-width` query is never dropped, however irrelevant to this
+		// specific viewport) that was the single biggest contributor to
+		// oversized desktop output on real-world pages. Takes the bucket's
+		// whole SERVED width range, not `dimensions` (the single point
+		// rendered here) - wpcc-inject.php serves this result to every real
+		// visitor across that range, not just the one width sampled for the
+		// render itself; see SERVED_WIDTH_RANGES's own doc comment in lib.js.
+		postcss: [stripInapplicableMediaQueries(servedWidthRange)],
 		penthouse: {
 			timeout: 60000,
 			blockJSRequests: false,

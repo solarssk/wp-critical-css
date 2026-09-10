@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "critical": "^8.0.0",
+    "css-mediaquery": "^0.1.2",
     "express": "^5.2.1",
     "node-cron": "^4.6.0",
     "puppeteer": "^25.10.0",
@@ -18,5 +19,8 @@
   },
   "engines": {
     "node": ">=24"
+  },
+  "devDependencies": {
+    "postcss": "^8.5.26"
   }
 }

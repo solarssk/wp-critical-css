@@ -1,5 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import postcss from 'postcss';
 import {
 	isValidSecret,
 	isAllowedUrl,
@@ -11,6 +12,9 @@ import {
 	isBlockedLiteralAddress,
 	isPrivateOrReservedTarget,
 	safeFetch,
+	isMediaQueryApplicable,
+	stripInapplicableMediaQueries,
+	SERVED_WIDTH_RANGES,
 } from './lib.js';
 
 describe('isValidSecret', () => {
@@ -470,5 +474,184 @@ describe('safeFetch', () => {
 		const result = await safeFetch('https://example.com/empty', { lookup: publicLookup, fetchImpl });
 		assert.equal(result.ok, true);
 		assert.equal(result.text, '');
+	});
+});
+
+describe('isMediaQueryApplicable', () => {
+	// The real values SERVED_WIDTH_RANGES exports (mirroring
+	// wpcc-inject.php's WPCC_BREAKPOINT default) - used directly, not
+	// hand-copied, so these tests can never drift from what production
+	// actually wires into stripInapplicableMediaQueries via server.js.
+	const DESKTOP = SERVED_WIDTH_RANGES.desktop; // { min: 783, max: Infinity }
+	const MOBILE = SERVED_WIDTH_RANGES.mobile; // { min: 0, max: 782 }
+
+	// Table-driven for the same reason isAllowedUrl's cases are above: one
+	// identical assertion body, only the media query/range/expectation
+	// differ per row.
+	const cases = [
+		// The gap this function exists to close: penthouse-esm's own
+		// non-matching-media-query-remover.js unconditionally KEEPS a
+		// standalone max-width query regardless of the render viewport (see
+		// this function's doc comment in lib.js). A query genuinely
+		// impossible ANYWHERE in the bucket's served width range is safe to
+		// drop.
+		['(max-width: 480px)', DESKTOP, false, 'max-width entirely below the desktop bucket range (783-Infinity) is dropped - no real desktop-bucket visitor could ever see it apply'],
+		['(min-width: 992px)', MOBILE, false, 'min-width entirely above the mobile bucket range (0-782) is dropped'],
+		['(min-width: 992px) and (max-width: 1199.98px)', MOBILE, false, 'a compound range entirely above the mobile bucket range is dropped'],
+
+		// The exact regression this PR's review caught: a query that's
+		// false at the single SAMPLED render width (1280px) but reaches
+		// into the rest of the bucket's actual served range (783-Infinity)
+		// must be KEPT - stripping it would silently break above-the-fold
+		// styling for every real visitor between 783px and the query's own
+		// boundary, who genuinely gets served this same desktop critical
+		// CSS block.
+		['(max-width: 991.98px)', DESKTOP, true, 'reaches into the desktop range (783-991.98) even though false at the 1280px sample point - must be kept'],
+		['(max-width: 1199.98px)', DESKTOP, true, 'same shape, wider overlap with the desktop range'],
+		['(min-width: 992px) and (max-width: 1199.98px)', DESKTOP, true, 'a tablet-only compound range overlaps part of the desktop bucket range - kept'],
+		['(min-width: 992px)', DESKTOP, true, 'desktop bucket range is unbounded above, so any finite min-width always overlaps it'],
+
+		['(max-width: 991.98px)', MOBILE, true, 'a max-width comfortably covering the whole mobile range is kept'],
+		['(min-width: 500px)', MOBILE, true, 'a min-width inside the mobile range (500-782 overlap) is kept'],
+
+		['print', DESKTOP, false, 'print can never apply to a real (screen) visitor'],
+		['screen', DESKTOP, true, 'bare screen always applies, no width constraint to check'],
+		['all', MOBILE, true, 'bare all always applies'],
+
+		// device-width/height/orientation/aspect-ratio are NOT the axis
+		// wpcc-inject.php's own wrapper actually constrains for a real
+		// visitor (only bare `width` is) - real visitor height and
+		// device-width are unbounded in both buckets, so none of these can
+		// ever be proven impossible from a width range alone. Always kept.
+		['(prefers-color-scheme: dark)', DESKTOP, true, 'prefers-color-scheme is never evaluated - no real signal for it, always kept'],
+		['(prefers-reduced-motion: reduce)', DESKTOP, true, 'prefers-reduced-motion is never evaluated - always kept'],
+		['(hover: hover)', DESKTOP, true, 'hover is never evaluated - always kept'],
+		['(pointer: fine)', DESKTOP, true, 'pointer is never evaluated - always kept'],
+		['(resolution: 2dppx)', DESKTOP, true, 'resolution is never evaluated - always kept'],
+		['(orientation: landscape)', DESKTOP, true, 'orientation is never evaluated - real visitor height is unbounded in either bucket, always kept'],
+		['(orientation: portrait)', MOBILE, true, 'orientation is never evaluated for the mobile bucket either'],
+		['(aspect-ratio: 16/9)', DESKTOP, true, 'aspect-ratio depends on height too - never evaluated, always kept'],
+		['(device-width: 480px)', DESKTOP, true, "device-width isn't the axis wpcc-inject.php's wrapper bounds - never evaluated, always kept"],
+		[
+			'(min-width: 992px) and (hover: hover)',
+			MOBILE,
+			true,
+			'a query mixing width with a non-derivable feature is kept even though the width part alone would be dropped',
+		],
+
+		// css-mediaquery's own match() has a confirmed bug for `not ...`
+		// (inverse) queries (returns false before evaluating feature
+		// expressions whenever the branch's type matches ours) - this file
+		// no longer delegates to match() at all, so it can implement `not`
+		// correctly itself via De Morgan's law at the type level.
+		['not print', DESKTOP, true, 'NOT print is always true for a real screen visitor, regardless of any feature part'],
+		['not print and (max-width: 100px)', DESKTOP, true, 'still always true - the feature part is irrelevant once NOT type alone is true'],
+		['not screen', DESKTOP, false, 'NOT screen alone is always false for a real screen visitor - no feature part to fall back on'],
+		['not all', DESKTOP, false, 'NOT all is always false for anyone - "all" matches everything by definition'],
+		['not screen and (max-width: 991.98px)', DESKTOP, true, 'NOT (screen AND feature) with a real feature part falls open rather than applying De Morgan per-feature'],
+		['not screen and (min-width: 992px)', MOBILE, true, 'same fail-open stance on mobile too'],
+
+		// css-mediaquery's toPx() converts em/rem/cm/mm/in/pt/pc, not just
+		// bare px - real themes (Bootstrap 3.x, Foundation, hand-rolled CSS)
+		// commonly write breakpoints in em. This file's own local toPx()
+		// port needs the same direct coverage, not just line-coverage
+		// tooling's word for it.
+		['(max-width: 48em)', DESKTOP, false, 'an em-unit max-width (48em = 768px) is entirely below the desktop range - dropped'],
+		['(max-width: 48em)', MOBILE, true, 'the same em-unit max-width overlaps the mobile range - kept'],
+		['(max-width: 8.15cm)', DESKTOP, false, 'cm unit (8.15cm ~= 308px) is entirely below the desktop range - dropped'],
+		['(max-width: 300mm)', DESKTOP, true, 'mm unit (300mm ~= 1133px) overlaps the desktop range - kept'],
+		['(max-width: 5in)', DESKTOP, false, 'in unit (5in = 480px) is entirely below the desktop range - dropped'],
+		['(max-width: 900pt)', DESKTOP, true, 'pt unit (900pt = 64800px per css-mediaquery\'s own, non-standard pt handling) overlaps the desktop range - kept'],
+		['(max-width: 10pc)', DESKTOP, false, 'pc unit (10pc = 60px) is entirely below the desktop range - dropped'],
+
+		// A bare `width: Npx` (no min-/max- modifier) is an exact-match
+		// feature - rare in real CSS but syntactically valid - pinning both
+		// the branch's own lo and hi bounds to the same value.
+		['(width: 900px)', DESKTOP, true, 'an exact width inside the desktop range is kept'],
+		['(width: 500px)', DESKTOP, false, 'an exact width outside the desktop range is dropped'],
+
+		// A comma-separated list is an OR across branches (CSS spec
+		// semantics) - the whole query is kept as soon as ANY branch could
+		// apply somewhere in the range.
+		// Note: a standalone min-width branch, however large, can never be
+		// the "impossible" branch for the desktop bucket - that range is
+		// unbounded above, so even an unrealistically large min-width still
+		// overlaps it (a real visitor could have an ultra-wide/multi-monitor
+		// setup). Both branches here have to be max-width-shaped to
+		// legitimately prove neither can ever apply.
+		['(max-width: 480px), (max-width: 600px)', DESKTOP, false, 'a fully width-only comma list is dropped only when NO branch overlaps the range'],
+		['(max-width: 480px), (min-width: 1000px)', DESKTOP, true, 'kept as soon as one branch overlaps, even if another does not'],
+		['(max-width: 480px), (hover: hover)', DESKTOP, true, 'one non-derivable branch in a comma list keeps the whole list'],
+	];
+
+	for (const [mediaQueryParams, widthRange, expected, description] of cases) {
+		test(description, () => {
+			assert.equal(isMediaQueryApplicable(mediaQueryParams, widthRange), expected);
+		});
+	}
+
+	test('keeps garbage css-mediaquery itself tolerates via ordinary vacuous-match semantics, not a fail-open path', () => {
+		// NOT a try/catch case, despite reading like one:
+		// `mediaQuery.parse(')))not a media query(((')` returns
+		// `[{inverse:false, type:'all', expressions:[]}]` - a well-formed,
+		// zero-expression, type-'all' branch, which branchCanApplyToVisitor
+		// keeps ordinarily (type 'all' always applies, no width expressions
+		// to check) - isMediaQueryApplicable's own catch block is never
+		// reached for this input. Kept as a regression check on that
+		// specific parsing quirk, not as coverage for error handling (the
+		// next test covers that, via input that actually throws).
+		assert.equal(isMediaQueryApplicable(')))not a media query(((', DESKTOP), true);
+	});
+
+	test('fails open (keeps it) for a malformed feature that makes css-mediaquery itself throw', () => {
+		// This truncated feature expression throws inside css-mediaquery's
+		// own parser (`Cannot read properties of null`) - exercises the
+		// actual catch branch in isMediaQueryApplicable.
+		assert.equal(isMediaQueryApplicable('(min-width:)', DESKTOP), true);
+	});
+});
+
+describe('stripInapplicableMediaQueries', () => {
+	const DESKTOP = SERVED_WIDTH_RANGES.desktop;
+
+	async function run(css, widthRange) {
+		const result = await postcss([stripInapplicableMediaQueries(widthRange)]).process(css, { from: undefined });
+		return result.css;
+	}
+
+	test('removes a breakpoint that cannot apply anywhere in the served range', async () => {
+		// Exact-equality, not a substring/regex check on just the @media
+		// text - a substring check here would still pass a mutant that
+		// swaps atRule.remove() for atRule.replaceWith(atRule.nodes)
+		// (unwrapping the block instead of deleting it, so `.b{color:blue}`
+		// leaks out and applies unconditionally) since neither assertion
+		// would notice `.b{color:blue}` is still present, just no longer
+		// inside the @media wrapper. Confirmed this exact mutation slips
+		// past a substring-only version of this test.
+		const css = '.a{color:red}@media (max-width: 480px){.b{color:blue}}';
+		const output = await run(css, DESKTOP);
+		assert.equal(output, '.a{color:red}');
+	});
+
+	test('keeps a breakpoint that overlaps the served range even though it would be false at the sampled render width', async () => {
+		// The exact regression this file's review caught: 991.98px is
+		// false at the 1280px sample point, but real desktop-bucket
+		// visitors between 783px and 991.98px exist and must still get
+		// this rule.
+		const css = '@media (max-width: 991.98px){.b{color:blue}}';
+		const output = await run(css, DESKTOP);
+		assert.equal(output, css);
+	});
+
+	test('removes an inapplicable breakpoint while keeping a sibling applicable one, without leaking either', async () => {
+		const css = '@media (max-width: 480px){.b{color:blue}}@media (min-width: 992px){.c{color:green}}';
+		const output = await run(css, DESKTOP);
+		assert.equal(output, '@media (min-width: 992px){.c{color:green}}');
+	});
+
+	test('leaves non-media at-rules untouched', async () => {
+		const css = '@font-face{font-family:x;src:url(x.woff)}';
+		const output = await run(css, DESKTOP);
+		assert.equal(output, css);
 	});
 });
