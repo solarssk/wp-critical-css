@@ -11,6 +11,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { lookup as dnsLookupAsync } from 'node:dns/promises';
+import mediaQuery from 'css-mediaquery';
 
 /**
  * Constant-time secret comparison - a plain !== leaks how many leading
@@ -413,3 +414,66 @@ export function extractUrlsFromUrlset(parsed) {
 	const urls = [parsed.urlset.url].flat();
 	return urls.map((u) => [u?.loc ?? []].flat()[0]).filter((loc) => typeof loc === 'string');
 }
+
+/**
+ * penthouse-esm's own dead-media-query pruning (non-matching-media-query-remover.js,
+ * wired in by the `critical` package before this ever sees the CSS) is
+ * documented as only filtering out: @print, a `min-width`/`min-height` that
+ * exceeds the target viewport, and a combined `min-width AND max-width` that
+ * does. A standalone `max-width` query - by far the most common breakpoint
+ * shape real themes emit (Bootstrap-derived frameworks especially) - is
+ * UNCONDITIONALLY kept regardless of the viewport actually being rendered;
+ * their own source comment calls this a deliberate "false positives over
+ * false negatives" choice, not an oversight.
+ *
+ * Confirmed against a real page: generating desktop (1280px) critical CSS
+ * for a Bootstrap-breakpoint theme kept every `@media (max-width:991.98px)`
+ * / `767.98px` / `575.98px` mobile-only rule verbatim, roughly doubling
+ * desktop output size versus the same generation with this filter applied
+ * (289KB -> 144KB on the page this was diagnosed against) - well past the
+ * WordPress receiver's 200KB-per-field cap
+ * (wordpress-plugin/wp-critical-css/includes/wpcc-receiver.php's
+ * WPCC_RECEIVER_MAX_CSS_BYTES), which rejects the whole submission with a
+ * 413 the moment either field crosses it.
+ *
+ * `css-mediaquery` - the same library penthouse-esm itself depends on for
+ * this exact kind of match - decides the real answer for every media
+ * feature (not just the min-width-only cases penthouse's own remover
+ * handles), so this only needs to close the specific max-width gap left
+ * open above rather than reimplement matching from scratch.
+ */
+export function isMediaQueryApplicable(mediaQueryParams, viewport) {
+	try {
+		return mediaQuery.match(mediaQueryParams, { type: 'screen', width: `${viewport.width}px`, height: `${viewport.height}px` });
+	} catch {
+		return true; // unparsable - keep it, same fail-open stance penthouse's own remover takes for anything it can't classify
+	}
+}
+
+/**
+ * A postcss plugin (per critical's own `postcss` postprocessing option -
+ * see options.postcss in critical/src/core.js's create()) that removes any
+ * `@media` block isMediaQueryApplicable() above says doesn't apply to
+ * `viewport`. Wired into generateForViewport() in server.js, once per
+ * viewport, so each call only strips rules inapplicable to ITS OWN
+ * rendered viewport - the mobile generation's own narrower `max-width`
+ * breakpoints are untouched.
+ *
+ * Runs after penthouse's extraction but before critical's own final
+ * CleanCSS minify pass, so whatever empty/now-duplicate media blocks this
+ * leaves behind get cleaned up by that existing step already - no extra
+ * cleanup needed here.
+ */
+export function stripInapplicableMediaQueries(viewport) {
+	return {
+		postcssPlugin: 'wpcc-strip-inapplicable-media-queries',
+		AtRule: {
+			media(atRule) {
+				if (!isMediaQueryApplicable(atRule.params, viewport)) {
+					atRule.remove();
+				}
+			},
+		},
+	};
+}
+stripInapplicableMediaQueries.postcss = true;

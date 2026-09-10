@@ -36,6 +36,7 @@ import {
 	isBlockedLiteralAddress,
 	isPrivateOrReservedTarget,
 	safeFetch,
+	stripInapplicableMediaQueries,
 } from './lib.js';
 
 const PORT = process.env.PORT || 3939;
@@ -474,6 +475,12 @@ async function generateForViewport(url, dimensions) {
 		src: url,
 		inline: false,
 		dimensions: [dimensions],
+		// See stripInapplicableMediaQueries's own doc comment in lib.js: closes
+		// a gap in penthouse's own media-query pruning (a standalone
+		// `max-width` query is never dropped, however irrelevant to this
+		// specific viewport) that was the single biggest contributor to
+		// oversized desktop output on real-world pages.
+		postcss: [stripInapplicableMediaQueries(dimensions)],
 		penthouse: {
 			timeout: 60000,
 			blockJSRequests: false,

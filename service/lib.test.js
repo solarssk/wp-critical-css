@@ -1,5 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import postcss from 'postcss';
 import {
 	isValidSecret,
 	isAllowedUrl,
@@ -11,6 +12,8 @@ import {
 	isBlockedLiteralAddress,
 	isPrivateOrReservedTarget,
 	safeFetch,
+	isMediaQueryApplicable,
+	stripInapplicableMediaQueries,
 } from './lib.js';
 
 describe('isValidSecret', () => {
@@ -470,5 +473,77 @@ describe('safeFetch', () => {
 		const result = await safeFetch('https://example.com/empty', { lookup: publicLookup, fetchImpl });
 		assert.equal(result.ok, true);
 		assert.equal(result.text, '');
+	});
+});
+
+describe('isMediaQueryApplicable', () => {
+	const DESKTOP = { width: 1280, height: 800 };
+	const MOBILE = { width: 412, height: 915 };
+
+	// Table-driven for the same reason isAllowedUrl's cases are above: one
+	// identical assertion body, only the media query/viewport/expectation
+	// differ per row.
+	const cases = [
+		// The gap this function exists to close: penthouse-esm's own
+		// non-matching-media-query-remover.js unconditionally KEEPS a
+		// standalone max-width query regardless of viewport (see this
+		// function's doc comment in lib.js) - these two are exactly that
+		// shape, at the desktop viewport where they shouldn't apply.
+		['(max-width: 991.98px)', DESKTOP, false, 'standalone max-width below the desktop viewport is dropped'],
+		['(max-width: 767.98px)', DESKTOP, false, 'standalone max-width well below the desktop viewport is dropped'],
+		['(max-width: 1659.98px)', DESKTOP, true, 'standalone max-width above the desktop viewport is kept'],
+		['(max-width: 575.98px)', MOBILE, true, 'standalone max-width above the mobile viewport is kept'],
+		['(max-width: 320px)', MOBILE, false, 'standalone max-width below the mobile viewport is dropped'],
+		['(min-width: 992px)', DESKTOP, true, 'min-width at/below the desktop viewport is kept'],
+		['(min-width: 992px)', MOBILE, false, 'min-width above the mobile viewport is dropped (already penthouse\'s own case, verified still correct here)'],
+		['(min-width: 992px) and (max-width: 1659.98px)', DESKTOP, true, 'compound range containing the desktop viewport is kept'],
+		['(min-width: 992px) and (max-width: 1199.98px)', MOBILE, false, 'compound range not containing the mobile viewport is dropped'],
+		['print', DESKTOP, false, 'print media is dropped for a screen render'],
+		['screen', DESKTOP, true, 'bare screen media is kept'],
+	];
+
+	for (const [mediaQueryParams, viewport, expected, description] of cases) {
+		test(description, () => {
+			assert.equal(isMediaQueryApplicable(mediaQueryParams, viewport), expected);
+		});
+	}
+
+	test('fails open (keeps it) for garbage css-mediaquery itself tolerates without throwing', () => {
+		assert.equal(isMediaQueryApplicable(')))not a media query(((', DESKTOP), true);
+	});
+
+	test('fails open (keeps it) for a malformed feature that makes css-mediaquery itself throw', () => {
+		// css-mediaquery is lenient about most garbage (see the case above),
+		// but a truncated feature expression like this one throws inside its
+		// own parser (`Cannot read properties of null`) - exercises the
+		// catch branch above, not just the "parses fine but decides false"
+		// paths every other case here covers.
+		assert.equal(isMediaQueryApplicable('(min-width:)', DESKTOP), true);
+	});
+});
+
+describe('stripInapplicableMediaQueries', () => {
+	async function run(css, viewport) {
+		const result = await postcss([stripInapplicableMediaQueries(viewport)]).process(css, { from: undefined });
+		return result.css;
+	}
+
+	test('removes a mobile-only breakpoint from a desktop-viewport render', async () => {
+		const css = '.a{color:red}@media (max-width: 991.98px){.b{color:blue}}';
+		const output = await run(css, { width: 1280, height: 800 });
+		assert.doesNotMatch(output, /max-width: 991\.98px/);
+		assert.match(output, /\.a\{color:red\}/);
+	});
+
+	test('keeps a rule under an applicable media query', async () => {
+		const css = '@media (min-width: 992px){.b{color:blue}}';
+		const output = await run(css, { width: 1280, height: 800 });
+		assert.match(output, /\.b\{color:blue\}/);
+	});
+
+	test('leaves non-media at-rules untouched', async () => {
+		const css = '@font-face{font-family:x;src:url(x.woff)}';
+		const output = await run(css, { width: 1280, height: 800 });
+		assert.equal(output, css);
 	});
 });
