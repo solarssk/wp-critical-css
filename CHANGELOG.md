@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.5] - 2026-09-10
+
+### Fixed
+
+- **Desktop critical CSS could exceed the WordPress receiver's 200KB-per-field limit**, causing `/generate` and sweep submissions to fail outright with a 413 (`css_mobile/css_desktop exceed the size limit`). Root cause: `penthouse-esm`'s own dead-media-query pruning only drops a `min-width` query that exceeds the render viewport - a standalone `max-width` query (the shape most real themes use for their breakpoints) is always kept regardless of viewport, by that library's own documented design. On a real-world Bootstrap-breakpoint theme this left every mobile-only `@media (max-width: ...)` rule baked into the desktop-viewport output too, roughly doubling its size. The service now runs an additional postcss pass (`stripInapplicableMediaQueries` in `service/lib.js`, using `css-mediaquery`) that removes a `@media` block only once it's proven impossible across the *entire width range* the WordPress plugin actually serves that critical CSS to (desktop: 783px and up, unbounded; mobile: up to 782px - see `wpcc-inject.php`), not just at the one width this service happens to render at - an earlier version of this fix stripped based on the single sampled point instead, which silently broke above-the-fold styling for real visitors at in-between widths (e.g. a 900px tablet). Desktop critical CSS on affected pages dropped from ~270-290KB to roughly 100-150KB in testing, depending on the page.
+
+### Deploy
+
+- Container image: `ghcr.io/solarssk/wp-critical-css:0.2.5` (rolling `:latest`, `:0.2`), also published to `docker.io/solarssk/wp-critical-css:0.2.5`.
+- WordPress plugin: `wp-critical-css-0.2.5.zip`, attached to this release.
+- No migration steps - fully backward compatible with 0.2.4's stored data, configuration, and REST contract. Only the service's critical CSS generation changed; re-run `/sweep` (or wait for the next scheduled one) to regenerate CSS for pages that were previously failing with a 413.
+
 ## [0.2.4] - 2026-09-09
 
 ### Security
