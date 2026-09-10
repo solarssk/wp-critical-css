@@ -534,6 +534,47 @@ describe('isMediaQueryApplicable', () => {
 			true,
 			'a query mixing a derivable feature with a non-derivable one is kept even though the derivable part alone would be dropped',
 		],
+
+		// css-mediaquery's own match() has a confirmed bug for `not ...`
+		// (inverse) queries: it returns false before ever evaluating the
+		// feature expressions whenever the query's type matches the
+		// renderer's type (always 'screen' here) - so every one of these
+		// would (wrongly) report `false`/dropped without the inverse guard
+		// in isEntirelyStaticallyEvaluable. All should be kept regardless of
+		// viewport, the same fail-open stance as the non-derivable-feature
+		// cases above.
+		['not screen and (max-width: 991.98px)', DESKTOP, true, 'inverse query is never evaluated, even though every feature it uses is on the allowlist'],
+		['not screen and (min-width: 992px)', MOBILE, true, 'inverse query is kept on mobile too, not just desktop'],
+		['not print', DESKTOP, true, 'inverse query with zero expressions (not print) is kept, not just ones with feature expressions'],
+		['not all', DESKTOP, true, 'inverse query with no real feature condition at all is still kept'],
+
+		// css-mediaquery's toPx() converts em/rem/cm/mm/in/pt/pc, not just
+		// bare px - real themes (Bootstrap 3.x, Foundation, hand-rolled CSS)
+		// commonly write breakpoints in em. This conversion logic lives
+		// entirely inside the library, not in any branch of this file's own
+		// code, so it needs its own direct test rather than relying on
+		// coverage tooling to reveal a gap here.
+		['(max-width: 48em)', DESKTOP, false, 'an em-unit max-width (48em = 768px) below the desktop viewport is dropped, same as the px form'],
+		['(max-width: 48em)', MOBILE, true, 'the same em-unit max-width is kept at the (narrower) mobile viewport'],
+
+		// A comma-separated list is an OR across branches (CSS spec
+		// semantics, and how css-mediaquery's own parse()/match() treat
+		// it) - isEntirelyStaticallyEvaluable requires EVERY branch to be
+		// derivable before evaluating ANY of them, so one non-derivable
+		// branch anywhere in the list keeps the whole thing, even if the
+		// other branch alone would have been dropped.
+		['(max-width: 767px), (min-width: 1400px)', DESKTOP, false, 'a fully-derivable comma list is evaluated normally - dropped when no branch matches'],
+		['(max-width: 767px), (min-width: 1000px)', DESKTOP, true, 'a fully-derivable comma list is kept when at least one branch matches'],
+		['(max-width: 767px), (hover: hover)', DESKTOP, true, 'one non-derivable branch in a comma list keeps the whole list, even though the derivable branch alone would be dropped'],
+
+		// aspect-ratio/device-aspect-ratio's positive (successfully-matched)
+		// path was previously only exercised via the malformed-value throw
+		// case below - this confirms the actual ratio comparison itself
+		// (both the bare-decimal and N/M forms toDecimal() supports) gets
+		// the right answer, not just that it fails safely on garbage.
+		['(aspect-ratio: 16/9)', DESKTOP, false, 'an N/M aspect-ratio that does not match the viewport ratio (1280/800=1.6, not 16/9=1.778) is dropped'],
+		['(min-aspect-ratio: 1/1)', DESKTOP, true, 'an N/M aspect-ratio the viewport ratio exceeds is kept'],
+		['(aspect-ratio: 1.6)', DESKTOP, true, 'a bare-decimal aspect-ratio matching the viewport ratio exactly (1280/800=1.6) is kept'],
 	];
 
 	for (const [mediaQueryParams, viewport, expected, description] of cases) {
@@ -542,28 +583,39 @@ describe('isMediaQueryApplicable', () => {
 		});
 	}
 
-	test('fails open (keeps it) for garbage css-mediaquery itself tolerates without throwing', () => {
+	test('keeps garbage css-mediaquery itself tolerates via ordinary vacuous-match semantics, not a fail-open path', () => {
+		// NOT a try/catch or allowlist-fallback case, despite reading like
+		// one: `mediaQuery.parse(')))not a media query(((')` returns
+		// `[{inverse:false, type:'all', expressions:[]}]` - a well-formed,
+		// zero-expression, type-'all' query - which matches ordinarily
+		// (type 'all' always matches; `.every()` over an empty expressions
+		// array is vacuously true). Neither isEntirelyStaticallyEvaluable's
+		// nor isMediaQueryApplicable's catch block is ever reached for this
+		// input - confirmed deleting both wouldn't change this test's
+		// outcome. Kept as a regression check on that specific parsing
+		// quirk, not as coverage for error handling (the next two tests
+		// cover that instead, via inputs that actually throw).
 		assert.equal(isMediaQueryApplicable(')))not a media query(((', DESKTOP), true);
 	});
 
 	test('fails open (keeps it) for a malformed feature that makes css-mediaquery itself throw', () => {
-		// css-mediaquery is lenient about most garbage (see the case above),
-		// but a truncated feature expression like this one throws inside its
-		// own parser (`Cannot read properties of null`) - exercises the
-		// catch branch above, not just the "parses fine but decides false"
-		// paths every other case here covers.
+		// Unlike the case above, this truncated feature expression throws
+		// inside css-mediaquery's own parser (`Cannot read properties of
+		// null`) - exercises the actual catch branch in
+		// isEntirelyStaticallyEvaluable.
 		assert.equal(isMediaQueryApplicable('(min-width:)', DESKTOP), true);
 	});
 
 	test('fails open (keeps it) for an aspect-ratio value that parses fine but isn\'t a valid ratio', () => {
 		// A DIFFERENT throw path than the two cases above: this string
 		// parses into a well-formed {feature: 'aspect-ratio', value:
-		// 'not-a-ratio'} expression (so referencesOnlyViewportDerivableFeatures
-		// lets it through - 'aspect-ratio' is on the allowlist), but
-		// css-mediaquery's own toDecimal() helper then throws trying to
-		// convert that value during match() itself - confirms the try/catch
-		// around match() in isMediaQueryApplicable is reachable, not dead
-		// code shadowed by the parse-time check above it.
+		// 'not-a-ratio'} expression (so isEntirelyStaticallyEvaluable lets
+		// it through - 'aspect-ratio' is on the allowlist and the query
+		// isn't inverse), but css-mediaquery's own toDecimal() helper then
+		// throws trying to convert that value during match() itself -
+		// confirms the try/catch around match() in isMediaQueryApplicable
+		// is reachable, not dead code shadowed by the parse-time check
+		// above it.
 		assert.equal(isMediaQueryApplicable('(aspect-ratio: not-a-ratio)', DESKTOP), true);
 	});
 });
@@ -575,16 +627,29 @@ describe('stripInapplicableMediaQueries', () => {
 	}
 
 	test('removes a mobile-only breakpoint from a desktop-viewport render', async () => {
+		// Exact-equality, not a substring/regex check on just the @media
+		// text - a substring check here would still pass a mutant that
+		// swaps atRule.remove() for atRule.replaceWith(atRule.nodes)
+		// (unwrapping the block instead of deleting it, so `.b{color:blue}`
+		// leaks out and applies unconditionally) since neither assertion
+		// would notice `.b{color:blue}` is still present, just no longer
+		// inside the @media wrapper. Confirmed this exact mutation slips
+		// past a substring-only version of this test.
 		const css = '.a{color:red}@media (max-width: 991.98px){.b{color:blue}}';
 		const output = await run(css, { width: 1280, height: 800 });
-		assert.doesNotMatch(output, /max-width: 991\.98px/);
-		assert.match(output, /\.a\{color:red\}/);
+		assert.equal(output, '.a{color:red}');
 	});
 
-	test('keeps a rule under an applicable media query', async () => {
+	test('keeps a rule under an applicable media query, wrapper included', async () => {
 		const css = '@media (min-width: 992px){.b{color:blue}}';
 		const output = await run(css, { width: 1280, height: 800 });
-		assert.match(output, /\.b\{color:blue\}/);
+		assert.equal(output, css);
+	});
+
+	test('removes an inapplicable breakpoint while keeping a sibling applicable one, without leaking either', async () => {
+		const css = '@media (max-width: 991.98px){.b{color:blue}}@media (min-width: 992px){.c{color:green}}';
+		const output = await run(css, { width: 1280, height: 800 });
+		assert.equal(output, '@media (min-width: 992px){.c{color:green}}');
 	});
 
 	test('leaves non-media at-rules untouched', async () => {

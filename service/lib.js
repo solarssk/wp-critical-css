@@ -467,11 +467,33 @@ export function extractUrlsFromUrlset(parsed) {
  */
 const VIEWPORT_DERIVABLE_MEDIA_FEATURES = new Set(['width', 'height', 'device-width', 'device-height', 'orientation', 'aspect-ratio', 'device-aspect-ratio']);
 
-function referencesOnlyViewportDerivableFeatures(mediaQueryParams) {
+/**
+ * A second, independent reason (beyond the feature allowlist above) to
+ * never hand a query to css-mediaquery's match(): a `not ...` (inverse)
+ * branch. Confirmed directly against css-mediaquery's own matchQuery() -
+ * `if ((typeMatch && inverse) || !(typeMatch || inverse)) return false`
+ * fires and returns false BEFORE the feature expressions are ever
+ * evaluated, for any inverse query whose type matches (which, since this
+ * service always renders as `type: 'screen'`, is every `not screen ...`/
+ * `not all ...` query) - so `not screen and (max-width: 991.98px)` reports
+ * false unconditionally, regardless of viewport, instead of correctly
+ * matching whenever the un-negated condition is false. `not print`
+ * (`inverse: true`, no expressions) hits the same early return via its
+ * second disjunct. Reproduced directly: both report `false` for every
+ * viewport tested, when real CSS semantics say they should often be
+ * `true`. This isn't a feature-classification gap this file can patch by
+ * adding more entries to the allowlist above - it's a defect in the
+ * library's own negation logic - so the only safe move is the same one
+ * taken for anything else this module can't trust an answer for: never
+ * evaluate an inverse query, always keep it.
+ */
+function isEntirelyStaticallyEvaluable(mediaQueryParams) {
 	try {
-		return mediaQuery.parse(mediaQueryParams).every((branch) => branch.expressions.every((expression) => VIEWPORT_DERIVABLE_MEDIA_FEATURES.has(expression.feature)));
+		return mediaQuery
+			.parse(mediaQueryParams)
+			.every((branch) => !branch.inverse && branch.expressions.every((expression) => VIEWPORT_DERIVABLE_MEDIA_FEATURES.has(expression.feature)));
 	} catch {
-		return false; // can't even tell what features it references - don't risk evaluating it, isMediaQueryApplicable below keeps it either way
+		return false; // can't even tell what features/negation it uses - don't risk evaluating it, isMediaQueryApplicable below keeps it either way
 	}
 }
 
@@ -507,12 +529,12 @@ function viewportMediaFeatureValues(viewport) {
 }
 
 export function isMediaQueryApplicable(mediaQueryParams, viewport) {
-	if (!referencesOnlyViewportDerivableFeatures(mediaQueryParams)) {
-		return true; // references a feature this static render has no real signal for (or couldn't be parsed) - keep it rather than guess
+	if (!isEntirelyStaticallyEvaluable(mediaQueryParams)) {
+		return true; // references a feature this static render has no real signal for, is a `not ...` query css-mediaquery can't negate correctly, or couldn't be parsed - keep it rather than guess
 	}
 	try {
-		// Not dead code despite referencesOnlyViewportDerivableFeatures above
-		// already having parsed this same string successfully - confirmed
+		// Not dead code despite isEntirelyStaticallyEvaluable above already
+		// having parsed this same string successfully - confirmed
 		// directly: css-mediaquery's match() can still throw on a value that
 		// PARSES fine but isn't a valid ratio for the aspect-ratio/
 		// device-aspect-ratio features (e.g. a real page's malformed
