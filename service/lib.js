@@ -476,9 +476,11 @@ export const SERVED_WIDTH_RANGES = {
  * comment for why width is the only feature this file still reasons about
  * numerically at all.
  */
+const LENGTH_UNIT_RE = /(em|rem|px|cm|mm|in|pt|pc)?$/;
+
 function toPx(length) {
 	const value = Number.parseFloat(length);
-	const units = String(length).match(/(em|rem|px|cm|mm|in|pt|pc)?$/)[1];
+	const units = LENGTH_UNIT_RE.exec(String(length))[1];
 	switch (units) {
 		case 'em':
 		case 'rem':
