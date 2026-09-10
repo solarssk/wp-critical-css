@@ -442,11 +442,87 @@ export function extractUrlsFromUrlset(parsed) {
  * handles), so this only needs to close the specific max-width gap left
  * open above rather than reimplement matching from scratch.
  */
-export function isMediaQueryApplicable(mediaQueryParams, viewport) {
+
+/**
+ * Only these features are fully and objectively determined by a static
+ * width x height render - so only a query built ENTIRELY out of them is
+ * ever evaluated below. Confirmed directly against css-mediaquery's own
+ * source (matchQuery() in its index.js): any feature simply absent from
+ * the `values` object it's given - which for us would be anything not
+ * explicitly listed here, e.g. `hover`, `pointer`, `prefers-color-scheme`,
+ * `prefers-reduced-motion`, `resolution`, `color` - hits its `if (!value)
+ * return false` branch and silently reports "doesn't match", not "can't
+ * tell". Originally trusted a bare width/height matchConfig to fail open
+ * on those via isMediaQueryApplicable's own try/catch, which was wrong:
+ * css-mediaquery never throws for a merely-absent feature, it just
+ * confidently answers false - so a real `@media (orientation: landscape)`
+ * or `(prefers-color-scheme: dark)` block was being silently dropped from
+ * the DESKTOP render even when the emulated viewport genuinely was
+ * landscape, and unconditionally from every render for anything
+ * preference/capability-based, none of which this headless, single-shot
+ * render has any real signal for regardless. Restricting evaluation to
+ * this allowlist - and leaving every other feature unevaluated (kept,
+ * same as penthouse's own stance) - is what actually fixes that, not the
+ * try/catch, which only ever covered a genuinely unparsable string.
+ */
+const VIEWPORT_DERIVABLE_MEDIA_FEATURES = new Set(['width', 'height', 'device-width', 'device-height', 'orientation', 'aspect-ratio', 'device-aspect-ratio']);
+
+function referencesOnlyViewportDerivableFeatures(mediaQueryParams) {
 	try {
-		return mediaQuery.match(mediaQueryParams, { type: 'screen', width: `${viewport.width}px`, height: `${viewport.height}px` });
+		return mediaQuery.parse(mediaQueryParams).every((branch) => branch.expressions.every((expression) => VIEWPORT_DERIVABLE_MEDIA_FEATURES.has(expression.feature)));
 	} catch {
-		return true; // unparsable - keep it, same fail-open stance penthouse's own remover takes for anything it can't classify
+		return false; // can't even tell what features it references - don't risk evaluating it, isMediaQueryApplicable below keeps it either way
+	}
+}
+
+/**
+ * `orientation`/`aspect-ratio`/`device-aspect-ratio` need an explicit value
+ * in css-mediaquery's `values` config the same way width/height do - it
+ * never derives them from width/height itself (confirmed directly: with
+ * only `width`/`height` supplied, `(orientation: landscape)` reported
+ * false even for a 1280x800 config, which IS landscape). `device-width`/
+ * `device-height` get the same value as `width`/`height` - this service
+ * never sets Puppeteer's deviceScaleFactor or emulates a separate device
+ * viewport, so the render viewport and "device" viewport are the same
+ * thing here. `height >= width` for the portrait case (not the other way
+ * around) matches how an exactly-square viewport is actually classified -
+ * CSS Media Queries Level 4 section 4.4 defines orientation as portrait whenever
+ * height is greater than or equal to width, landscape in every other
+ * case (verified directly against the spec text, not assumed - the more
+ * intuitive-sounding "width >= height is landscape" is backwards for the
+ * square case).
+ */
+function viewportMediaFeatureValues(viewport) {
+	const ratio = `${viewport.width}/${viewport.height}`;
+	return {
+		type: 'screen',
+		width: `${viewport.width}px`,
+		height: `${viewport.height}px`,
+		'device-width': `${viewport.width}px`,
+		'device-height': `${viewport.height}px`,
+		orientation: viewport.height >= viewport.width ? 'portrait' : 'landscape',
+		'aspect-ratio': ratio,
+		'device-aspect-ratio': ratio,
+	};
+}
+
+export function isMediaQueryApplicable(mediaQueryParams, viewport) {
+	if (!referencesOnlyViewportDerivableFeatures(mediaQueryParams)) {
+		return true; // references a feature this static render has no real signal for (or couldn't be parsed) - keep it rather than guess
+	}
+	try {
+		// Not dead code despite referencesOnlyViewportDerivableFeatures above
+		// already having parsed this same string successfully - confirmed
+		// directly: css-mediaquery's match() can still throw on a value that
+		// PARSES fine but isn't a valid ratio for the aspect-ratio/
+		// device-aspect-ratio features (e.g. a real page's malformed
+		// `@media (aspect-ratio: not-a-ratio)`) - its own toDecimal() helper
+		// only guards the `Number(ratio)` path, not the regex-match fallback,
+		// which throws on anything that's neither a bare number nor an
+		// `N/M` string.
+		return mediaQuery.match(mediaQueryParams, viewportMediaFeatureValues(viewport));
+	} catch {
+		return true; // same fail-open stance penthouse's own remover takes for anything it can't classify
 	}
 }
 

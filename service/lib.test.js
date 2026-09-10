@@ -500,6 +500,40 @@ describe('isMediaQueryApplicable', () => {
 		['(min-width: 992px) and (max-width: 1199.98px)', MOBILE, false, 'compound range not containing the mobile viewport is dropped'],
 		['print', DESKTOP, false, 'print media is dropped for a screen render'],
 		['screen', DESKTOP, true, 'bare screen media is kept'],
+
+		// orientation IS fully determined by a static width x height render,
+		// so it's evaluated like width/height - but css-mediaquery needs an
+		// explicit value for it (it doesn't derive it from width/height on
+		// its own - see viewportMediaFeatureValues's doc comment in lib.js),
+		// and the landscape/portrait cutoff itself has a boundary case (an
+		// exactly-square viewport is portrait per spec, not landscape) worth
+		// covering directly rather than trusting the two non-square
+		// viewports above to exercise it correctly.
+		['(orientation: landscape)', DESKTOP, true, 'orientation landscape matches the (wider-than-tall) desktop viewport'],
+		['(orientation: portrait)', DESKTOP, false, 'orientation portrait does not match the desktop viewport'],
+		['(orientation: portrait)', MOBILE, true, 'orientation portrait matches the (taller-than-wide) mobile viewport'],
+		['(orientation: landscape)', MOBILE, false, 'orientation landscape does not match the mobile viewport'],
+		['(orientation: portrait)', { width: 800, height: 800 }, true, 'an exactly-square viewport is portrait, not landscape, per spec'],
+
+		// The bug this whole allowlist exists to close: css-mediaquery
+		// treats a feature simply ABSENT from its values config as a
+		// confident non-match, not "unknown" - so a bare width/height
+		// matchConfig silently dropped every one of these regardless of
+		// whether they'd actually apply, for every viewport, always. None
+		// of these are viewport-derivable at all, so the fix is to never
+		// evaluate them - always keep, matching penthouse's own stance on
+		// anything it can't classify.
+		['(prefers-color-scheme: dark)', DESKTOP, true, 'prefers-color-scheme is never evaluated - no real signal for it, always kept'],
+		['(prefers-reduced-motion: reduce)', DESKTOP, true, 'prefers-reduced-motion is never evaluated - always kept'],
+		['(hover: hover)', DESKTOP, true, 'hover is never evaluated - always kept'],
+		['(pointer: fine)', DESKTOP, true, 'pointer is never evaluated - always kept'],
+		['(resolution: 2dppx)', DESKTOP, true, 'resolution is never evaluated - always kept'],
+		[
+			'(min-width: 992px) and (hover: hover)',
+			MOBILE,
+			true,
+			'a query mixing a derivable feature with a non-derivable one is kept even though the derivable part alone would be dropped',
+		],
 	];
 
 	for (const [mediaQueryParams, viewport, expected, description] of cases) {
@@ -519,6 +553,18 @@ describe('isMediaQueryApplicable', () => {
 		// catch branch above, not just the "parses fine but decides false"
 		// paths every other case here covers.
 		assert.equal(isMediaQueryApplicable('(min-width:)', DESKTOP), true);
+	});
+
+	test('fails open (keeps it) for an aspect-ratio value that parses fine but isn\'t a valid ratio', () => {
+		// A DIFFERENT throw path than the two cases above: this string
+		// parses into a well-formed {feature: 'aspect-ratio', value:
+		// 'not-a-ratio'} expression (so referencesOnlyViewportDerivableFeatures
+		// lets it through - 'aspect-ratio' is on the allowlist), but
+		// css-mediaquery's own toDecimal() helper then throws trying to
+		// convert that value during match() itself - confirms the try/catch
+		// around match() in isMediaQueryApplicable is reachable, not dead
+		// code shadowed by the parse-time check above it.
+		assert.equal(isMediaQueryApplicable('(aspect-ratio: not-a-ratio)', DESKTOP), true);
 	});
 });
 
