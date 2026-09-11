@@ -8,7 +8,7 @@
  *
  * SECURITY: this route is reachable from the public internet like any other WP REST route unless you scope it off at your reverse proxy/CDN - only the generator's own /generate endpoint is assumed internal-only. The shared secret is the sole gate, so treat it like any other credential: it must come from WPCC_SHARED_SECRET in wp-config.php, never hardcoded here (this file is meant to be tracked in git). If it's missing, every request is rejected - no fallback default. CSS is also stripped of any `</style` sequence and any `@import` statement before storage (see wpcc_sanitize_css()) so that even a compromised secret can't be used to break out of the inline <style> tag this gets echoed into later, or pull in a remote stylesheet - defense in depth, not the only check. `url(...)` is deliberately left untouched: real critical CSS legitimately contains it (hero background-images, @font-face src), and stripping it would break correctly-generated output for the one thing this plugin exists to do - see docs/SECURITY-CONTROLS.md for the reasoning behind that tradeoff.
  *
- * Payload size is capped and the route is rate-limited per caller IP (see WPCC_RECEIVER_MAX_CSS_BYTES / WPCC_RECEIVER_RATE_LIMIT below) so a compromised secret can't be used to bloat wp_postmeta with oversized or rapid-fire writes - a real render never produces more than tens of KB.
+ * Payload size is capped and the route is rate-limited per caller IP (see WPCC_RECEIVER_MAX_CSS_BYTES / WPCC_RECEIVER_RATE_LIMIT below) so a compromised secret can't be used to bloat wp_postmeta with oversized or rapid-fire writes - a "few tens of KB" render is typical, but not universal: a real page built with a widget-heavy builder (Elementor forms/containers being the confirmed case) has been observed producing close to 205KB of genuinely-necessary critical CSS for a single viewport, and the cap has to sit comfortably above that, not just above the typical case.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 require_once __DIR__ . '/wpcc-shared.php';
 
 if ( ! defined( 'WPCC_RECEIVER_MAX_CSS_BYTES' ) ) {
-	define( 'WPCC_RECEIVER_MAX_CSS_BYTES', 204800 ); // 200 KB per field.
+	define( 'WPCC_RECEIVER_MAX_CSS_BYTES', 524288 ); // 512 KB per field - see the file-level comment above for why this isn't the tens-of-KB figure it once was.
 }
 
 if ( ! defined( 'WPCC_RECEIVER_RATE_LIMIT' ) ) {
@@ -202,7 +202,22 @@ function wpcc_receive( WP_REST_Request $request ) { // NOSONAR php:S1142 - each 
 	$raw_css_desktop = (string) $request->get_param( 'css_desktop' );
 
 	if ( strlen( $raw_css_mobile ) > WPCC_RECEIVER_MAX_CSS_BYTES || strlen( $raw_css_desktop ) > WPCC_RECEIVER_MAX_CSS_BYTES ) {
-		return new WP_REST_Response( array( 'error' => 'css_mobile/css_desktop exceed the size limit' ), 413 );
+		// The generator service logs this response body verbatim (see
+		// postToReceiverWithRetry()/generateAndSubmit() in service/server.js -
+		// a 413's body is folded straight into the Error it throws, then
+		// logged as-is) - the actual byte counts and limit are included here
+		// specifically so that log line is self-diagnosing on its own,
+		// without needing to reproduce the render locally just to find out
+		// which field went over and by how much.
+		return new WP_REST_Response(
+			array(
+				'error'             => 'css_mobile/css_desktop exceed the size limit',
+				'css_mobile_bytes'  => strlen( $raw_css_mobile ),
+				'css_desktop_bytes' => strlen( $raw_css_desktop ),
+				'limit_bytes'       => WPCC_RECEIVER_MAX_CSS_BYTES,
+			),
+			413
+		);
 	}
 
 	$css_mobile  = wpcc_sanitize_css( $raw_css_mobile );

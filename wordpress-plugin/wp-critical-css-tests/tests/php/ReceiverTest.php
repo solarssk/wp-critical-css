@@ -189,10 +189,18 @@ class WPCCReceiverTest extends WP_UnitTestCase {
 		);
 
 		$this->assertSame( 413, $response->get_status() );
+		// The generator service logs this response body verbatim on
+		// failure - these fields are what make that log line
+		// self-diagnosing (actual sizes plus the configured limit)
+		// without needing to reproduce the render locally.
+		$data = $response->get_data();
+		$this->assertSame( WPCC_RECEIVER_MAX_CSS_BYTES + 1, $data['css_mobile_bytes'] );
+		$this->assertSame( 0, $data['css_desktop_bytes'] );
+		$this->assertSame( WPCC_RECEIVER_MAX_CSS_BYTES, $data['limit_bytes'] );
 	}
 
 	public function test_desktop_css_over_the_size_limit_is_rejected_independently() {
-		// The 200 KB cap applies per field - an oversized css_desktop must
+		// The size cap applies per field - an oversized css_desktop must
 		// be rejected even when css_mobile is small.
 		$post_id = self::factory()->post->create(
 			array(
@@ -211,6 +219,10 @@ class WPCCReceiverTest extends WP_UnitTestCase {
 		);
 
 		$this->assertSame( 413, $response->get_status() );
+		$data = $response->get_data();
+		$this->assertSame( strlen( 'a{}' ), $data['css_mobile_bytes'] );
+		$this->assertSame( WPCC_RECEIVER_MAX_CSS_BYTES + 1, $data['css_desktop_bytes'] );
+		$this->assertSame( WPCC_RECEIVER_MAX_CSS_BYTES, $data['limit_bytes'] );
 	}
 
 	public function test_missing_url_is_rejected_as_invalid_payload() {
