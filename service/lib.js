@@ -135,7 +135,12 @@ export function createJobQueue({ maxLength, handle, logger = console, logPrefix 
 					// with two+ arguments Node's console treats the first as a printf-style format
 					// string, so a crafted job containing e.g. "%s" would consume the message as its
 					// substitution value and garble the log line (CodeQL js/tainted-format-string).
-					logger.error(`${logPrefix} failed for ${logSafe(job)}: ${describeError(err)}`);
+					// The message goes through logSafe() too, not just the job: it can carry a
+					// remote response body this service doesn't control (server.js folds the
+					// WordPress receiver's 5xx body into the Error it throws), and a raw newline
+					// in it would forge a log line - the same reason server.js's receiver-retry
+					// log line already wraps lastError.message.
+					logger.error(`${logPrefix} failed for ${logSafe(job)}: ${logSafe(describeError(err))}`);
 				}
 			}
 		} finally {
@@ -155,12 +160,12 @@ export function createJobQueue({ maxLength, handle, logger = console, logPrefix 
 				return 'duplicate';
 			}
 			if (jobs.length >= maxLength) {
-				logger.warn(`${logPrefix} queue at its ${maxLength}-entry limit, dropping ${logSafe(job)}`);
+				logger.warn(`${logPrefix} queue at its ${maxLength}-entry limit, dropping ${logSafe(job)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
 				return 'full';
 			}
 			jobs.push(job);
 			drain().catch((err) => {
-				logger.error(`${logPrefix} queue worker stopped: ${describeError(err)}`);
+				logger.error(`${logPrefix} queue worker stopped: ${logSafe(describeError(err))}`);
 			});
 			return 'queued';
 		},

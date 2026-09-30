@@ -793,9 +793,31 @@ describe('createJobQueue', () => {
 			queue.add('good');
 			await untilDrained(queue);
 			assert.deepEqual(handled, ['bad', 'good']);
-			assert.deepEqual(logger.lines.error, ['[t] failed for "bad": boom']);
+			assert.deepEqual(logger.lines.error, ['[t] failed for "bad": "boom"']);
 		});
 	}
+
+	test('escapes control characters in both the job and the error message, so neither can forge a log line', async () => {
+		// The message is the case that matters: server.js folds the WordPress
+		// receiver's 5xx response body into the Error it throws, so it is text
+		// this service doesn't control.
+		const logger = fakeLogger();
+		const hostileJob = 'job\nwith\rnewline';
+		const hostileMessage = 'boom\n[t] delivered for "http://evil.example/"\r\u001b[2J';
+		const queue = createJobQueue({
+			maxLength: 5,
+			handle: async () => {
+				throw new Error(hostileMessage);
+			},
+			logger,
+			logPrefix: '[t]',
+		});
+		queue.add(hostileJob);
+		await untilDrained(queue);
+		assert.equal(logger.lines.error.length, 1);
+		assert.doesNotMatch(logger.lines.error[0], /[\r\n\u001b]/);
+		assert.equal(logger.lines.error[0], `[t] failed for ${JSON.stringify(hostileJob)}: ${JSON.stringify(hostileMessage)}`);
+	});
 
 	test('a logger that throws while reporting a job failure is reported, not left as an unhandled rejection, and does not wedge the worker', async () => {
 		// The one way left for the worker itself to reject: reporting a job's
@@ -824,7 +846,7 @@ describe('createJobQueue', () => {
 		queue.add('bad');
 		await untilDrained(queue);
 		await tick();
-		assert.deepEqual(reported, ['[t] queue worker stopped: logger down']);
+		assert.deepEqual(reported, ['[t] queue worker stopped: "logger down"']);
 		assert.equal(queue.processing, false);
 		assert.equal(queue.add('next'), 'queued');
 		await untilDrained(queue);
@@ -870,7 +892,7 @@ describe('createJobQueue', () => {
 			queue.add('good');
 			await untilDrained(queue);
 			assert.deepEqual(handled, ['bad', 'good']);
-			assert.deepEqual(logger.lines.error, [`[t] failed for "bad": ${expectedText}`]);
+			assert.deepEqual(logger.lines.error, [`[t] failed for "bad": ${JSON.stringify(expectedText)}`]);
 			assert.equal(queue.processing, false);
 		});
 	}
@@ -913,7 +935,7 @@ describe('createJobQueue', () => {
 			);
 			assert.deepEqual(
 				errorSpy.mock.calls.map((call) => call.arguments),
-				[['[queue] failed for "a": boom'], ['[queue] failed for "waiting": boom']],
+				[['[queue] failed for "a": "boom"'], ['[queue] failed for "waiting": "boom"']],
 			);
 		} finally {
 			errorSpy.mock.restore();
