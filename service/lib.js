@@ -6,6 +6,8 @@
  * called, but neither one performs any I/O merely from being imported, so
  * the same "testable in isolation from server.js's startup" property still
  * holds - they're testable via mocking node:dns/promises and global fetch.
+ * createJobQueue is the one stateful piece: it keeps its queue in a closure
+ * and does no I/O of its own beyond the logger and handler it's given.
  */
 
 import { timingSafeEqual } from 'node:crypto';
@@ -67,6 +69,107 @@ export function isAllowedUrl(url, allowedHostname) {
  */
 export function logSafe(value) {
 	return JSON.stringify(value);
+}
+
+/**
+ * Text for whatever a queue job threw, without ever throwing itself. The
+ * failure log used to read `err.message` directly, which is itself a
+ * TypeError for `throw null`/`throw undefined` (no property to read) - and
+ * a throw from inside the queue worker's own catch block escapes as an
+ * unhandled rejection, which terminates a Node process that has no
+ * `unhandledRejection` handler (this one has none). `String(err)` alone
+ * isn't enough either: it throws for an object with no prototype
+ * (Object.create(null)) or a throwing toString/message getter, so the whole
+ * thing is guarded and falls back to a fixed string.
+ */
+function describeError(err) {
+	try {
+		return String(err?.message ?? err);
+	} catch {
+		return 'unknown error';
+	}
+}
+
+/**
+ * The single-worker queue behind server.js's enqueue(), split out so its
+ * behavior can be unit-tested - server.js can't be imported without
+ * starting the server. One worker means at most one job (one Chrome
+ * instance) ever runs at a time, however many are added.
+ *
+ * add() answers with which of these happened rather than a bare boolean, so
+ * a caller can react differently to each: 'duplicate' (already waiting -
+ * nothing queued), 'full' (at maxLength - dropped, and logged), or 'queued'.
+ * A job that is already RUNNING is no longer in the waiting list, so adding
+ * it again queues a fresh run - deliberate: a webhook that fires while a
+ * page is being rendered means the page changed under that render.
+ *
+ * The first job starts synchronously inside add() (an async function runs
+ * up to its first await before returning), so right after adding to an idle
+ * queue `length` is already 0 and `processing` is true - server.js's
+ * /generate response and /health report exactly that.
+ *
+ * A job's failure, whatever it throws, is logged and the queue moves on to
+ * the next job; `processing` is reset in a finally so the worker can always
+ * restart on the next add(). The one way left for drain() to reject is
+ * something going wrong while reporting a failure (a logger that throws,
+ * say) - add() logs that instead of leaving an unhandled rejection, which
+ * would terminate a Node process that has no `unhandledRejection` handler.
+ * Jobs still waiting at that point stay queued until the next add().
+ */
+export function createJobQueue({ maxLength, handle, logger = console, logPrefix = '[queue]' }) {
+	const jobs = [];
+	let processing = false;
+
+	async function drain() {
+		if (processing) {
+			return;
+		}
+		processing = true;
+		try {
+			while (jobs.length > 0) {
+				const job = jobs.shift();
+				try {
+					await handle(job);
+				} catch (err) {
+					// A single template-literal argument, not `logger.error(template, message)` -
+					// with two+ arguments Node's console treats the first as a printf-style format
+					// string, so a crafted job containing e.g. "%s" would consume the message as its
+					// substitution value and garble the log line (CodeQL js/tainted-format-string).
+					// The message goes through logSafe() too, not just the job: it can carry a
+					// remote response body this service doesn't control (server.js folds the
+					// WordPress receiver's 5xx body into the Error it throws), and a raw newline
+					// in it would forge a log line - the same reason server.js's receiver-retry
+					// log line already wraps lastError.message.
+					logger.error(`${logPrefix} failed for ${logSafe(job)}: ${logSafe(describeError(err))}`);
+				}
+			}
+		} finally {
+			processing = false;
+		}
+	}
+
+	return {
+		get length() {
+			return jobs.length;
+		},
+		get processing() {
+			return processing;
+		},
+		add(job) {
+			if (jobs.includes(job)) {
+				return 'duplicate';
+			}
+			if (jobs.length >= maxLength) {
+				logger.warn(`${logPrefix} queue at its ${maxLength}-entry limit, dropping ${logSafe(job)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
+				return 'full';
+			}
+			jobs.push(job);
+			drain().catch((err) => {
+				logger.error(`${logPrefix} queue worker stopped: ${logSafe(describeError(err))}`);
+			});
+			return 'queued';
+		},
+	};
 }
 
 // Every literal below IS the point of this table, not an oversight -

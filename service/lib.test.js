@@ -1,4 +1,4 @@
-import { test, describe } from 'node:test';
+import { test, describe, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import postcss from 'postcss';
 import {
@@ -15,6 +15,7 @@ import {
 	isMediaQueryApplicable,
 	stripInapplicableMediaQueries,
 	SERVED_WIDTH_RANGES,
+	createJobQueue,
 } from './lib.js';
 
 describe('isValidSecret', () => {
@@ -653,5 +654,292 @@ describe('stripInapplicableMediaQueries', () => {
 		const css = '@font-face{font-family:x;src:url(x.woff)}';
 		const output = await run(css, DESKTOP);
 		assert.equal(output, css);
+	});
+});
+
+describe('createJobQueue', () => {
+	// A handler the test controls: every call stays pending until the test
+	// settles it, so "what is running right now" is observable instead of
+	// racing a real timer.
+	function controllableHandler() {
+		const calls = [];
+		const handle = (job) =>
+			new Promise((resolve, reject) => {
+				calls.push({ job, resolve, reject });
+			});
+		return { calls, handle };
+	}
+
+	function fakeLogger() {
+		const lines = { warn: [], error: [] };
+		return { lines, warn: (message) => lines.warn.push(message), error: (message) => lines.error.push(message) };
+	}
+
+	const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+	// Bounded on purpose: a queue that never drains (a regression that leaves
+	// `processing` stuck true) should fail this assertion quickly with a clear
+	// message, not hang the whole test run until CI's job timeout.
+	async function untilDrained(queue) {
+		for (let waited = 0; queue.processing && waited < 1000; waited++) {
+			await tick();
+		}
+		assert.equal(queue.processing, false, 'queue never finished draining');
+	}
+
+	test('starts the first job synchronously, so an idle queue reports length 0 and processing true right after add()', () => {
+		const { calls, handle } = controllableHandler();
+		const queue = createJobQueue({ maxLength: 5, handle, logger: fakeLogger() });
+		assert.equal(queue.processing, false);
+		assert.equal(queue.add('a'), 'queued');
+		assert.equal(queue.length, 0);
+		assert.equal(queue.processing, true);
+		assert.deepEqual(
+			calls.map((call) => call.job),
+			['a'],
+		);
+	});
+
+	test('runs one job at a time, in the order they were added', async () => {
+		const order = [];
+		let running = 0;
+		let maxRunning = 0;
+		const handle = async (job) => {
+			running++;
+			maxRunning = Math.max(maxRunning, running);
+			await tick();
+			order.push(job);
+			running--;
+		};
+		const queue = createJobQueue({ maxLength: 5, handle, logger: fakeLogger() });
+		queue.add('a');
+		queue.add('b');
+		queue.add('c');
+		assert.equal(queue.length, 2);
+		await untilDrained(queue);
+		assert.deepEqual(order, ['a', 'b', 'c']);
+		assert.equal(maxRunning, 1);
+		assert.equal(queue.length, 0);
+	});
+
+	test('reports a job that is already waiting as a duplicate without queueing it twice', () => {
+		const { handle } = controllableHandler();
+		const queue = createJobQueue({ maxLength: 5, handle, logger: fakeLogger() });
+		queue.add('running');
+		assert.equal(queue.add('b'), 'queued');
+		assert.equal(queue.add('b'), 'duplicate');
+		assert.equal(queue.length, 1);
+	});
+
+	test('queues a job again while its own earlier run is in flight, since it is no longer waiting', () => {
+		// Deliberate: a webhook firing while a page renders means the page
+		// changed under that render.
+		const { handle } = controllableHandler();
+		const queue = createJobQueue({ maxLength: 5, handle, logger: fakeLogger() });
+		queue.add('a');
+		assert.equal(queue.add('a'), 'queued');
+		assert.equal(queue.length, 1);
+	});
+
+	test('reports full at maxLength, drops the job, and logs a warning with the job JSON-escaped', () => {
+		const logger = fakeLogger();
+		const { handle } = controllableHandler();
+		const queue = createJobQueue({ maxLength: 2, handle, logger, logPrefix: '[t]' });
+		queue.add('running');
+		queue.add('w1');
+		queue.add('w2');
+		assert.equal(queue.add('line1\nline2'), 'full');
+		assert.equal(queue.length, 2);
+		assert.deepEqual(logger.lines.warn, ['[t] queue at its 2-entry limit, dropping "line1\\nline2"']);
+	});
+
+	test('checks for a duplicate before checking for full, so a waiting job on a full queue is a duplicate and is not logged', () => {
+		const logger = fakeLogger();
+		const { handle } = controllableHandler();
+		const queue = createJobQueue({ maxLength: 1, handle, logger });
+		queue.add('running');
+		queue.add('w1');
+		assert.equal(queue.add('w1'), 'duplicate');
+		assert.deepEqual(logger.lines.warn, []);
+	});
+
+	const failingHandlers = [
+		[
+			'rejects',
+			(handled) => async (job) => {
+				handled.push(job);
+				if (job === 'bad') {
+					throw new Error('boom');
+				}
+			},
+		],
+		[
+			'throws synchronously',
+			(handled) => (job) => {
+				handled.push(job);
+				if (job === 'bad') {
+					throw new Error('boom');
+				}
+			},
+		],
+	];
+
+	for (const [label, makeHandler] of failingHandlers) {
+		test(`a job whose handler ${label} is logged and does not stop the jobs behind it`, async () => {
+			const logger = fakeLogger();
+			const handled = [];
+			const queue = createJobQueue({ maxLength: 5, handle: makeHandler(handled), logger, logPrefix: '[t]' });
+			queue.add('bad');
+			queue.add('good');
+			await untilDrained(queue);
+			assert.deepEqual(handled, ['bad', 'good']);
+			assert.deepEqual(logger.lines.error, ['[t] failed for "bad": "boom"']);
+		});
+	}
+
+	test('escapes control characters in both the job and the error message, so neither can forge a log line', async () => {
+		// The message is the case that matters: server.js folds the WordPress
+		// receiver's 5xx response body into the Error it throws, so it is text
+		// this service doesn't control.
+		const logger = fakeLogger();
+		const hostileJob = 'job\nwith\rnewline';
+		const hostileMessage = 'boom\n[t] delivered for "http://evil.example/"\r\u001b[2J';
+		const queue = createJobQueue({
+			maxLength: 5,
+			handle: async () => {
+				throw new Error(hostileMessage);
+			},
+			logger,
+			logPrefix: '[t]',
+		});
+		queue.add(hostileJob);
+		await untilDrained(queue);
+		assert.equal(logger.lines.error.length, 1);
+		assert.doesNotMatch(logger.lines.error[0], /[\r\n\u001b]/);
+		assert.equal(logger.lines.error[0], `[t] failed for ${JSON.stringify(hostileJob)}: ${JSON.stringify(hostileMessage)}`);
+	});
+
+	test('a logger that throws while reporting a job failure is reported, not left as an unhandled rejection, and does not wedge the worker', async () => {
+		// The one way left for the worker itself to reject: reporting a job's
+		// failure blew up. An unhandled rejection here would fail this test
+		// (and terminate the real service, which has no handler for it).
+		const reported = [];
+		let errorCalls = 0;
+		const logger = {
+			warn: () => {},
+			error: (message) => {
+				errorCalls++;
+				if (errorCalls === 1) {
+					throw new Error('logger down');
+				}
+				reported.push(message);
+			},
+		};
+		const handled = [];
+		const handle = async (job) => {
+			handled.push(job);
+			if (job === 'bad') {
+				throw new Error('boom');
+			}
+		};
+		const queue = createJobQueue({ maxLength: 5, handle, logger, logPrefix: '[t]' });
+		queue.add('bad');
+		await untilDrained(queue);
+		await tick();
+		assert.deepEqual(reported, ['[t] queue worker stopped: "logger down"']);
+		assert.equal(queue.processing, false);
+		assert.equal(queue.add('next'), 'queued');
+		await untilDrained(queue);
+		assert.deepEqual(handled, ['bad', 'next']);
+	});
+
+	// Reading `err.message` on these is itself a TypeError (null/undefined)
+	// or the stringification throws (no-prototype object, throwing getter):
+	// before this queue was split out, that threw from inside the worker's
+	// catch block, escaped as an unhandled rejection, and - with no
+	// unhandledRejection handler - would have terminated the process.
+	const nonErrorThrows = [
+		['null', () => null, 'null'],
+		['undefined', () => undefined, 'undefined'],
+		['a string', () => 'nope', 'nope'],
+		['a number', () => 42, '42'],
+		['a plain object with a message', () => ({ message: 'from object' }), 'from object'],
+		['a symbol', () => Symbol('s'), 'Symbol(s)'],
+		['an object with no prototype', () => Object.create(null), 'unknown error'],
+		[
+			'an object whose message getter throws',
+			() => ({
+				get message() {
+					throw new Error('nested');
+				},
+			}),
+			'unknown error',
+		],
+	];
+
+	for (const [label, makeThrown, expectedText] of nonErrorThrows) {
+		test(`survives a job that throws ${label} and keeps draining`, async () => {
+			const logger = fakeLogger();
+			const handled = [];
+			const handle = async (job) => {
+				handled.push(job);
+				if (job === 'bad') {
+					throw makeThrown();
+				}
+			};
+			const queue = createJobQueue({ maxLength: 5, handle, logger, logPrefix: '[t]' });
+			queue.add('bad');
+			queue.add('good');
+			await untilDrained(queue);
+			assert.deepEqual(handled, ['bad', 'good']);
+			assert.deepEqual(logger.lines.error, [`[t] failed for "bad": ${JSON.stringify(expectedText)}`]);
+			assert.equal(queue.processing, false);
+		});
+	}
+
+	test('resets processing once drained and restarts the worker on a later add()', async () => {
+		const handled = [];
+		const queue = createJobQueue({
+			maxLength: 5,
+			handle: async (job) => {
+				handled.push(job);
+			},
+			logger: fakeLogger(),
+		});
+		queue.add('a');
+		await untilDrained(queue);
+		assert.equal(queue.processing, false);
+		assert.equal(queue.add('b'), 'queued');
+		assert.equal(queue.processing, true);
+		await untilDrained(queue);
+		assert.deepEqual(handled, ['a', 'b']);
+	});
+
+	test('logs through console with a [queue] prefix when no logger or prefix is given', async () => {
+		const errorSpy = mock.method(console, 'error', () => {});
+		const warnSpy = mock.method(console, 'warn', () => {});
+		try {
+			const queue = createJobQueue({
+				maxLength: 1,
+				handle: async () => {
+					throw new Error('boom');
+				},
+			});
+			queue.add('a');
+			queue.add('waiting');
+			assert.equal(queue.add('dropped'), 'full');
+			await untilDrained(queue);
+			assert.deepEqual(
+				warnSpy.mock.calls.map((call) => call.arguments),
+				[['[queue] queue at its 1-entry limit, dropping "dropped"']],
+			);
+			assert.deepEqual(
+				errorSpy.mock.calls.map((call) => call.arguments),
+				[['[queue] failed for "a": "boom"'], ['[queue] failed for "waiting": "boom"']],
+			);
+		} finally {
+			errorSpy.mock.restore();
+			warnSpy.mock.restore();
+		}
 	});
 });
