@@ -118,9 +118,9 @@ ENV NODE_ENV=production
 # base image's lower layers.
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends --only-upgrade \
-		libexpat1 ca-certificates \
-		libssl3 openssl libpcre2-8-0 \
-		liblzma5 xz-utils tzdata \
+		ca-certificates libexpat1 liblzma5 \
+		libpcre2-8-0 libssl3 openssl \
+		tzdata xz-utils \
 	&& apt-get purge -y --auto-remove \
 		libpq5 libpq-dev libexpat1-dev \
 		subversion libsvn1 libserf-1-1 libaprutil1 \
