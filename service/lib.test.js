@@ -5,6 +5,7 @@ import {
 	isValidSecret,
 	isAllowedUrl,
 	logSafe,
+	readBodyPreview,
 	extractUrlsFromUrlset,
 	isPrivateOrReservedIpv4,
 	isPrivateOrReservedIpv6,
@@ -254,6 +255,159 @@ describe('logSafe', () => {
 		assert.equal(logSafe(null), 'null');
 		assert.equal(logSafe({ a: 1 }), '{"a":1}');
 		assert.equal(logSafe(['x', 'y']), '["x","y"]');
+	});
+
+	// JSON.stringify passes every one of these through raw. Built from code
+	// points on purpose: written out literally, a line/paragraph separator or
+	// a bidi control in this file would be a hazard of its own.
+	const hex4 = (codePoint) => codePoint.toString(16).padStart(4, '0');
+	const beyondJson = [
+		['DEL', 0x7f],
+		['NEL, a C1 control', 0x85],
+		['CSI, a C1 control', 0x9b],
+		['the line separator', 0x2028],
+		['the paragraph separator', 0x2029],
+		['the Arabic letter mark', 0x61c],
+		['the left-to-right mark', 0x200e],
+		['the right-to-left mark', 0x200f],
+		['a right-to-left override', 0x202e],
+		['a right-to-left isolate', 0x2067],
+		['a zero-width space', 0x200b],
+		['a word joiner', 0x2060],
+		['a byte order mark', 0xfeff],
+		['a soft hyphen', 0xad],
+	];
+
+	for (const [label, codePoint] of beyondJson) {
+		test(`escapes ${label} (U+${hex4(codePoint)}), which JSON.stringify leaves raw`, () => {
+			const char = String.fromCodePoint(codePoint);
+			assert.equal(JSON.stringify(`a${char}b`), `"a${char}b"`, 'precondition: JSON.stringify passes it through');
+			const result = logSafe(`a${char}b`);
+			assert.ok(!result.includes(char), 'the raw character must not survive');
+			assert.equal(result, `"a\\u${hex4(codePoint)}b"`);
+			assert.equal(JSON.parse(result), `a${char}b`, 'still valid JSON, and it round-trips');
+		});
+	}
+
+	test('escapes a character outside the BMP as a surrogate pair, so the result is still valid JSON', () => {
+		const tag = String.fromCodePoint(0xe0041); // a tag character: invisible, used to smuggle hidden text
+		const result = logSafe(`a${tag}b`);
+		assert.ok(!result.includes(tag));
+		assert.equal(result, `"a\\u${hex4(0xdb40)}\\u${hex4(0xdc41)}b"`);
+		assert.equal(JSON.parse(result), `a${tag}b`);
+	});
+
+	test('escapes every Unicode control, format, bidirectional-control and separator character, not just a hand-picked list', () => {
+		// Walks the whole code space against the Unicode properties themselves,
+		// so a character missing from any list in lib.js - the bidi marks
+		// U+061C/U+200E/U+200F were exactly that once - fails here by name.
+		const unsafe = /[\p{Bidi_Control}\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+		let checked = 0;
+		for (let codePoint = 0; codePoint <= 0x10ffff; codePoint++) {
+			if (codePoint >= 0xd800 && codePoint <= 0xdfff) {
+				continue; // lone surrogates: JSON.stringify already escapes those
+			}
+			const char = String.fromCodePoint(codePoint);
+			if (!unsafe.test(char)) {
+				continue;
+			}
+			checked++;
+			const result = logSafe(`a${char}b`);
+			assert.ok(!unsafe.test(result), `U+${hex4(codePoint)} survived logSafe() raw`);
+			assert.equal(JSON.parse(result), `a${char}b`, `U+${hex4(codePoint)} did not round-trip`);
+		}
+		assert.ok(checked > 150, `expected to check the whole set, only found ${checked} characters`);
+	});
+
+	test('leaves emoji and ordinary letters in other scripts alone', () => {
+		// Built from code points: a run of right-to-left letters written out
+		// literally would make this source line render backwards in an editor.
+		const text = String.fromCodePoint(0x1f600, 0x20, 0x645, 0x631, 0x62d, 0x628, 0x627, 0x20, 0x3b5, 0x3bb, 0x3bb);
+		assert.equal(logSafe(text), `"${text}"`);
+	});
+
+	test('escapes them inside nested values too', () => {
+		const separator = String.fromCodePoint(0x2028);
+		assert.equal(logSafe({ a: [`x${separator}y`] }), `{"a":["x\\u${hex4(0x2028)}y"]}`);
+	});
+
+	test('leaves ordinary non-ASCII text alone', () => {
+		assert.equal(logSafe('https://example.com/przykład/日本語'), '"https://example.com/przykład/日本語"');
+	});
+
+	test('still returns undefined, not a throw, for a value JSON cannot represent', () => {
+		assert.equal(logSafe(undefined), undefined);
+		assert.equal(
+			logSafe(() => {}),
+			undefined,
+		);
+		assert.equal(logSafe(Symbol('s')), undefined);
+	});
+});
+
+describe('readBodyPreview', () => {
+	const bytes = (text) => new TextEncoder().encode(text);
+
+	test('returns a short body whole', async () => {
+		assert.equal(await readBodyPreview(new Response('{"ok":false}')), '{"ok":false}');
+	});
+
+	test('returns an empty string for a response with no body', async () => {
+		assert.equal(await readBodyPreview(new Response(null, { status: 502 })), '');
+	});
+
+	test('cuts a long body at the byte limit and marks the cut', async () => {
+		assert.equal(await readBodyPreview(new Response('A'.repeat(5000)), 100), `${'A'.repeat(100)}... [truncated]`);
+	});
+
+	test('does not mark a body that is exactly the limit', async () => {
+		assert.equal(await readBodyPreview(new Response('A'.repeat(100)), 100), 'A'.repeat(100));
+	});
+
+	test('defaults to 2 KB', async () => {
+		assert.equal(await readBodyPreview(new Response('C'.repeat(10_000))), `${'C'.repeat(2048)}... [truncated]`);
+	});
+
+	test('stops reading a body that never ends, and cancels it instead of holding the connection', async () => {
+		let pulls = 0;
+		let cancelled = false;
+		const endless = new ReadableStream({
+			pull(controller) {
+				pulls++;
+				controller.enqueue(bytes('B'.repeat(1024)));
+			},
+			cancel() {
+				cancelled = true;
+			},
+		});
+		assert.equal(await readBodyPreview(new Response(endless), 2048), `${'B'.repeat(2048)}... [truncated]`);
+		assert.equal(cancelled, true);
+		assert.ok(pulls < 10, `expected a bounded number of reads, got ${pulls}`);
+	});
+
+	test('joins chunks and still cuts inside a later one', async () => {
+		const chunked = new ReadableStream({
+			start(controller) {
+				controller.enqueue(bytes('abc'));
+				controller.enqueue(bytes('defgh'));
+				controller.close();
+			},
+		});
+		assert.equal(await readBodyPreview(new Response(chunked), 5), 'abcde... [truncated]');
+	});
+
+	test('does not throw when the cut lands inside a multi-byte character', async () => {
+		const out = await readBodyPreview(new Response('é'.repeat(10)), 5);
+		assert.ok(out.startsWith('éé') && out.endsWith('... [truncated]'), out);
+	});
+
+	test('passes a read error through, even though cancelling the errored stream rejects too', async () => {
+		const broken = new ReadableStream({
+			pull(controller) {
+				controller.error(new Error('connection reset'));
+			},
+		});
+		await assert.rejects(readBodyPreview(new Response(broken)), /connection reset/);
 	});
 });
 
