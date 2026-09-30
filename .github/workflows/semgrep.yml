@@ -33,13 +33,13 @@ jobs:
       - name: Guard PyJWT security floor
         # .github/semgrep/requirements.txt hand-pins pyjwt above semgrep's own range (see the
         # Install Semgrep step below), and a routine pip-compile regeneration - for example a
-        # Dependabot bump of semgrep - silently restores 2.13.0, which has ten open advisories.
+        # Dependabot bump of semgrep - silently restores 2.13.0, which has open advisories.
         # Fail here with the fix spelled out. A floor rather than an exact match, so it stays
         # correct (and can simply be left in place) once semgrep allows a newer pyjwt.
         run: |
           version=$(sed -n 's/^pyjwt\[crypto\]==\([0-9.]*\).*/\1/p' .github/semgrep/requirements.txt)
-          if [ -z "$version" ] || [ "$(printf '%s\n2.14.0\n' "$version" | sort -V | head -n1)" != "2.14.0" ]; then
-            echo "::error file=.github/semgrep/requirements.txt::pyjwt is '${version:-missing}', expected >= 2.14.0. A pip-compile regeneration reverted the hand-pin: re-apply pyjwt[crypto]==2.14.0 with its hashes (see the Install Semgrep comment below), or update this floor once semgrep allows a newer pyjwt."
+          if [ -z "$version" ] || [ "$(printf '%s\n2.15.0\n' "$version" | sort -V | head -n1)" != "2.15.0" ]; then
+            echo "::error file=.github/semgrep/requirements.txt::pyjwt is '${version:-missing}', expected >= 2.15.0. A pip-compile regeneration reverted the hand-pin: re-apply pyjwt[crypto]==2.15.0 with its hashes (see the Install Semgrep comment below), or update this floor once semgrep allows a newer pyjwt."
             exit 1
           fi
 
@@ -56,14 +56,15 @@ jobs:
         # go stale indefinitely either.
         #
         # --no-deps: the closure above is already complete and hash-pinned, so pip has
-        # nothing left to resolve. It is needed because pyjwt is hand-pinned to 2.14.0 in
-        # that file (fixes ten advisories, including the critical GHSA-ffc3-869f-jxw9)
+        # nothing left to resolve. It is needed because pyjwt is hand-pinned to 2.15.0 in
+        # that file (fixes the 2.13.0 advisories, including the critical GHSA-ffc3-869f-jxw9,
+        # and GHSA-42vr-xj54-vc7v, which 2.14.0 still has)
         # while semgrep 1.178.0, the newest release, still declares
         # `pyjwt[crypto]~=2.13.0`, so a resolving install fails with ResolutionImpossible.
         # Semgrep only imports jwt in its `semgrep mcp` server
         # (semgrep/mcp/utilities/token_verifier.py); this job runs `semgrep scan`, which
         # never loads it. Upstream tracks the too-tight range in semgrep/semgrep#11925.
-        # Once a semgrep release allows pyjwt>=2.14, regenerate the requirements with
+        # Once a semgrep release allows pyjwt>=2.15, regenerate the requirements with
         # pip-compile (which drops the hand-pin) and remove --no-deps.
         run: |
           pip install --break-system-packages --only-binary=:all: --require-hashes --no-deps -r .github/semgrep/requirements.txt

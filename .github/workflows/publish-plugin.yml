@@ -49,8 +49,14 @@ jobs:
 
       - name: Resolve version
         id: resolve
+        env:
+          # Passed through env:, never interpolated into the script below: inputs.ref is a
+          # free-form workflow_dispatch string and github.ref on a tag push is a name the
+          # pusher chose, and either would be parsed as shell code here, before the regex
+          # below has validated anything (zizmor: template-injection).
+          TARGET_REF: ${{ inputs.ref || github.ref }}
         run: |
-          REF="${{ inputs.ref || github.ref }}"
+          REF="$TARGET_REF"
           # Strips an optional "refs/tags/" prefix before matching - a real push event's github.ref is always the fully-qualified form, but workflow_dispatch's `ref` is a plain string field, not a ref picker, so an operator following this repo's own docs (which just say "supply an existing tag") could very plausibly type the bare tag (v0.2.1) instead - verified this is genuinely ambiguous by re-reading that wording, not assumed. Parameter expansion leaves REF untouched when the prefix isn't present, so this accepts both forms without a second branch.
           BARE_REF="${REF#refs/tags/}"
           if [[ "$BARE_REF" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
