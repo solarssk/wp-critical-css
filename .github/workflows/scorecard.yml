@@ -1,0 +1,56 @@
+name: OpenSSF Scorecard
+
+# Scorecard scores the repo's own security posture (branch protection, pinned
+# dependencies, SAST presence, token permissions, etc.) against OpenSSF's public
+# criteria - a report, not a merge gate, so it stays off the PR path: it runs on
+# every push to main (keeps the public score current), on branch-protection
+# changes (one of the things it scores), and weekly, since a few checks (e.g.
+# Maintained) depend on repo activity over time rather than the current diff.
+# Same shape as the sibling repos' scorecard.yml; publish_results only works on a
+# public repository, which this is.
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "0 4 * * 3"
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Deny-all at the top level satisfies Scorecard's own Token-Permissions check
+# (which flags a workflow with no top-level `permissions:` at all) without the
+# broader read-all; the job below declares its own, more specific set.
+permissions: {}
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to the Security tab
+      id-token: write # sign and publish results to the public Scorecard API
+      actions: read # Scorecard reads workflow config for its Token-Permissions/Dangerous-Workflow checks
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: results.sarif
