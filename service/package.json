@@ -21,6 +21,7 @@
     "node": ">=24"
   },
   "devDependencies": {
+    "fast-check": "^4.10.2",
     "postcss": "^8.5.28"
   }
 }
