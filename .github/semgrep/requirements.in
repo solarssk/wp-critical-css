@@ -9,3 +9,7 @@
 # JSON-recursion CVE (the newer OpenTelemetry line this semgrep release
 # pulls in allows protobuf>=6, resolving to a version past the fix).
 semgrep==1.178.0
+# NOTE: requirements.txt hand-pins pyjwt==2.14.0 (security fixes), outside semgrep's own
+# `pyjwt~=2.13.0` range (semgrep/semgrep#11925). Regenerating with pip-compile reverts it to
+# 2.13.0 until semgrep relaxes that range - see the --no-deps note in
+# .github/workflows/semgrep.yml before regenerating.
