@@ -1,9 +1,15 @@
+# Every entry carries a cooldown: a version published minutes ago is the one
+# most likely to be a compromised release that gets pulled within days, so
+# Dependabot waits before proposing it. Security updates ignore the cooldown,
+# so a real fix is never delayed by it (zizmor: dependabot-cooldown).
 version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/service"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       minor-and-patch:
@@ -15,11 +21,23 @@ updates:
     directory: "/service"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      # init and analyze (codeql.yml) must run the same action version, or CodeQL
+      # fails with "Loaded a configuration file for version X, but running version Y"
+      # - Dependabot proposed them as three separate PRs (#73, #76, #77), none of which
+      # could pass alone - so all github/codeql-action/* update as one PR.
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
 
   # Exception while semgrep still declares pyjwt~=2.13.0 (semgrep/semgrep#11925): requirements.txt
   # hand-pins pyjwt 2.14.0 for security fixes, and any regeneration reverts it to 2.13.0. Such a PR
@@ -29,11 +47,15 @@ updates:
     directory: "/.github/semgrep"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: "composer"
     directory: "/wordpress-plugin/wp-critical-css-tests"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       minor-and-patch:
