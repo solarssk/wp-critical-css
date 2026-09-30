@@ -3,6 +3,29 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.7] - 2026-10-01
+
+### Security
+
+- **The container image carries far fewer OS packages (426 down to 258), and a local Trivy scan of it that counts only findings Debian already has a fix for (`--ignore-unfixed`, the setting CI uses) went from 732 findings to 0** (642 to 0 at CRITICAL/HIGH/MEDIUM; Trivy 0.74.0, 2026-09-30). The base image is built on a full `node:*-bookworm` (buildpack-deps) image, so the service shipped a compiler toolchain, `-dev` header packages, ImageMagick, git, Mercurial, an SSH client, curl and Python that it never uses - 607 of those 732 findings were a single package (`linux-libc-dev`, the kernel headers). The Dockerfile now purges all of that and upgrades the six remaining packages that had a Debian fix (`libssl3`, `openssl`, `libpcre2-8-0`, `liblzma5`, `xz-utils`, `tzdata`). `wget` (the image's own `HEALTHCHECK`) and `unzip` (needed by Puppeteer's browser downloader) stay, and a real Puppeteer render still passes the CI smoke test. The image is not smaller to pull (the purged files remain in the base image's layers), and a scan run without `--ignore-unfixed` still lists findings Debian has not fixed yet, including a few CRITICAL ones in base-system libraries (`libglib2.0-0`, `libxml2`, `perl-base`, `zlib1g`, `libsqlite3-0`).
+- **Remote text can no longer forge the service's log lines, and the WordPress receiver's response body is capped in them.** A failed sweep logged the sitemap parser's multi-line error text raw; `logSafe()` left DEL, the C1 controls (U+0080-U+009F), U+2028/U+2029 and every Unicode format character (bidirectional controls, zero-width and tag characters) unescaped, so a hostile value could still split, reorder or hide text in a log viewer; and the receiver's response body was buffered whole and then logged up to three times per job. Failed sweeps now log one escaped line, those characters are escaped as `\uXXXX`, and the receiver's body is read for at most 2 KB and cut with `... [truncated]`. Low severity - exploiting any of it needs control of one of the sources of that text: the shared secret, the WordPress receiver, the sitemap or the pages being rendered.
+- **`brace-expansion` is bumped to 1.1.21**, closing three advisories (GHSA-6j4f-fj2g-mc7p, GHSA-qhr7-859c-m2p7, GHSA-q2hr-2g5m-vwhr) in a transitive dependency (`critical` -> `postcss-url` -> `minimatch`). The patched version already satisfies `minimatch`'s existing range, so this is a lockfile-only bump.
+
+### Fixed
+
+- **A render job that threw `null` or `undefined` could crash the whole service.** The queue worker's failure handler read `err.message`, which is itself a `TypeError` for those two values; that escaped as an unhandled rejection and terminated the process, so the URLs still waiting in the in-memory queue were dropped and `/health` and `/generate` refused connections until the container restarted (automatically, under the example compose file's `restart: always`). The queue now lives in `createJobQueue()` in `service/lib.js` (covered by unit tests), the failure text comes from a helper that never throws, and the worker's state is reset in a `finally`. This is a defensive fix: no code path in the current render stack (`critical`, `penthouse-esm`) was found that throws either value; the crash was reproduced on the real `server.js` (exit code 1) by stubbing the render to throw `null`. A thrown string used to be logged as `undefined` and now appears as text.
+
+### Changed
+
+- **The bundled Chrome moves from 152 to 154.** The Puppeteer base image goes from `25.10.0` to `25.12.0` together with the `puppeteer` dependency (they must match, or the image cannot find its Chrome), and `postcss` from `^8.5.26` to `^8.5.28`.
+- **Error text in the service's failure log lines is now JSON-quoted**, for example `failed for "https://example.com/": "boom"`, `sweep failed: "..."` and `scheduled sweep failed: "..."`. Multi-line errors (from the renderer or the sitemap parser) therefore appear on one line, with `\n` and `\u001b` escapes. If you grep or alert on those log lines, match the quoted form.
+
+### Deploy
+
+- Container image: `ghcr.io/solarssk/wp-critical-css:0.2.7` (rolling `:latest`, `:0.2`), also published to `docker.io/solarssk/wp-critical-css:0.2.7`.
+- WordPress plugin: `wp-critical-css-0.2.7.zip`, attached to this release. The plugin itself is unchanged; its version moves only to stay in lockstep with the service.
+- No migration steps - fully backward compatible with 0.2.6's stored data, configuration, and REST contract. The image no longer contains `git`, `curl`, `ssh`, `python3` or a compiler: if you `docker exec` into it, or override the `healthcheck:` with a `curl`-based command, use `wget` instead (the image's own `HEALTHCHECK` and `docker-compose.example.yml` already do).
+
 ## [0.2.6] - 2026-09-11
 
 ### Fixed
