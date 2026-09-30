@@ -10,6 +10,8 @@
   &nbsp;
   <a href="https://sonarcloud.io/summary/new_code?id=solarssk_wp-critical-css"><img src="https://sonarcloud.io/api/project_badges/measure?project=solarssk_wp-critical-css&metric=alert_status" alt="SonarCloud Quality Gate"></a>
   &nbsp;
+  <a href="https://securityscorecards.dev/viewer/?uri=github.com/solarssk/wp-critical-css"><img src="https://api.securityscorecards.dev/projects/github.com/solarssk/wp-critical-css/badge" alt="OpenSSF Scorecard"></a>
+  &nbsp;
   <a href="https://github.com/solarssk/wp-critical-css/releases"><img src="https://img.shields.io/github/v/tag/solarssk/wp-critical-css?sort=semver&label=release&color=066fd1" alt="release"></a>
   &nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
