@@ -96,7 +96,7 @@ export function logSafe(value) {
 	return json.replace(UNSAFE_LOG_CHARS, (char) =>
 		char
 			.split('')
-			.map((unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`)
+			.map((unit) => String.raw`\u${unit.codePointAt(0).toString(16).padStart(4, '0')}`)
 			.join(''),
 	);
 }
