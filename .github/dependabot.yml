@@ -24,7 +24,8 @@ updates:
       # interception in service/server.js has anywhere to attach. #91 failed the
       # Docker smoke test at the very first import. Moving to v9 needs its own
       # design (SSRF model included), not a Dependabot PR. Minor and patch
-      # updates of 8.x keep coming; lift this when that design exists.
+      # updates of 8.x and security updates are not affected by this rule;
+      # lift it when that design exists.
       - dependency-name: "critical"
         update-types: ["version-update:semver-major"]
 
