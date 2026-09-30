@@ -40,7 +40,7 @@ updates:
           - "github/codeql-action/*"
 
   # Exception while semgrep still declares pyjwt~=2.13.0 (semgrep/semgrep#11925): requirements.txt
-  # hand-pins pyjwt 2.14.0 for security fixes, and any regeneration reverts it to 2.13.0. Such a PR
+  # hand-pins pyjwt 2.15.0 for security fixes, and any regeneration reverts it to 2.13.0. Such a PR
   # fails the "Guard PyJWT security floor" step in semgrep.yml (a required check); re-apply the
   # pin on the PR branch (see the notes in semgrep.yml) before merging.
   - package-ecosystem: "pip"
