@@ -5,6 +5,7 @@ import {
 	isValidSecret,
 	isAllowedUrl,
 	logSafe,
+	readBodyPreview,
 	extractUrlsFromUrlset,
 	isPrivateOrReservedIpv4,
 	isPrivateOrReservedIpv6,
@@ -253,6 +254,114 @@ describe('logSafe', () => {
 		assert.equal(logSafe(null), 'null');
 		assert.equal(logSafe({ a: 1 }), '{"a":1}');
 		assert.equal(logSafe(['x', 'y']), '["x","y"]');
+	});
+
+	// JSON.stringify passes every one of these through raw. Built from code
+	// points on purpose: written out literally, a line/paragraph separator or
+	// a bidi control in this file would be a hazard of its own.
+	const hex4 = (codePoint) => codePoint.toString(16).padStart(4, '0');
+	const beyondJson = [
+		['DEL', 0x7f],
+		['NEL, a C1 control', 0x85],
+		['CSI, a C1 control', 0x9b],
+		['the line separator', 0x2028],
+		['the paragraph separator', 0x2029],
+		['a right-to-left override', 0x202e],
+		['a right-to-left isolate', 0x2067],
+	];
+
+	for (const [label, codePoint] of beyondJson) {
+		test(`escapes ${label} (U+${hex4(codePoint)}), which JSON.stringify leaves raw`, () => {
+			const char = String.fromCodePoint(codePoint);
+			assert.equal(JSON.stringify(`a${char}b`), `"a${char}b"`, 'precondition: JSON.stringify passes it through');
+			const result = logSafe(`a${char}b`);
+			assert.ok(!result.includes(char), 'the raw character must not survive');
+			assert.equal(result, `"a\\u${hex4(codePoint)}b"`);
+		});
+	}
+
+	test('escapes them inside nested values too', () => {
+		const separator = String.fromCodePoint(0x2028);
+		assert.equal(logSafe({ a: [`x${separator}y`] }), `{"a":["x\\u${hex4(0x2028)}y"]}`);
+	});
+
+	test('leaves ordinary non-ASCII text alone', () => {
+		assert.equal(logSafe('https://example.com/przykład/日本語'), '"https://example.com/przykład/日本語"');
+	});
+
+	test('still returns undefined, not a throw, for a value JSON cannot represent', () => {
+		assert.equal(logSafe(undefined), undefined);
+		assert.equal(
+			logSafe(() => {}),
+			undefined,
+		);
+		assert.equal(logSafe(Symbol('s')), undefined);
+	});
+});
+
+describe('readBodyPreview', () => {
+	const bytes = (text) => new TextEncoder().encode(text);
+
+	test('returns a short body whole', async () => {
+		assert.equal(await readBodyPreview(new Response('{"ok":false}')), '{"ok":false}');
+	});
+
+	test('returns an empty string for a response with no body', async () => {
+		assert.equal(await readBodyPreview(new Response(null, { status: 502 })), '');
+	});
+
+	test('cuts a long body at the byte limit and marks the cut', async () => {
+		assert.equal(await readBodyPreview(new Response('A'.repeat(5000)), 100), `${'A'.repeat(100)}... [truncated]`);
+	});
+
+	test('does not mark a body that is exactly the limit', async () => {
+		assert.equal(await readBodyPreview(new Response('A'.repeat(100)), 100), 'A'.repeat(100));
+	});
+
+	test('defaults to 2 KB', async () => {
+		assert.equal(await readBodyPreview(new Response('C'.repeat(10_000))), `${'C'.repeat(2048)}... [truncated]`);
+	});
+
+	test('stops reading a body that never ends, and cancels it instead of holding the connection', async () => {
+		let pulls = 0;
+		let cancelled = false;
+		const endless = new ReadableStream({
+			pull(controller) {
+				pulls++;
+				controller.enqueue(bytes('B'.repeat(1024)));
+			},
+			cancel() {
+				cancelled = true;
+			},
+		});
+		assert.equal(await readBodyPreview(new Response(endless), 2048), `${'B'.repeat(2048)}... [truncated]`);
+		assert.equal(cancelled, true);
+		assert.ok(pulls < 10, `expected a bounded number of reads, got ${pulls}`);
+	});
+
+	test('joins chunks and still cuts inside a later one', async () => {
+		const chunked = new ReadableStream({
+			start(controller) {
+				controller.enqueue(bytes('abc'));
+				controller.enqueue(bytes('defgh'));
+				controller.close();
+			},
+		});
+		assert.equal(await readBodyPreview(new Response(chunked), 5), 'abcde... [truncated]');
+	});
+
+	test('does not throw when the cut lands inside a multi-byte character', async () => {
+		const out = await readBodyPreview(new Response('é'.repeat(10)), 5);
+		assert.ok(out.startsWith('éé') && out.endsWith('... [truncated]'), out);
+	});
+
+	test('passes a read error through, even though cancelling the errored stream rejects too', async () => {
+		const broken = new ReadableStream({
+			pull(controller) {
+				controller.error(new Error('connection reset'));
+			},
+		});
+		await assert.rejects(readBodyPreview(new Response(broken)), /connection reset/);
 	});
 });
 

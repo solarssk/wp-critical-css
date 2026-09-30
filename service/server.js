@@ -31,6 +31,7 @@ import {
 	isValidSecret,
 	isAllowedUrl,
 	logSafe,
+	readBodyPreview,
 	extractUrlsFromUrlset,
 	isPrivateOrReservedAddress,
 	isBlockedLiteralAddress,
@@ -237,15 +238,16 @@ async function postToReceiverWithRetry(body) {
 			if (res.ok || res.status < 500) {
 				return res; // success, or a permanent rejection nothing here can fix
 			}
-			lastError = new Error(`WordPress receiver returned ${res.status}: ${await res.text()}`);
+			lastError = new Error(`WordPress receiver returned ${res.status}: ${await readBodyPreview(res)}`);
 		} catch (err) {
 			lastError = err; // network error or timeout - worth retrying
 		}
 		if (attempt < RECEIVER_MAX_ATTEMPTS) {
 			// logSafe() here, not just err.message straight - lastError.message
 			// can be the WordPress receiver's own response body (see the 5xx
-			// branch above, which folds `await res.text()` into the Error it
-			// constructs), not only a network-layer error string.
+			// branch above, which folds the start of that body - readBodyPreview(),
+			// capped at 2 KB - into the Error it constructs), not only a
+			// network-layer error string.
 			console.warn(`[critical-css] receiver attempt ${attempt}/${RECEIVER_MAX_ATTEMPTS} failed: ${logSafe(lastError.message)}, retrying`); // NOSONAR jssecurity:S5145 - see logSafe() above
 			await new Promise((resolve) => setTimeout(resolve, RECEIVER_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)));
 		}
@@ -264,7 +266,7 @@ async function generateAndSubmit(url) {
 	const res = await postToReceiverWithRetry(JSON.stringify({ url, css_mobile: mobile, css_desktop: desktop }));
 
 	if (!res.ok) {
-		throw new Error(`WordPress receiver returned ${res.status}: ${await res.text()}`);
+		throw new Error(`WordPress receiver returned ${res.status}: ${await readBodyPreview(res)}`);
 	}
 
 	console.log(`[critical-css] delivered for ${logSafe(url)}`);
@@ -638,7 +640,7 @@ app.post('/sweep', (req, res) => {
 	if (!isValidSecret(req.get('X-WPCC-Secret'), SHARED_SECRET)) {
 		return res.status(403).json({ error: 'forbidden' });
 	}
-	runSweep().catch((err) => console.error('[critical-css] sweep failed:', err.message));
+	runSweep().catch((err) => console.error(`[critical-css] sweep failed: ${logSafe(err.message)}`));
 	res.status(202).json({ status: 'sweep started' });
 });
 
@@ -667,7 +669,7 @@ app.listen(PORT, () => {
 		cron.schedule(
 			SWEEP_CRON,
 			() => {
-				runSweep().catch((err) => console.error('[critical-css] scheduled sweep failed:', err.message));
+				runSweep().catch((err) => console.error(`[critical-css] scheduled sweep failed: ${logSafe(err.message)}`));
 			},
 			{ noOverlap: true },
 		);

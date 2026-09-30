@@ -55,6 +55,10 @@ export function isAllowedUrl(url, allowedHostname) {
 	}
 }
 
+// The characters logSafe() escapes on top of what JSON.stringify already
+// does - see its doc comment for why.
+const UNSAFE_LOG_CHARS = /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
 /**
  * `value` reaches every log call in server.js straight from either the
  * sitemap sweep or the /generate request body - never render it into a
@@ -64,9 +68,24 @@ export function isAllowedUrl(url, allowedHostname) {
  * and, combined with always logging it as a single template-literal
  * argument (never a second argument to console.*), stops it from being
  * interpreted as a printf-style format specifier either.
+ *
+ * JSON.stringify leaves a few characters as they are, and this escapes
+ * those too (as \uXXXX, still valid inside the JSON string): DEL, the C1
+ * controls (U+0080-U+009F - NEL and CSI among them), the Unicode line and
+ * paragraph separators (U+2028/2029) and the bidirectional formatting
+ * characters (U+202A-202E, U+2066-2069). A log pipeline that splits on
+ * NEL/LS/PS, a terminal that honours C1 escape sequences, or a viewer that
+ * applies a bidi override would treat those as real line breaks, control
+ * sequences or reordering.
  */
 export function logSafe(value) {
-	return JSON.stringify(value);
+	const json = JSON.stringify(value);
+	// Not a string for a value JSON can't represent (undefined, a function,
+	// a symbol) - nothing to escape, and .replace() would throw on it.
+	if (typeof json !== 'string') {
+		return json;
+	}
+	return json.replace(UNSAFE_LOG_CHARS, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 // Every literal below IS the point of this table, not an oversight -
@@ -325,6 +344,46 @@ async function readBoundedBody(res, maxBytes) {
 		reader.releaseLock();
 	}
 	return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf-8');
+}
+
+/**
+ * The start of a response body, for folding into an error message - not
+ * readBoundedBody() above, which throws once a body is over its limit: right
+ * for a sitemap this service needs whole, wrong for an error preview, where
+ * the first couple of KB is all anyone reads and the rest should simply not
+ * be read. `res.text()`, which server.js used for this, buffers the whole
+ * body first, so a receiver answering with a huge 5xx body cost that much
+ * memory and then put all of it into every log line the error reached - up
+ * to three per job (two retry warnings and the final failure). This stops
+ * reading at `maxBytes`, cancels the rest of the stream so the connection
+ * isn't held open for it, and marks the cut.
+ */
+export async function readBodyPreview(res, maxBytes = 2048) {
+	if (!res.body) {
+		return '';
+	}
+	const reader = res.body.getReader();
+	const chunks = [];
+	let total = 0;
+	let truncated = false;
+	try {
+		while (!truncated) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			const room = maxBytes - total;
+			truncated = value.length > room;
+			chunks.push(truncated ? value.subarray(0, room) : value);
+			total += Math.min(value.length, room);
+		}
+	} finally {
+		// Also runs when read() rejected (a dropped connection): cancel() on
+		// an errored stream rejects too, and that must not replace the real error.
+		await reader.cancel().catch(() => {});
+	}
+	const text = Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf-8');
+	return truncated ? `${text}... [truncated]` : text;
 }
 
 /**
