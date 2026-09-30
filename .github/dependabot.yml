@@ -16,6 +16,17 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # critical 9 is a rewrite, not an upgrade: no `generate` export, no
+      # penthouse/Puppeteer (it launches its own Playwright Chromium with a
+      # hard-coded --no-sandbox) and pages are fetched with a bare fetch(), so
+      # neither the private/reserved-address policy nor the Chromium request
+      # interception in service/server.js has anywhere to attach. #91 failed the
+      # Docker smoke test at the very first import. Moving to v9 needs its own
+      # design (SSRF model included), not a Dependabot PR. Minor and patch
+      # updates of 8.x keep coming; lift this when that design exists.
+      - dependency-name: "critical"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "docker"
     directory: "/service"
