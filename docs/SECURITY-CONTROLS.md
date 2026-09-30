@@ -61,6 +61,7 @@ sides, so it's treated like any other credential throughout.
 | Third-party action supply chain | every workflow | every `uses:` is pinned to a full commit SHA, never a mutable tag |
 | Workflow correctness and security | every PR + push to `main` | `.github/workflows/lint-workflows.yml` - actionlint (expression and input errors, ShellCheck on every `run:` block) and zizmor (shell injection through `${{ }}` interpolation, action pins whose version comment doesn't match the SHA, excessive permissions); any finding at `low` or above fails the job |
 | Repository security posture | push to `main`, branch-protection changes, weekly | `.github/workflows/scorecard.yml` - OpenSSF Scorecard; a report (Security tab + the public Scorecard API), not a merge gate |
+| Plugin zip signature | every published release from 0.2.7, best effort (a release without a `.sigstore.json` asset is unsigned) | `.github/workflows/publish-plugin.yml` - keyless Sigstore signature (cosign `sign-blob`, verified by the workflow itself before it is attached) as `wp-critical-css-X.Y.Z.zip.sigstore.json`. Attached after the zip is already published and fail-open (`continue-on-error`, a per-step timeout and a warning), so a Sigstore outage can't stop a release. How to verify: [DEPLOYMENT.md](DEPLOYMENT.md#5-install-the-plugin) |
 
 Every finding these tools have surfaced so far - a CVE in npm's own bundled
 `tar`, a Chrome/puppeteer-version mismatch, a tainted-format-string log

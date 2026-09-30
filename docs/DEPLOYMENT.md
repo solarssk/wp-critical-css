@@ -67,9 +67,22 @@ Should return `{"status":"ok","queueLength":0,"processing":false}`.
 
 This is a normal, installable WordPress plugin - no server file access needed:
 
-1. Download `wp-critical-css-vX.Y.Z.zip` from a [release](https://github.com/solarssk/wp-critical-css/releases).
+1. Download `wp-critical-css-X.Y.Z.zip` from a [release](https://github.com/solarssk/wp-critical-css/releases) (the file name has no `v`).
 2. In wp-admin: `Plugins` > `Add New Plugin` > `Upload Plugin`, select the zip, `Install Now`.
 3. `Activate`.
+
+**Verify the download (optional).** Releases from 0.2.7 on carry a keyless [Sigstore](https://www.sigstore.dev/) signature for the zip, `wp-critical-css-X.Y.Z.zip.sigstore.json`, made by this repository's `publish-plugin.yml` and attached to the same release. With [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) v3:
+
+```bash
+VERSION=0.2.7
+cosign verify-blob \
+  --bundle "wp-critical-css-${VERSION}.zip.sigstore.json" \
+  --certificate-identity "https://github.com/solarssk/wp-critical-css/.github/workflows/publish-plugin.yml@refs/tags/v${VERSION}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  "wp-critical-css-${VERSION}.zip"
+```
+
+`Verified OK` means the zip is byte-identical to the one that workflow signed for that tag. A release with no `.sigstore.json` asset is unsigned: every release before 0.2.7, and any release whose signing step failed (the step is deliberately fail-open, so a Sigstore outage can't stop a release from publishing). If a release's zip was re-published by a dispatch from `main` (not from the tag), the signature's identity ends in `@refs/heads/main` instead of `@refs/tags/vX.Y.Z` and the command above fails with `none of the expected identities matched`; verify such a release by replacing the `--certificate-identity` line with `--certificate-identity-regexp "^https://github\.com/solarssk/wp-critical-css/\.github/workflows/publish-plugin\.yml@refs/(tags/v${VERSION//./\\.}|heads/main)\$"`. Keyless verification needs network access to the Sigstore TUF mirror (or `--trusted-root`).
 
 If `WPCC_SHARED_SECRET` isn't defined yet (step 2 above), an admin notice says so - it's harmless, the plugin just won't do anything until it's set.
 
@@ -97,15 +110,15 @@ On a real post/page that's been processed, view source and check for:
 
 ## Releases
 
-Only the latest tagged release is supported - deploy from a signed
-semver tag (`vX.Y.Z`), not `main`.
+Only the latest tagged release is supported - deploy from a tagged
+release (`vX.Y.Z`), not `main`. The tags themselves are not signed; the plugin zip carries a Sigstore signature (see [section 5](#5-install-the-plugin)) and the container image has signed build provenance.
 
 Releases are cut by merging a `release: vX.Y.Z` PR to `main` - nothing further is done by hand. That PR bumps, together: `service/package.json`'s version, the plugin's `Version:` header, its `readme.txt` `Stable tag:`, the `CHANGELOG.md` entry, and adds this release's notes - `.github/release-notes/vX.Y.Z.title` (one line, the release's display tagline) and `.github/release-notes/vX.Y.Z.md` (the CHANGELOG.md section for this version, plus a trailing `[Full changelog](https://github.com/solarssk/wp-critical-css/blob/vX.Y.Z/CHANGELOG.md)` link) - see any existing file under `.github/release-notes/` for the exact shape.
 
 Merging that PR is the entire trigger. `.github/workflows/release.yml` fires on the resulting push to `main`, detects the `release: vX.Y.Z` commit, verifies everything above is present and in lockstep, creates the tag and GitHub Release, and dispatches both publish workflows:
 
 - `.github/workflows/publish-container.yml` builds the image once, scans it with Trivy (a full SARIF report goes to the Security tab, and a hard gate blocks the push on any fixable CRITICAL finding), then pushes the same image to both `ghcr.io/solarssk/wp-critical-css` and `docker.io/solarssk/wp-critical-css`. Signed build provenance is attached to the GHCR copy (see the workflow's own comment on that step for why not both).
-- `.github/workflows/publish-plugin.yml` re-verifies the plugin's own `Version:` header and `readme.txt` Stable tag against the tag (fails the build if either was somehow still wrong), then zips `wordpress-plugin/wp-critical-css/`.
+- `.github/workflows/publish-plugin.yml` re-verifies the plugin's own `Version:` header and `readme.txt` Stable tag against the tag (fails the build if either was somehow still wrong), then zips `wordpress-plugin/wp-critical-css/`, attaches the zip to the release, and signs it keylessly with cosign (attached as `wp-critical-css-X.Y.Z.zip.sigstore.json`; these steps run after the zip is published and are `continue-on-error`, so a signing problem shows up as a warning in the run, never as a missing release).
 
 Whichever of the two finishes first attaches its own asset (the SBOM, or the plugin zip) to the GitHub Release `release.yml` already created (titled via `scripts/release-display-title.sh`: `vX.Y.Z — tagline`, read from the `.title` file above); the other just uploads alongside it. See [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for the full CI/CD control list.
 
