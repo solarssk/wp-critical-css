@@ -39,6 +39,7 @@ import {
 	safeFetch,
 	stripInapplicableMediaQueries,
 	SERVED_WIDTH_RANGES,
+	createJobQueue,
 } from './lib.js';
 
 const PORT = process.env.PORT || 3939;
@@ -154,8 +155,7 @@ function ssrfSafeDnsLookup(hostname, options, callback) {
 // comment above) while still being a real ceiling, not a symbolic one.
 const MAX_QUEUE_LENGTH = parsePositiveInt(process.env.MAX_QUEUE_LENGTH, 500, 'MAX_QUEUE_LENGTH');
 
-const queue = [];
-let processing = false;
+const queue = createJobQueue({ maxLength: MAX_QUEUE_LENGTH, handle: generateAndSubmit, logPrefix: '[critical-css]' });
 
 /**
  * Returns which of these happened, rather than a bare boolean/void, so
@@ -170,36 +170,7 @@ function enqueue(url) {
 		console.warn(`[critical-css] refusing to queue disallowed URL: ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
 		return 'disallowed';
 	}
-	if (queue.includes(url)) {
-		return 'duplicate';
-	}
-	if (queue.length >= MAX_QUEUE_LENGTH) {
-		console.warn(`[critical-css] queue at its ${MAX_QUEUE_LENGTH}-entry limit, dropping ${logSafe(url)}`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
-		return 'full';
-	}
-	queue.push(url);
-	processQueue();
-	return 'queued';
-}
-
-async function processQueue() {
-	if (processing) {
-		return;
-	}
-	processing = true;
-	while (queue.length > 0) {
-		const url = queue.shift();
-		try {
-			await generateAndSubmit(url);
-		} catch (err) {
-			// A single template-literal argument, not `console.error(template, err.message)` -
-			// with two+ arguments Node's console treats the first as a printf-style format
-			// string, so a crafted url containing e.g. "%s" would consume err.message as its
-			// substitution value and garble the log line (CodeQL js/tainted-format-string).
-			console.error(`[critical-css] failed for ${logSafe(url)}: ${err.message}`); // NOSONAR jssecurity:S5145 - see logSafe() above
-		}
-	}
-	processing = false;
+	return queue.add(url);
 }
 
 const RECEIVER_TIMEOUT_MS = 10_000;
@@ -605,7 +576,7 @@ app.disable('x-powered-by'); // don't advertise the framework/version to every c
 app.use(express.json());
 
 app.get('/health', (req, res) => {
-	res.json({ status: 'ok', queueLength: queue.length, queueFull: queue.length >= MAX_QUEUE_LENGTH, processing });
+	res.json({ status: 'ok', queueLength: queue.length, queueFull: queue.length >= MAX_QUEUE_LENGTH, processing: queue.processing });
 });
 
 app.post('/generate', (req, res) => {
