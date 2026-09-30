@@ -267,8 +267,15 @@ describe('logSafe', () => {
 		['CSI, a C1 control', 0x9b],
 		['the line separator', 0x2028],
 		['the paragraph separator', 0x2029],
+		['the Arabic letter mark', 0x61c],
+		['the left-to-right mark', 0x200e],
+		['the right-to-left mark', 0x200f],
 		['a right-to-left override', 0x202e],
 		['a right-to-left isolate', 0x2067],
+		['a zero-width space', 0x200b],
+		['a word joiner', 0x2060],
+		['a byte order mark', 0xfeff],
+		['a soft hyphen', 0xad],
 	];
 
 	for (const [label, codePoint] of beyondJson) {
@@ -278,8 +285,46 @@ describe('logSafe', () => {
 			const result = logSafe(`a${char}b`);
 			assert.ok(!result.includes(char), 'the raw character must not survive');
 			assert.equal(result, `"a\\u${hex4(codePoint)}b"`);
+			assert.equal(JSON.parse(result), `a${char}b`, 'still valid JSON, and it round-trips');
 		});
 	}
+
+	test('escapes a character outside the BMP as a surrogate pair, so the result is still valid JSON', () => {
+		const tag = String.fromCodePoint(0xe0041); // a tag character: invisible, used to smuggle hidden text
+		const result = logSafe(`a${tag}b`);
+		assert.ok(!result.includes(tag));
+		assert.equal(result, `"a\\u${hex4(0xdb40)}\\u${hex4(0xdc41)}b"`);
+		assert.equal(JSON.parse(result), `a${tag}b`);
+	});
+
+	test('escapes every Unicode control, format, bidirectional-control and separator character, not just a hand-picked list', () => {
+		// Walks the whole code space against the Unicode properties themselves,
+		// so a character missing from any list in lib.js - the bidi marks
+		// U+061C/U+200E/U+200F were exactly that once - fails here by name.
+		const unsafe = /[\p{Bidi_Control}\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+		let checked = 0;
+		for (let codePoint = 0; codePoint <= 0x10ffff; codePoint++) {
+			if (codePoint >= 0xd800 && codePoint <= 0xdfff) {
+				continue; // lone surrogates: JSON.stringify already escapes those
+			}
+			const char = String.fromCodePoint(codePoint);
+			if (!unsafe.test(char)) {
+				continue;
+			}
+			checked++;
+			const result = logSafe(`a${char}b`);
+			assert.ok(!unsafe.test(result), `U+${hex4(codePoint)} survived logSafe() raw`);
+			assert.equal(JSON.parse(result), `a${char}b`, `U+${hex4(codePoint)} did not round-trip`);
+		}
+		assert.ok(checked > 150, `expected to check the whole set, only found ${checked} characters`);
+	});
+
+	test('leaves emoji and ordinary letters in other scripts alone', () => {
+		// Built from code points: a run of right-to-left letters written out
+		// literally would make this source line render backwards in an editor.
+		const text = String.fromCodePoint(0x1f600, 0x20, 0x645, 0x631, 0x62d, 0x628, 0x627, 0x20, 0x3b5, 0x3bb, 0x3bb);
+		assert.equal(logSafe(text), `"${text}"`);
+	});
 
 	test('escapes them inside nested values too', () => {
 		const separator = String.fromCodePoint(0x2028);

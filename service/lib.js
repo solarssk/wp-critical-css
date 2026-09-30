@@ -57,9 +57,11 @@ export function isAllowedUrl(url, allowedHostname) {
 	}
 }
 
-// The characters logSafe() escapes on top of what JSON.stringify already
-// does - see its doc comment for why.
-const UNSAFE_LOG_CHARS = /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+// What logSafe() escapes on top of what JSON.stringify already does - whole
+// Unicode general categories rather than a hand-kept list, see its doc
+// comment for why: Cc (controls), Cf (format characters), Zl and Zp (the
+// line and paragraph separators).
+const UNSAFE_LOG_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
 /**
  * `value` reaches every log call in server.js straight from either the
@@ -71,14 +73,18 @@ const UNSAFE_LOG_CHARS = /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/
  * argument (never a second argument to console.*), stops it from being
  * interpreted as a printf-style format specifier either.
  *
- * JSON.stringify leaves a few characters as they are, and this escapes
- * those too (as \uXXXX, still valid inside the JSON string): DEL, the C1
- * controls (U+0080-U+009F - NEL and CSI among them), the Unicode line and
- * paragraph separators (U+2028/2029) and the bidirectional formatting
- * characters (U+202A-202E, U+2066-2069). A log pipeline that splits on
+ * JSON.stringify leaves some characters as they are, and this escapes those
+ * too (as \uXXXX per UTF-16 unit, so the result is still valid JSON). It
+ * takes whole Unicode general categories rather than a hand-kept list, so a
+ * character nobody thought of can't slip through: Cc, the controls
+ * JSON.stringify skips (DEL and the C1 range, NEL and CSI among them); Cf,
+ * the format characters (every bidirectional control - U+061C, U+200E/200F,
+ * U+202A-202E, U+2066-2069 - plus zero-width and other invisible characters
+ * and the tag characters that can hide text); and Zl/Zp, the line and
+ * paragraph separators (U+2028/2029). A log pipeline that splits on
  * NEL/LS/PS, a terminal that honours C1 escape sequences, or a viewer that
- * applies a bidi override would treat those as real line breaks, control
- * sequences or reordering.
+ * applies a bidi override or hides characters would otherwise treat those as
+ * line breaks, control sequences, reordering or invisible text.
  */
 export function logSafe(value) {
 	const json = JSON.stringify(value);
@@ -87,7 +93,12 @@ export function logSafe(value) {
 	if (typeof json !== 'string') {
 		return json;
 	}
-	return json.replace(UNSAFE_LOG_CHARS, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+	return json.replace(UNSAFE_LOG_CHARS, (char) =>
+		char
+			.split('')
+			.map((unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`)
+			.join(''),
+	);
 }
 
 /**
