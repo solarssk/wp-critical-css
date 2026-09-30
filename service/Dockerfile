@@ -11,7 +11,7 @@
 # locked, whose own installer registers a DIFFERENT Chrome build than what
 # this newer base image ships. Bump both together, always - see the
 # puppeteer dependency in package.json just below.
-FROM ghcr.io/puppeteer/puppeteer:25.10.0@sha256:95af967749f581e78c52ecdabccc7736ecf8162729ee300d0127a46f2d78439e
+FROM ghcr.io/puppeteer/puppeteer:25.12.0@sha256:60ad89b1d8ca14877120250b9c96694dd19a4eda5890fdbad64f4740c6a27361
 
 USER root
 WORKDIR /app
