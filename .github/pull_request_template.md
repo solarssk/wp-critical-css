@@ -30,6 +30,18 @@ Anything intentionally left out, deferred, or still transitional.
 Mention follow-up milestones/issues when relevant.
 -->
 
+## Documentation impact
+
+<!--
+Choose exactly one option. Update the docs when the PR changes behavior, setup, configuration, or a
+security control: README.md, docs/ (ARCHITECTURE, DEPLOYMENT, SECURITY-CONTROLS), the plugin's
+readme.txt, and CHANGELOG.md for anything a deployer would notice. "No doc update needed" requires a
+specific reason (e.g. "CI-only change, nothing user-visible"), not just "n/a".
+-->
+
+- [ ] Docs updated
+- [ ] No doc update needed - explain why
+
 ---
 
 ## Checklist
@@ -40,4 +52,3 @@ Mention follow-up milestones/issues when relevant.
 - [ ] Tests pass locally (`npm test` in `service/`)
 - [ ] Every `uses:` in touched workflow files is pinned to a full commit SHA, not a mutable tag
 - [ ] Dockerfile changes: re-verified against a real Puppeteer render, not just a successful build
-- [ ] Documentation updated if behavior, setup, or security controls changed

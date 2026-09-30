@@ -57,7 +57,7 @@ Prefix by what it does — matches the labels below, no separate scope segment:
 
 ## Pull requests
 
-Follow [.github/pull_request_template.md](.github/pull_request_template.md) exactly: `Description` · `How to test` · `What stays / known limitations` · `Checklist`.
+Follow [.github/pull_request_template.md](.github/pull_request_template.md) exactly: `Description` · `How to test` · `What stays / known limitations` · `Documentation impact` (tick exactly one: docs updated, or no update needed with a specific reason) · `Checklist`.
 
 Before opening: **milestone**, at least one `type:`/`area:`/`prio:` label, and **assignee `@solarssk`** — set on the PR object itself at creation (`gh pr create --milestone ... --label ... --assignee solarssk`), not added afterward.
 

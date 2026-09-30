@@ -1,0 +1,63 @@
+name: Lint workflows
+
+# Workflow files are code that runs with a token and, often, secrets, and almost
+# nothing reads them the way a reviewer reads application code. Two linters cover
+# different halves: actionlint checks a workflow is correct (expressions, input
+# names, ShellCheck on every run: block), zizmor checks it is safe (template
+# injection, unpinned actions, excessive permissions, cache poisoning in release
+# jobs, Dependabot config without a cooldown). Same recipe as playbook
+# docs/ci-cookbook.md section 15 and the sibling repos.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  lint-workflows:
+    name: Lint workflows (actionlint, zizmor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # rhysd/actionlint ships no first-party GitHub Action, so the pinned release
+      # is downloaded and its checksum verified - the same discipline as the
+      # hash-locked Python installs in semgrep.yml.
+      - name: Install actionlint (checksum-verified)
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          # From the release's own actionlint_<version>_checksums.txt. Update it with the version.
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -sSfL -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" actionlint
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: actionlint
+        run: actionlint .github/workflows/*.yml
+
+      # version: pinned, because the default is `latest` - a floating reference inside
+      # an otherwise SHA-pinned step. advanced-security: false keeps this job at
+      # contents: read (no SARIF upload, so no security-events: write); findings show
+      # up as annotations instead. min-severity: low keeps purely informational
+      # suggestions from failing the job while every real finding still does. A
+      # finding is a fix, not a suppression: if a `zizmor: ignore` is ever
+      # unavoidable, the reason goes in the same comment.
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: v1.30.1
+          advanced-security: false
+          annotations: true
+          min-severity: low
