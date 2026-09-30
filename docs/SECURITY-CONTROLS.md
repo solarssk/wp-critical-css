@@ -59,6 +59,8 @@ sides, so it's treated like any other credential throughout.
 | GitHub Release creation | every version tag | either `publish-container.yml` or `publish-plugin.yml`, whichever finishes first (`gh release create ... --generate-notes`) - the other attaches its own asset (SBOM, or the plugin zip) to that same release |
 | Dependency/base-image/action/Semgrep-toolchain updates | weekly | `.github/dependabot.yml` (npm, docker, github-actions, pip - the last one tracks Semgrep's own version, pinned in `.github/semgrep/requirements.txt` rather than inline in the workflow) |
 | Third-party action supply chain | every workflow | every `uses:` is pinned to a full commit SHA, never a mutable tag |
+| Workflow correctness and security | every PR + push to `main` | `.github/workflows/lint-workflows.yml` - actionlint (expression and input errors, ShellCheck on every `run:` block) and zizmor (shell injection through `${{ }}` interpolation, action pins whose version comment doesn't match the SHA, excessive permissions); any finding at `low` or above fails the job |
+| Repository security posture | push to `main`, branch-protection changes, weekly | `.github/workflows/scorecard.yml` - OpenSSF Scorecard; a report (Security tab + the public Scorecard API), not a merge gate |
 
 Every finding these tools have surfaced so far - a CVE in npm's own bundled
 `tar`, a Chrome/puppeteer-version mismatch, a tainted-format-string log
