@@ -31,7 +31,7 @@ Not distributed via WordPress.org — installed manually from a GitHub Release z
 - **Never** commit secrets, tokens, API keys, or real credentials. `.env.example` documents required configuration; `SHARED_SECRET`/`WPCC_SHARED_SECRET` values in examples/tests are always obvious placeholders.
 - `SHARED_SECRET` gates the `/generate` and `/sweep` HTTP endpoints; `WPCC_SHARED_SECRET` (same value) gates the plugin's REST receiver. Comparisons are constant-time (`isValidSecret()` in `service/lib.js`) — never introduce a plain `===`/`!==` on a secret.
 - This service renders arbitrary URLs with a real headless browser — SSRF is the primary threat model, not an afterthought. Any new network call the service makes (sitemap fetch, a future outbound request) needs to go through `safeFetch()`/`isPrivateOrReservedTarget()` in `service/lib.js`, the same private/reserved-address policy already applied to page rendering (`got`) and Chromium's own request interception. A gap here has already shipped once (unprotected sitemap fetching, fixed in v0.2.2) — don't reintroduce a fourth, unguarded network path.
-- Every GitHub Actions `uses:` must be pinned to a full commit SHA with a `# vX.Y.Z` comment, never a mutable tag. `permissions:` stays minimal per workflow/job.
+- Every GitHub Actions `uses:` must be pinned to a full commit SHA with a `# vX.Y.Z` comment, never a mutable tag. `permissions:` stays minimal per workflow/job: the top level is read-only (`contents: read`) and a job that writes declares its own writes - a top-level write is an OpenSSF Scorecard Token-Permissions finding and every job added later would inherit it.
 - Add the `security` label on PRs touching auth, secrets, SSRF protections, or rate limiting.
 
 ## Tests

@@ -11,8 +11,11 @@ on:
         required: false
         default: refs/heads/main
 
+# Read-only by default: every job below declares the writes it needs itself, so a
+# job added later inherits nothing more than `contents: read` (OpenSSF Scorecard
+# Token-Permissions, which scores a top-level write as a finding).
 permissions:
-  contents: write
+  contents: read
 
 # Grouped per target, not per workflow: a GitHub concurrency group holds at
 # most one running AND one pending run - it's not a FIFO queue, so a group
@@ -41,6 +44,8 @@ jobs:
   build-zip:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
