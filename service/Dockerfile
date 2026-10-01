@@ -48,8 +48,10 @@ ENV NODE_ENV=production
 # every installed package from every configured apt source on every
 # rebuild, making the image's OS layer non-reproducible over time and a
 # much larger, less reviewable change than "these CVEs got patched".
-# (Checked: this base image configures only plain Debian/Debian-security
-# as apt sources - see /etc/apt/sources.list.d/debian.sources - no Chrome
+# (Checked: this base image configures only plain Debian as apt sources -
+# bookworm, bookworm-updates and bookworm-security, see
+# /etc/apt/sources.list.d/debian.sources - so a blanket upgrade could also
+# take bookworm-updates' non-security point-release versions; no Chrome
 # apt repository exists here for a broader upgrade to have caught anyway;
 # Chrome is entirely managed by puppeteer's own downloader below, outside
 # apt's purview either way.) Debian's stable-security backports are,
@@ -66,12 +68,14 @@ ENV NODE_ENV=production
 #                  depend on it
 #   ca-certificates, xz-utils, tzdata - base-system data/tooling; left
 #                  installed (no reason to purge them) and patched
-# After the purge below, `apt-get -s upgrade` in the built image reports
-# "0 upgraded" - i.e. this list is currently the complete set of fixable
-# packages still installed, not a sample. If a future scan flags another
-# package that stays installed, add it here; if this list ever grows long,
-# that (not today's 8 names) is the point where a blanket security-only
-# upgrade becomes the lower-maintenance choice.
+# After the purge below, `apt-get -s upgrade` in a freshly built image
+# reports "0 upgraded" - i.e. this list was the complete set of fixable
+# packages still installed on the day it was measured, not a sample (a
+# cached copy of this layer stops being complete the day Debian ships its
+# next fix: see APT_REFRESH below). If a future scan flags another package
+# that stays installed, add it here; if this list ever grows long, that
+# (not today's 8 names) is the point where a blanket security-only upgrade
+# becomes the lower-maintenance choice.
 #
 # Second, purge everything that only exists to compile or fetch source.
 # Checked with `apt-cache rdepends --installed` (nothing that stays depends
@@ -92,11 +96,12 @@ ENV NODE_ENV=production
 #     two are what keep libssh2-1 installed; purged explicitly since they
 #     are manually-installed libraries --auto-remove would not touch)
 # Net effect, same Trivy invocation: 732 findings -> 0 (CRITICAL/HIGH/MEDIUM
-# only: 642 -> 0). The CI "Docker build smoke test" below is the backstop
-# if a future base image ever makes something on this list a dependency of
-# something Chrome needs: apt would then remove that package too, and the
-# real render would fail loudly rather than this image shipping silently
-# broken.
+# only: 642 -> 0). The real-render smoke tests - ci.yml's, and the one
+# publish-container.yml runs on the scanned image whose layers it is about
+# to push - are the backstop if a future base image ever makes something on this list a
+# dependency of something Chrome needs: apt would then remove that package
+# too, and the real render would fail loudly rather than this image
+# shipping silently broken.
 #
 # `unzip` is deliberately NOT purged, despite nothing in this Dockerfile
 # ever invoking it directly: `critical`'s own puppeteer dependency version
@@ -110,12 +115,34 @@ ENV NODE_ENV=production
 # time, which is exactly why this needs a comment, not just a diff. Same
 # for `wget`: the HEALTHCHECK at the bottom runs it.
 #
-# `--only-upgrade` also marks the five libraries it touches as manually
-# installed, which protects them from any later `--auto-remove`.
+# `--only-upgrade` also flips six of those packages (libexpat1, liblzma5,
+# libpcre2-8-0, libssl3, openssl, tzdata; ca-certificates and xz-utils were
+# already manual) from automatically to manually installed, which protects
+# them from any later `--auto-remove`.
 #
 # Note the purge shrinks what scanners see (the dpkg database in the final
 # layer), not the image's download size: the purged files still exist in the
 # base image's lower layers.
+#
+# APT_REFRESH is the cache key of the layer below. Its text never changes, so
+# a cached copy of it never sees a newer Debian package: v0.2.7 shipped
+# libexpat1 2.5.0-1+deb12u3 although deb12u4 had been published hours
+# before the build, because publish-container.yml replayed this layer from
+# the GHA layer cache. That workflow now passes
+# `APT_REFRESH=<run_id>-<run_attempt>` to BOTH of its builds (scan and push),
+# which re-executes this layer and every later one once per run (the second
+# build is answered from the first one's layers, so both get the same
+# layers; neither uses the GHA cache any more). Rules: NO default, on
+# purpose (a build that does not pass it - ci.yml, a local `docker build` -
+# then keeps today's cache behaviour, whereas `ARG X=...` with a default
+# busts it once); INSIDE this stage and ABOVE the RUN (before FROM it busts
+# nothing; after the RUN it busts only the later layers, never this one;
+# BuildKit stays silent about both); not a secret - it is visible in
+# `docker history` on this layer and every later RUN - so never name it
+# *KEY/*TOKEN/*SECRET. publish-container.yml fails the build if the value
+# did not reach this layer. A local build that must see today's Debian
+# needs `--no-cache` or its own `--build-arg APT_REFRESH=$(date +%s)`.
+ARG APT_REFRESH
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends --only-upgrade \
 		ca-certificates libexpat1 liblzma5 \

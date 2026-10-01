@@ -140,6 +140,10 @@ jobs:
       # Build once, locally, and scan THAT image before it ever reaches the registry - the image is only pushed a second time, further down, if the CRITICAL-severity gate below passes. On a plain branch/SHA dispatch (publish=false) this is the only build that happens.
       #
       # NOT on a schedule trigger, deliberately: that run's whole purpose is to catch drift in what's already deployed, so it pulls and re-tags the actual published `:latest` image instead of building a fresh one from source - see the `schedule:` trigger's own comment above for why a rebuild here would silently defeat that.
+      #
+      # APT_REFRESH is the fresh-apt switch for service/Dockerfile (`ARG APT_REFRESH`, declared right above its `apt-get ... --only-upgrade` layer). That layer's text never changes, so with `cache-from: type=gha` it used to be replayed from cache on every publish and never saw a newer Debian package (v0.2.7 shipped libexpat1 2.5.0-1+deb12u3 with deb12u4 already available). `run_id-run_attempt` is new for every run and for every re-run of one, so that layer and everything after it is rebuilt against the current Debian archive each time this step runs, a plain branch/SHA dispatch included. The identical expression is passed to "Push image" below, and one buildx builder serves both builds of this job, so that second build is answered from the layers built here (same layers, not a second, possibly different apt state) - keep the two in lockstep.
+      #
+      # Neither publish build uses the GHA cache any more: the value is new on every run, so nothing after the ARG could ever be read back, and exporting it would only write ~330 MiB per run into the repository cache that ci.yml shares (close to its 10 GiB limit) - a scan-only dispatch on main would even replace the cache index ci.yml reads. ci.yml's smoke-test build deliberately does not pass APT_REFRESH either: a fresh value per PR push would rebuild the apt and npm layers on every CI run.
       - name: Build image for scanning
         if: github.event_name != 'schedule'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -149,8 +153,27 @@ jobs:
           push: false
           load: true
           tags: ghcr.io/${{ github.repository }}:ci-scan
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            APT_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+
+      # BuildKit says nothing about a build-arg the Dockerfile does not consume, so a removed, renamed or misplaced `ARG APT_REFRESH` (or an empty value) would bring the stale layer back behind a green build. Check the one place the value is recorded: the CreatedBy line of the `--only-upgrade` layer in the image's history.
+      - name: Verify the OS-package layer was rebuilt with APT_REFRESH
+        if: github.event_name != 'schedule'
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:ci-scan
+          APT_REFRESH: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          : "${APT_REFRESH:?APT_REFRESH must not be empty}"
+          HISTORY="$(docker history --no-trunc --format '{{.CreatedBy}}' "$IMAGE")"
+          APT_LAYER="$(printf '%s\n' "$HISTORY" | grep -F -- '--only-upgrade' || true)"
+          case "$APT_LAYER" in
+            *" APT_REFRESH=${APT_REFRESH} "*) echo "OK: the apt layer was built with APT_REFRESH=${APT_REFRESH}." ;;
+            *)
+              echo "::error::The apt layer of the scanned image does not carry APT_REFRESH=${APT_REFRESH}: service/Dockerfile must declare 'ARG APT_REFRESH' (no default) directly above its apt-get RUN, otherwise a cached layer would ship stale Debian packages (a tag from before that ARG existed cannot be re-published through this workflow either)."
+              exit 1
+              ;;
+          esac
 
       - name: Pull published image for scanning (weekly re-scan)
         if: github.event_name == 'schedule'
@@ -198,6 +221,23 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
 
+      # Runs the image that was just built, scanned and gated - the layers "Push image" below ships - before anything is pushed. ci.yml's real render runs a different build of the same Dockerfile that replays its apt layer from cache, so it never executes the refreshed packages this workflow pulls in (libexpat1, libssl3, ca-certificates ... are what Chrome's rendering and TLS stack load). Offline on purpose (`--network none`, the page is passed as `html`): on a release this step runs after the tag already exists, so an outage of a third-party site must not be able to fail it. The page has one rule above the fold and one far below it, so the check only passes if Chrome started AND laid the page out. Skipped on the weekly schedule, which re-scans the already-published image and builds nothing.
+      - name: Smoke test - real Puppeteer render of the scanned image
+        if: github.event_name != 'schedule'
+        timeout-minutes: 3
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:ci-scan
+        run: |
+          docker run --rm --network none "$IMAGE" node --input-type=module -e "
+          import { generate } from 'critical';
+          const html = '<!doctype html><html><head><style>.hero{color:red}.far{color:blue}</style></head><body><h1 class=hero>x</h1><div style=\"height:5000px\"></div><p class=far>y</p></body></html>';
+          const { css } = await generate({ html, inline: false, dimensions: [{ width: 412, height: 915 }], penthouse: { timeout: 30000 } });
+          const out = css.toString();
+          if (!out.includes('.hero')) { throw new Error('the above-the-fold rule is missing: ' + out); }
+          if (out.includes('.far')) { throw new Error('a rule below the fold was kept, so the page was not laid out: ' + out); }
+          console.log('Puppeteer render OK,', out.length, 'bytes of CSS');
+          "
+
       - name: Push image
         id: push
         if: steps.resolve.outputs.publish == 'true'
@@ -208,8 +248,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Must stay identical to the scan build's (see the comment above "Build image for scanning"): same value, same layers - the pushed image is the one that was scanned and rendered.
+          build-args: |
+            APT_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
 
       # GHCR only, deliberately - the digest itself is identical on both
       # registries (same build, same manifest, pushed twice), but GitHub's
