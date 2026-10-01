@@ -8,6 +8,10 @@
 #   build:
 #     context: https://github.com/<your-username>/wp-critical-css.git
 #     dockerfile: service/Dockerfile
+#
+# Optional, recommended: network-level egress filtering (refuses private and
+# link-local destinations for the container, whatever Chrome tries) - see
+# docker-compose.egress.example.yml and docs/DEPLOYMENT.md.
 
 services:
   critical-css-service:
