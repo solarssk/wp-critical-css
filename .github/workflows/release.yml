@@ -162,11 +162,18 @@ jobs:
             exit 0
           fi
 
+          # --target pins the new tag to the commit this run checked out and
+          # verified. Without it the API tags the tip of the default branch
+          # at the moment of this call, so a commit merged to main between
+          # the push and this step (or before a re-run) would be tagged -
+          # and then built and published by the two dispatches below -
+          # instead of the verified `release: vX.Y.Z` commit.
           gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
             --title "$DISPLAY_TITLE" \
             --notes-file "$NOTES_FILE" \
             --latest
-          echo "Created $TAG ($DISPLAY_TITLE)."
+          echo "Created $TAG at ${GITHUB_SHA} ($DISPLAY_TITLE)."
 
       # `gh release create` above tags and pushes with GITHUB_TOKEN, which
       # does NOT trigger publish-container.yml/publish-plugin.yml's own
