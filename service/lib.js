@@ -11,7 +11,7 @@
  */
 
 import { timingSafeEqual } from 'node:crypto';
-import { isIP } from 'node:net';
+import { BlockList, isIP } from 'node:net';
 import { lookup as dnsLookupAsync } from 'node:dns/promises';
 import mediaQuery from 'css-mediaquery';
 
@@ -259,12 +259,68 @@ export function isPrivateOrReservedIpv4(ip) {
 }
 
 /**
- * IPv6 equivalents of the IPv4 ranges above, checked against just the
- * address's first hextet (::1 and IPv4-mapped addresses are handled
- * separately below) - fe80::/10 and fc00::/7 both fall on boundaries a
- * single 16-bit hextet comparison can express exactly, so this avoids
- * needing full 128-bit arithmetic for a hand-rolled parser.
+ * IPv6 has no equivalent of the IPv4 table above, because a deny-list is the
+ * wrong shape for it: almost the whole 128-bit space is reserved, unallocated
+ * or special-purpose, and the ranges that matter are scattered across it
+ * (loopback, link-local, unique-local, multicast, the NAT64 and 6to4
+ * translation prefixes, Teredo, documentation, ...). So the policy here is an
+ * ALLOW-list: only global unicast (2000::/3, the only block IANA currently
+ * assigns to networks) can be a public destination, minus the special-purpose
+ * blocks inside it that are never an ordinary web host. Everything outside
+ * 2000::/3 is refused, except an IPv4 address embedded in ::ffff:0:0/96, ::/96
+ * or 64:ff9b::/96, which is classified as that IPv4 address (see
+ * isPrivateOrReservedIpv6 below). Unallocated space INSIDE 2000::/3 is
+ * deliberately not carved out: the /3 is almost entirely unassigned, and a
+ * list of individual RIR allocations would go stale with every new one.
+ * Unparseable input fails closed, as in the IPv4 function.
  */
+const GLOBAL_UNICAST_IPV6 = new BlockList();
+GLOBAL_UNICAST_IPV6.addSubnet('2000::', 3, 'ipv6'); // NOSONAR javascript:S1313 - global unicast, the one allow-listed block (see the comment above BLOCKED_IPV4_CIDRS)
+
+// Blocks inside 2000::/3 that are never an ordinary web host: the IANA IPv6
+// Special-Purpose Address Registry entries that sit there, plus 3ffe::/16
+// (the returned 6bone space; IANA-reserved, and it contains 3ffe:831f::/32,
+// the pre-standard Teredo prefix that embeds IPv4 addresses). Everything
+// outside 2000::/3 (::1, ::, fc00::/7, fe80::/10, fec0::/10, ff00::/8
+// multicast, 100::/64 discard-only, the local-use NAT64 prefix 64:ff9b:1::/48,
+// 5f00::/16, ...) is refused by that alone; fec0::/10 and ff00::/8 are in other
+// IANA registries, not the special-purpose one. A literal below IS the point of
+// this table - see the comment above BLOCKED_IPV4_CIDRS for why SonarCloud's
+// hardcoded-IP hotspot rule doesn't apply.
+const SPECIAL_PURPOSE_IPV6 = new BlockList();
+for (const [base, prefixLength] of [
+	['2001::', 23], // NOSONAR javascript:S1313 - IETF protocol assignments: Teredo (2001::/32, embeds an IPv4 address), benchmarking, ORCHID, ...
+	['2001:db8::', 32], // NOSONAR javascript:S1313 - documentation
+	['2002::', 16], // NOSONAR javascript:S1313 - 6to4 (RFC 3056; embeds an IPv4 address, so a private one can hide in it; not where ordinary websites are hosted)
+	['2620:4f:8000::', 48], // NOSONAR javascript:S1313 - AS112 direct delegation
+	['3fff::', 20], // NOSONAR javascript:S1313 - documentation (RFC 9637)
+	['3ffe::', 16], // NOSONAR javascript:S1313 - returned 6bone space, IANA-reserved; includes 3ffe:831f::/32, the pre-standard Teredo prefix
+]) {
+	SPECIAL_PURPOSE_IPV6.addSubnet(base, prefixLength, 'ipv6');
+}
+
+/**
+ * The canonical spelling of an IPv6 literal - compressed, lower-case, with a
+ * dotted-decimal IPv4 tail rewritten as two hex groups - produced by the same
+ * WHATWG URL parser every other path in this service already depends on (a
+ * URL's hostname always comes out canonical; dns.lookup does not: it can
+ * return a dotted IPv4 tail such as ::ffff:127.0.0.1 and hands a literal back
+ * verbatim, so every spelling is normalized here). Every way of writing one address (`0:0:0:0:0:ffff:7f00:1`,
+ * `::FFFF:127.0.0.1`, `::ffff:7f00:1`) comes out identical, so the string
+ * matching below can't be sidestepped by spelling an address differently.
+ * Returns null for anything that isn't an IPv6 literal.
+ */
+function canonicalIpv6(ip) {
+	if (!/^[0-9a-f:.]+$/i.test(ip)) {
+		return null; // not even the right characters - and nothing else is ever spliced into the URL below
+	}
+	try {
+		return new URL(`http://[${ip}]/`).hostname.slice(1, -1);
+	} catch {
+		return null;
+	}
+}
+
 function hexPairToDottedIpv4(highHex, lowHex) {
 	const high = Number.parseInt(highHex, 16);
 	const low = Number.parseInt(lowHex, 16);
@@ -272,21 +328,14 @@ function hexPairToDottedIpv4(highHex, lowHex) {
 }
 
 /**
- * Checks both forms an IPv6 address that embeds a plain IPv4 address after
- * a fixed `prefix` can show up as: the human-authored dotted-decimal one
- * (e.g. `::ffff:127.0.0.1`), and the canonical two-hex-group one WHATWG URL
- * parsing (and Node's own dns.lookup) actually produces for the same
- * address (e.g. `::ffff:7f00:1` - confirmed directly: `new
- * URL('http://[::ffff:127.0.0.1]/').hostname` is `[::ffff:7f00:1]`, never
- * the dotted form). Returns null if `clean` doesn't match either form for
- * this prefix.
+ * Classifies a canonical IPv6 address that embeds a plain IPv4 address in its
+ * low 32 bits after a fixed `prefix`, as that IPv4 address. Always the
+ * two-hex-group form: `new URL('http://[::ffff:127.0.0.1]/').hostname` is
+ * `[::ffff:7f00:1]`, never the dotted form (canonicalIpv6() above rewrites it
+ * the same way). Returns null if `canonical` doesn't have this prefix.
  */
-function embeddedIpv4Blocked(clean, prefix) {
-	const dotted = clean.match(new RegExp(String.raw`^${prefix}(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$`));
-	if (dotted) {
-		return isPrivateOrReservedIpv4(dotted[1]);
-	}
-	const hex = clean.match(new RegExp(`^${prefix}([0-9a-f]{1,4}):([0-9a-f]{1,4})$`));
+function embeddedIpv4Blocked(canonical, prefix) {
+	const hex = canonical.match(new RegExp(`^${prefix}([0-9a-f]{1,4}):([0-9a-f]{1,4})$`));
 	if (hex) {
 		return isPrivateOrReservedIpv4(hexPairToDottedIpv4(hex[1], hex[2]));
 	}
@@ -294,14 +343,13 @@ function embeddedIpv4Blocked(clean, prefix) {
 }
 
 export function isPrivateOrReservedIpv6(ip) {
-	const clean = ip.split('%')[0].toLowerCase(); // strip a zone ID (e.g. fe80::1%eth0) if present
-
-	if (clean === '::1' || clean === '::') {
-		return true; // loopback / unspecified
+	const canonical = canonicalIpv6(ip.split('%')[0]); // strip a zone ID (e.g. fe80::1%eth0) if present
+	if (canonical === null) {
+		return true; // fail closed - can't classify it, don't trust it
 	}
 
 	// Every one of these embeds a plain IPv4 address in the low 32 bits -
-	// checking only the IPv4-*mapped* form (::ffff:0:0/96) below left the
+	// checking only the IPv4-*mapped* form (::ffff:0:0/96) left the
 	// others (real, standardized mechanisms, not obscure) completely
 	// unclassified: the deprecated IPv4-*compatible* form (::0:0/96, no
 	// "ffff:" - RFC 4291) and the NAT64 well-known prefix (64:ff9b::/96,
@@ -309,27 +357,13 @@ export function isPrivateOrReservedIpv6(ip) {
 	// can still reach an IPv4 destination). Each check falls through to the
 	// next if the address doesn't match that prefix at all.
 	for (const prefix of ['::ffff:', '::', '64:ff9b::']) { // NOSONAR javascript:S1313 - hardcoding this well-known prefix (RFC 6052) is the whole point, same reasoning as BLOCKED_IPV4_CIDRS above
-		const result = embeddedIpv4Blocked(clean, prefix);
+		const result = embeddedIpv4Blocked(canonical, prefix);
 		if (result !== null) {
 			return result;
 		}
 	}
 
-	const firstGroup = clean.startsWith('::') ? '0' : clean.split(':')[0];
-	const firstHextet = Number.parseInt(firstGroup, 16);
-	if (Number.isNaN(firstHextet)) {
-		return true; // fail closed
-	}
-
-	const isUniqueLocal = firstHextet >= 0xfc00 && firstHextet <= 0xfdff; // fc00::/7
-	const isLinkLocal = firstHextet >= 0xfe80 && firstHextet <= 0xfebf; // fe80::/10
-	// fec0::/10 - IPv6 "site-local" addressing, deprecated by RFC 3879 in
-	// 2004 in favor of fc00::/7 (already covered above), but still actually
-	// routed as an internal-only range on some legacy/enterprise networks
-	// that never migrated off it - a real internal-network target in that
-	// environment, not just a historical curiosity to skip.
-	const isDeprecatedSiteLocal = firstHextet >= 0xfec0 && firstHextet <= 0xfeff;
-	return isUniqueLocal || isLinkLocal || isDeprecatedSiteLocal;
+	return !GLOBAL_UNICAST_IPV6.check(canonical, 'ipv6') || SPECIAL_PURPOSE_IPV6.check(canonical, 'ipv6');
 }
 
 export function isPrivateOrReservedAddress(address, family) {

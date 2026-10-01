@@ -158,6 +158,9 @@ describe('isPrivateOrReservedIpv6', () => {
 		['loopback', 'rejects', '7f00:1'],
 		['cloud metadata', 'rejects', 'a9fe:a9fe'],
 		['public', 'accepts', '808:808'],
+		// Asymmetric on purpose: loopback, metadata and 8.8.8.8 read the same with the last two octets swapped, and 8.8.8.8 is all digits.
+		['IETF protocol assignments (192.0.0.5)', 'rejects', 'c000:5'],
+		['public with hex letters (93.184.216.34)', 'accepts', '5db8:d822'],
 	];
 	const embeddedIpv4Cases = EMBEDDED_IPV4_MECHANISMS.flatMap(([mechName, prefix]) => [
 		...EMBEDDED_IPV4_ADDRESSES.map(([addrName, verb, hex]) => [
@@ -175,14 +178,83 @@ describe('isPrivateOrReservedIpv6', () => {
 		['rejects the top of the link-local range', 'febf::1', true],
 		['rejects a deprecated site-local address (fec0::/10)', 'fec0::1', true],
 		['rejects the top of the deprecated site-local range', 'feff::1', true],
-		['accepts just above the deprecated site-local range', 'ff00::1', false],
+		['rejects multicast (ff00::/8), just above the deprecated site-local range', 'ff00::1', true],
 		['rejects a unique-local address (fc00::/7)', 'fd12:3456:789a::1', true],
 		['rejects the bottom of the unique-local range', 'fc00::1', true],
-		['accepts just below the unique-local range', 'fbff::1', false],
+		['rejects unallocated space just below the unique-local range (outside global unicast, 2000::/3)', 'fbff::1', true],
 		['strips a zone ID before classifying', 'fe80::1%eth0', true],
 		['strips a zone ID before classifying an IPv4-mapped hex-form address', '::ffff:7f00:1%eth0', true],
+		['strips a zone ID before classifying a public address', '2606:4700:4700::1111%eth0', false],
 		...embeddedIpv4Cases,
 		['accepts a real public IPv6 address', '2606:4700:4700::1111', false],
+		['accepts another real public IPv6 address (Google DNS)', '2001:4860:4860::8888', false],
+		['accepts another real public IPv6 address (Quad9)', '2620:fe::fe', false],
+		['accepts another real public IPv6 address (Google, 2a00::/12)', '2a00:1450:4001:81b::200e', false],
+
+		// One address, many spellings: the classifier works on the canonical form, so a loopback or metadata address
+		// can't be written past it. (The expanded spellings below were classified as PUBLIC before.)
+		['rejects the expanded spelling of an IPv4-mapped loopback address', '0:0:0:0:0:ffff:7f00:1', true],
+		['rejects the zero-padded expanded spelling of an IPv4-mapped loopback address', '0000:0000:0000:0000:0000:ffff:7f00:0001', true],
+		['rejects the expanded spelling of an IPv4-mapped cloud-metadata address', '0:0:0:0:0:ffff:a9fe:a9fe', true],
+		['rejects an upper-case IPv4-mapped loopback address', '::FFFF:7F00:1', true],
+		['rejects the expanded spelling of a NAT64-embedded loopback address', '64:ff9b:0:0:0:0:7f00:1', true],
+		['rejects the expanded spelling of an IPv4-compatible loopback address', '0:0:0:0:0:0:7f00:1', true],
+		['classifies the expanded spelling of an IPv4-mapped public address as that public address', '0:0:0:0:0:ffff:808:808', false],
+
+		// Special-purpose blocks inside global unicast (2000::/3), each with a neighbour on both sides. 6to4, Teredo and
+		// the local-use NAT64 prefix embed an IPv4 address, so a private one can hide in them.
+		['rejects 6to4 (2002::/16) embedding the loopback address', '2002:7f00:1::', true],
+		['rejects 6to4 embedding the cloud-metadata address', '2002:a9fe:a9fe::', true],
+		['rejects 6to4 even when it embeds a public IPv4 address (a private one can hide in it; not where ordinary websites are hosted)', '2002:808:808::', true],
+		['accepts just above 6to4 (2003::/18 is a real allocation)', '2003::1', false],
+		['accepts just below 6to4', '2001:ffff::1', false],
+		['rejects a Teredo address (2001::/32, inside the IETF protocol-assignments block)', '2001:0:4136:e378:8000:63bf:3fff:fdd2', true],
+		['rejects the top of the IETF protocol-assignments block (2001::/23)', '2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff', true],
+		['accepts just above it (2001:200::/23 is the first real allocation)', '2001:200::1', false],
+		['rejects the documentation prefix (2001:db8::/32)', '2001:db8::1', true],
+		['accepts just above the documentation prefix', '2001:db9::1', false],
+		['rejects the newer documentation prefix (3fff::/20)', '3fff::1', true],
+		['rejects the top of the newer documentation prefix', '3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff', true],
+		['accepts just above the newer documentation prefix', '3fff:1000::1', false],
+		['rejects the returned 6bone block (3ffe::/16, IANA-reserved)', '3ffe::1', true],
+		['rejects the pre-standard Teredo prefix inside it (3ffe:831f::/32, embeds IPv4 addresses)', '3ffe:831f:ce49:7601:8000:efff:af4a:86bf', true],
+		['rejects the top of the 6bone block', '3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff', true],
+		['accepts just below the 6bone block (unallocated space inside 2000::/3 is not carved out)', '3ffd:ffff::1', false],
+		['rejects the AS112 direct-delegation prefix (2620:4f:8000::/48)', '2620:4f:8000::1', true],
+		['accepts just above the AS112 prefix', '2620:4f:8001::1', false],
+
+		// Outside global unicast (2000::/3) everything is refused, except an IPv4 embedded after ::ffff:, :: and 64:ff9b:: (above): special-purpose space and space nobody has allocated.
+		['rejects the discard-only prefix (100::/64)', '100::1', true],
+		['rejects the local-use NAT64 prefix (64:ff9b:1::/48), whose embedded IPv4 position depends on the operator', '64:ff9b:1::7f00:1', true],
+		['rejects an IPv4-translated (SIIT) address (::ffff:0:0:0/96)', '::ffff:0:7f00:1', true],
+		['rejects ::5, an IPv4-compatible address with a single group', '::5', true],
+		['rejects unallocated space above global unicast', '4000::1', true],
+		['rejects the last address below global unicast', '1fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff', true],
+		['accepts the first global-unicast address', '2000::1', false],
+		['accepts the last global-unicast address', '3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff', false],
+
+		// Not an IPv6 literal at all: fail closed.
+		['rejects the empty string', '', true],
+		['rejects an IPv4 literal handed to the IPv6 check', '1.2.3.4', true],
+		// A public address with junk spliced after it would classify as that public address if the junk were ever allowed through to the URL parser.
+		['rejects characters that could break out of the URL the address is parsed in', '2606:4700:4700::1111]/@x[', true],
+		['rejects a string of valid characters that is not an IPv6 address', '1:2:3', true],
+		['rejects a public address with junk spliced after it (second form)', '2606:4700:4700::1111]/@a', true],
+		['rejects junk spliced around a public address', '1]@[2606:4700:4700::1111', true],
+		['rejects a bracketed literal (callers strip the brackets first)', '[2606:4700:4700::1111]', true],
+		['rejects a leading space', ' 2606:4700:4700::1111', true],
+		['rejects a trailing newline', '2606:4700:4700::1111\n', true],
+
+		// Embedded-IPv4 forms in dotted notation and with extra groups: the canonical form is exactly two hex groups after the prefix.
+		['accepts a dotted IPv4-mapped public address', '::ffff:8.8.8.8', false],
+		['accepts a dotted NAT64 well-known public address', '64:ff9b::8.8.8.8', false],
+		['accepts a dotted IPv4-compatible public address', '::8.8.8.8', false],
+		['rejects an IPv4-compatible address with a third group (not a plain embedded IPv4)', '::808:808:1', true],
+		['rejects a NAT64 well-known prefix with a third group', '64:ff9b::808:808:1', true],
+		['rejects a local-use NAT64 address even when it embeds a public IPv4', '64:ff9b:1::808:808', true],
+		['rejects an IPv4-translated (SIIT) address even when it embeds a public IPv4', '::ffff:0:808:808', true],
+		['classifies an IPv4-mapped address by its octets in order (10.1.8.8 is private)', '::ffff:a01:808', true],
+		['accepts a public global-unicast address that merely ends in an IPv4-looking suffix', '2606:4700::7f00:1', false],
 		['rejects garbage instead of throwing (fail closed)', 'not-an-ipv6-address', true],
 	];
 
@@ -191,6 +263,31 @@ describe('isPrivateOrReservedIpv6', () => {
 			assert.equal(isPrivateOrReservedIpv6(ip), expected);
 		});
 	}
+
+	// Independent of lib.js: plain BigInt arithmetic on the 128-bit value (no BlockList, no string matching), and the
+	// address is handed over fully expanded, which also checks that the classifier normalizes before it decides.
+	const hextets = (...groups) => groups.reduce((acc, g, i) => acc | (BigInt(g) << BigInt(112 - 16 * i)), 0n);
+	const expanded = (n) => Array.from({ length: 8 }, (_, i) => ((n >> BigInt(112 - 16 * i)) & 0xffffn).toString(16)).join(':');
+	const SPECIAL_BLOCKS = [
+		[hextets(0x2001), 23],
+		[hextets(0x2001, 0xdb8), 32],
+		[hextets(0x2002), 16],
+		[hextets(0x2620, 0x4f, 0x8000), 48],
+		[hextets(0x3fff), 20],
+		[hextets(0x3ffe), 16],
+	];
+	const expectedBlocked = (n) => n >> 125n !== 1n || SPECIAL_BLOCKS.some(([base, prefix]) => n >> BigInt(128 - prefix) === base >> BigInt(128 - prefix));
+
+	test('decides every special-purpose block and the global-unicast edges exactly, in expanded and upper-case spelling', () => {
+		const edges = [[1n << 125n, 0], [2n << 125n, 0], ...SPECIAL_BLOCKS];
+		for (const [base, prefix] of edges) {
+			const last = base | ((1n << BigInt(128 - prefix)) - 1n);
+			for (const n of [base - 1n, base, last, last + 1n]) {
+				assert.equal(isPrivateOrReservedIpv6(expanded(n)), expectedBlocked(n), expanded(n));
+				assert.equal(isPrivateOrReservedIpv6(expanded(n).toUpperCase()), expectedBlocked(n), expanded(n));
+			}
+		}
+	});
 });
 
 describe('isPrivateOrReservedAddress', () => {
