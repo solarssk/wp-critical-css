@@ -117,6 +117,7 @@ describe('isPrivateOrReservedIpv4', () => {
 		['rejects a 5-octet string instead of throwing (fail closed)', '1.2.3.4.5', true],
 		['rejects an out-of-range octet instead of throwing (fail closed)', '999.1.1.1', true],
 		['rejects a non-numeric octet instead of throwing (fail closed)', '1.2.3.abc', true],
+		['rejects an octet padded to more than three digits (fail closed), however small its value', '0001.2.3.4', true],
 	];
 
 	for (const [description, ip, expected] of cases) {
@@ -577,6 +578,29 @@ describe('safeFetch', () => {
 		assert.equal(calls, 2);
 	});
 
+	test('follows up to 5 redirects and refuses the 6th', async () => {
+		const chain = (redirects) => {
+			let calls = 0;
+			const fetchImpl = async () => {
+				calls += 1;
+				return calls <= redirects ? new Response(null, { status: 302, headers: { location: `https://example.com/hop${calls}` } }) : new Response('done', { status: 200 });
+			};
+			return { fetchImpl, calls: () => calls };
+		};
+		const five = chain(5);
+		assert.equal((await safeFetch('https://example.com/start', { lookup: publicLookup, fetchImpl: five.fetchImpl })).text, 'done');
+		assert.equal(five.calls(), 6);
+		const six = chain(6);
+		await assert.rejects(() => safeFetch('https://example.com/start', { lookup: publicLookup, fetchImpl: six.fetchImpl }), /too many redirects/);
+		assert.equal(six.calls(), 6);
+	});
+
+	test('expectedHostname is compared to the hostname, so another port on the same host is still on-site', async () => {
+		const fetchImpl = async () => new Response('ok', { status: 200 });
+		const result = await safeFetch('https://example.com:8443/x', { expectedHostname: 'example.com', lookup: publicLookup, fetchImpl });
+		assert.equal(result.text, 'ok');
+	});
+
 	test('re-validates every redirect hop and refuses one resolving to a private address', async () => {
 		const lookup = async (hostname) =>
 			hostname === 'internal.example.com' ? [{ address: '10.0.0.5', family: 4 }] : [{ address: '93.184.216.34', family: 4 }];
@@ -718,6 +742,16 @@ describe('isMediaQueryApplicable', () => {
 		['(max-width: 5in)', DESKTOP, false, 'in unit (5in = 480px) is entirely below the desktop range - dropped'],
 		['(max-width: 900pt)', DESKTOP, true, 'pt unit (900pt = 64800px per css-mediaquery\'s own, non-standard pt handling) overlaps the desktop range - kept'],
 		['(max-width: 10pc)', DESKTOP, false, 'pc unit (10pc = 60px) is entirely below the desktop range - dropped'],
+		// Right at the 783px boundary, where a wrong conversion factor flips the verdict (rows far from it cannot tell 72 from 96 px per inch).
+		['(max-width: 9in)', DESKTOP, true, 'in unit just above the desktop boundary (9in = 864px) - kept'],
+		['(max-width: 8in)', DESKTOP, false, 'in unit just below it (8in = 768px) - dropped'],
+		['(max-width: 49em)', DESKTOP, true, 'em unit just above the boundary (49em = 784px) - kept'],
+		['(max-width: 131pc)', DESKTOP, true, 'pc unit just above the boundary (131pc = 786px) - kept'],
+		['(max-width: 130pc)', DESKTOP, false, 'pc unit just below it (130pc = 780px) - dropped'],
+		['(max-width: 21cm)', DESKTOP, true, 'cm unit just above the boundary (21cm ~= 794px) - kept'],
+		['(max-width: 20cm)', DESKTOP, false, 'cm unit just below it (20cm ~= 756px) - dropped'],
+		['(max-width: 210mm)', DESKTOP, true, 'mm unit just above the boundary (210mm ~= 794px) - kept'],
+		['(max-width: 200mm)', DESKTOP, false, 'mm unit just below it (200mm ~= 756px) - dropped'],
 
 		// A bare `width: Npx` (no min-/max- modifier) is an exact-match
 		// feature - rare in real CSS but syntactically valid - pinning both
@@ -883,6 +917,16 @@ describe('createJobQueue', () => {
 		assert.equal(queue.add('b'), 'queued');
 		assert.equal(queue.add('b'), 'duplicate');
 		assert.equal(queue.length, 1);
+	});
+
+	test('reports a duplicate for any waiting job, not only the most recently added one', () => {
+		const { handle } = controllableHandler();
+		const queue = createJobQueue({ maxLength: 5, handle, logger: fakeLogger() });
+		queue.add('running');
+		queue.add('b');
+		queue.add('c');
+		assert.equal(queue.add('b'), 'duplicate');
+		assert.equal(queue.length, 2);
 	});
 
 	test('queues a job again while its own earlier run is in flight, since it is no longer waiting', () => {
