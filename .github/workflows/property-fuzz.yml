@@ -1,0 +1,60 @@
+name: Property fuzzing
+
+# Weekly exploratory run of service/lib.property.test.js: the same fast-check
+# properties that run inside `npm test` on every PR, but with a random seed and
+# far more runs. The PR run uses a fixed seed on purpose (a required check must
+# not turn red on a fresh random draw), so it is a regression net; this is where
+# new inputs actually get explored. A failure prints the seed and a shrunk
+# counterexample - replay it locally with
+#   cd service && FC_SEED=<seed> FC_NUM_RUNS=<n> node --test lib.property.test.js
+# Not a merge gate and not a required check.
+on:
+  schedule:
+    - cron: "30 4 * * 0" # Sunday, offset from the Monday codeql/publish/semgrep/php-nightly runs and Wednesday's scorecard
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per property (FC_NUM_RUNS)"
+        required: false
+        default: "1000000"
+
+permissions: {}
+
+# One group per invocation, on purpose: a group holds at most one running AND one pending run, and a
+# third arrival REPLACES the pending one, so a shared key would silently drop a scheduled run or a
+# manually requested run count (see AGENTS.md, compounding rules). Every run here is independent
+# (its own random seed, read-only, ~4 minutes), so overlapping is harmless and nothing is discarded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  property-fuzz:
+    name: Property fuzz (fast-check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: service
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: service/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Fuzz lib.js properties
+        env:
+          FC_SEED: random
+          # Passed through env:, never interpolated into the script (zizmor: template-injection).
+          FC_NUM_RUNS: ${{ inputs.runs || '1000000' }}
+        run: node --test --test-reporter=spec lib.property.test.js

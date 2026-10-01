@@ -10,6 +10,8 @@
   &nbsp;
   <a href="https://sonarcloud.io/summary/new_code?id=solarssk_wp-critical-css"><img src="https://sonarcloud.io/api/project_badges/measure?project=solarssk_wp-critical-css&metric=alert_status" alt="SonarCloud Quality Gate"></a>
   &nbsp;
+  <a href="https://securityscorecards.dev/viewer/?uri=github.com/solarssk/wp-critical-css"><img src="https://api.securityscorecards.dev/projects/github.com/solarssk/wp-critical-css/badge" alt="OpenSSF Scorecard"></a>
+  &nbsp;
   <a href="https://github.com/solarssk/wp-critical-css/releases"><img src="https://img.shields.io/github/v/tag/solarssk/wp-critical-css?sort=semver&label=release&color=066fd1" alt="release"></a>
   &nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
@@ -109,7 +111,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough. In short:
 
 1. Configure `.env` (copy from `.env.example`) and set the matching `WPCC_SHARED_SECRET` in `wp-config.php`.
 2. Run the container - published image (GHCR or Docker Hub), build-from-repo, or local build. See `docker-compose.example.yml`.
-3. Install the **WP Critical CSS** plugin: download `wp-critical-css-vX.Y.Z.zip` from a [release](https://github.com/solarssk/wp-critical-css/releases), then in wp-admin go to `Plugins` → `Add New Plugin` → `Upload Plugin` and activate. No server file access needed.
+3. Install the **WP Critical CSS** plugin: download `wp-critical-css-X.Y.Z.zip` from a [release](https://github.com/solarssk/wp-critical-css/releases), then in wp-admin go to `Plugins` → `Add New Plugin` → `Upload Plugin` and activate. No server file access needed.
 
 ## Repo layout
 

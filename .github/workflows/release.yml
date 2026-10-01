@@ -56,9 +56,10 @@ jobs:
     runs-on: ubuntu-latest
     # Generous: this job can block on "Wait for both publish workflows to
     # succeed" below for as long as those workflows' own job timeouts allow
-    # (publish-container.yml: 25m, publish-plugin.yml: 10m) plus time spent
-    # locating each dispatched run, sequentially.
-    timeout-minutes: 45
+    # (publish-container.yml: 25m, publish-plugin.yml: 25m) plus up to 5m
+    # locating each dispatched run, sequentially - i.e. a few minutes of
+    # earlier steps + 2 x (5m + 25m) = about 62m, hence 70m.
+    timeout-minutes: 70
     permissions:
       contents: write
       actions: write
