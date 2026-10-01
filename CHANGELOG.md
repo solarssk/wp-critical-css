@@ -15,6 +15,10 @@ All notable changes to this project are documented here. Format based on
 
 - **A render job that threw `null` or `undefined` could crash the whole service.** The queue worker's failure handler read `err.message`, which is itself a `TypeError` for those two values; that escaped as an unhandled rejection and terminated the process, so the URLs still waiting in the in-memory queue were dropped and `/health` and `/generate` refused connections until the container restarted (automatically, under the example compose file's `restart: always`). The queue now lives in `createJobQueue()` in `service/lib.js` (covered by unit tests), the failure text comes from a helper that never throws, and the worker's state is reset in a `finally`. This is a defensive fix: no code path in the current render stack (`critical`, `penthouse-esm`) was found that throws either value; the crash was reproduced on the real `server.js` (exit code 1) by stubbing the render to throw `null`. A thrown string used to be logged as `undefined` and now appears as text.
 
+### Added
+
+- **The WordPress plugin zip is now signed with a keyless Sigstore signature, on a best-effort basis.** `publish-plugin.yml` signs `wp-critical-css-0.2.7.zip` after it is published and attaches `wp-critical-css-0.2.7.zip.sigstore.json` to this release; the `cosign verify-blob` command in [section 5 of docs/DEPLOYMENT.md](https://github.com/solarssk/wp-critical-css/blob/v0.2.7/docs/DEPLOYMENT.md#5-install-the-plugin) checks it. If Sigstore is unreachable during a release the zip is still published without the signature, so a release with no `.sigstore.json` asset is unsigned. Earlier releases are unsigned, and the git tags themselves are not signed.
+
 ### Changed
 
 - **The bundled Chrome moves from 152 to 154.** The Puppeteer base image goes from `25.10.0` to `25.12.0` together with the `puppeteer` dependency (they must match, or the image cannot find its Chrome), and `postcss` from `^8.5.26` to `^8.5.28`.
