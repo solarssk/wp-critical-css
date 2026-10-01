@@ -43,9 +43,13 @@ concurrency:
 jobs:
   build-zip:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 10 min was the whole budget before signing (the job itself takes seconds). The fail-open signing steps can use
+    # 14 more in the worst case (2+2+3+3+2+2), and a job-level timeout is NOT absorbed by continue-on-error, so this
+    # limit has to cover both: 10 + 14, plus a minute of margin.
+    timeout-minutes: 25
     permissions:
       contents: write
+      id-token: write # OIDC token for keyless Sigstore signing (cosign)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -135,6 +139,7 @@ jobs:
       #
       # Tries create first and falls back to upload on failure, rather than checking `gh release view` beforehand - both this workflow and publish-container.yml run from the same tag push, so a genuine race is possible: both could see "no release yet" and both then call `gh release create`, and that command has no upsert option - the loser would otherwise exit here under `set -e` with its own asset never attached. Falling back to upload on any create failure (not just a pre-checked "already exists") handles that race without needing to tell the two workflows apart or add locking.
       - name: Create or update the GitHub Release with the plugin zip
+        id: create-release
         if: steps.resolve.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -149,4 +154,113 @@ jobs:
           else
             echo "release create failed - assuming a concurrent run (publish-container.yml, or a retry of this workflow) won the race and already created $TAG; retrying as an upload instead."
             gh release upload "$TAG" "$ZIP" --repo "${{ github.repository }}" --clobber
+          fi
+
+      # ---- Keyless Sigstore signature for the plugin zip ---------------------------------------
+      # Runs AFTER the zip is already on the GitHub Release (step above): a Sigstore outage or a bug
+      # in these steps can never stop the zip from being published. Every step is continue-on-error
+      # with its own timeout-minutes (a job-level timeout is not caught by continue-on-error), so the
+      # run stays green - release.yml waits on this run with `gh run watch --exit-status` and would
+      # otherwise leave the milestone open and push the maintainer towards re-dispatching BOTH publish
+      # workflows for what is only a missing signature. "Report signing status" makes any failure
+      # loud (::warning:: + run summary). Signing also runs on publish=false dispatches so a dry run
+      # exercises cosign + OIDC + Fulcio + Rekor for real; only attaching needs publish=true.
+      - name: Drop a signature left by an earlier run of this tag
+        id: drop
+        if: steps.resolve.outputs.publish == 'true'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          SIG_NAME: wp-critical-css-${{ steps.resolve.outputs.version }}.zip.sigstore.json
+        run: |
+          set -euo pipefail
+          # The zip is not byte-reproducible and the step above re-uploads it with --clobber on a
+          # re-publish, so a signature from an earlier run would no longer verify against it.
+          # Captured first, not piped into grep -q: under pipefail grep's early exit can SIGPIPE gh.
+          EXISTING="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          if grep -qxF "$SIG_NAME" <<<"$EXISTING"; then
+            gh release delete-asset "$TAG" "$SIG_NAME" --repo "$GITHUB_REPOSITORY" --yes
+          fi
+
+      - name: Install cosign
+        id: cosign
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign plugin zip (keyless) and self-verify
+        id: sign
+        if: steps.cosign.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          ZIP: wordpress-plugin/wp-critical-css-${{ steps.resolve.outputs.version }}.zip
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle "${ZIP}.sigstore.json" "$ZIP"
+          # Same constraints DEPLOYMENT.md gives downloaders; identity = this run's own workflow ref.
+          cosign verify-blob \
+            --bundle "${ZIP}.sigstore.json" \
+            --certificate-identity "https://github.com/${GITHUB_WORKFLOW_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$ZIP"
+
+      - name: Attach the signature to the GitHub Release
+        id: attach
+        if: steps.resolve.outputs.publish == 'true' && steps.sign.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          SIG: wordpress-plugin/wp-critical-css-${{ steps.resolve.outputs.version }}.zip.sigstore.json
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" "$SIG" --repo "$GITHUB_REPOSITORY" --clobber
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() && steps.sign.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        with:
+          name: wp-critical-css-plugin-signature
+          path: wordpress-plugin/wp-critical-css-*.zip.sigstore.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Report signing status
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          PUBLISH: ${{ steps.resolve.outputs.publish }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          RELEASE_OUTCOME: ${{ steps.create-release.outcome }}
+          DROP_OUTCOME: ${{ steps.drop.outcome }}
+          COSIGN_OUTCOME: ${{ steps.cosign.outcome }}
+          SIGN_OUTCOME: ${{ steps.sign.outcome }}
+          ATTACH_OUTCOME: ${{ steps.attach.outcome }}
+        run: |
+          {
+            echo "### Plugin zip signing"
+            echo ""
+            echo "| Step | Outcome |"
+            echo "|---|---|"
+            echo "| Publish the zip to the Release | ${RELEASE_OUTCOME} |"
+            echo "| Drop a stale signature | ${DROP_OUTCOME} |"
+            echo "| Install cosign | ${COSIGN_OUTCOME} |"
+            echo "| Sign + self-verify zip | ${SIGN_OUTCOME} |"
+            echo "| Attach to Release | ${ATTACH_OUTCOME} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PUBLISH" = true ]; then
+            if [ "$RELEASE_OUTCOME" = success ] && [ "$ATTACH_OUTCOME" != success ]; then
+              echo "::warning title=Plugin zip on the Release is UNSIGNED::${TAG}'s zip was published but its signature was not attached (drop=${DROP_OUTCOME}, cosign=${COSIGN_OUTCOME}, sign=${SIGN_OUTCOME}, attach=${ATTACH_OUTCOME}). Retry with: gh workflow run publish-plugin.yml --ref ${TAG} -f ref=${TAG} (the form release.yml uses, so the signature identity stays @refs/tags/${TAG}; a dispatch from main signs as @refs/heads/main, which the DEPLOYMENT.md verify command rejects)."
+            fi
+            if [ "$DROP_OUTCOME" = failure ] && [ "$ATTACH_OUTCOME" != success ]; then
+              echo "::warning title=A stale signature may still be on the Release::Dropping the signature of an earlier run of ${TAG} failed and no new one was attached, so a wp-critical-css-*.zip.sigstore.json from that earlier run may still be there and will not verify against this zip. Check: gh release view ${TAG} --json assets --jq '.assets[].name'; delete the .sigstore.json asset if it is present."
+            fi
+          elif [ "$SIGN_OUTCOME" != success ]; then
+            echo "::warning title=Signing dry run did not sign::cosign=${COSIGN_OUTCOME}, sign=${SIGN_OUTCOME}. Nothing was published or attached (publish=false)."
           fi

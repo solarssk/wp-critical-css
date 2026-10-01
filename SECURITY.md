@@ -6,7 +6,7 @@ Please report security issues privately via [GitHub Security Advisories](https:/
 
 ## Supported versions
 
-Only the latest tagged release is supported. Deploy from a signed semver tag (`vX.Y.Z`), not `main`.
+Only the latest tagged release is supported. Deploy from a tagged release (`vX.Y.Z`), not `main`. The tags themselves are not signed; from 0.2.7 on the plugin zip is signed with a keyless Sigstore signature on a best-effort basis (a release with no `.sigstore.json` asset is unsigned; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#5-install-the-plugin) for how to check), and the container image has signed build provenance.
 
 ## Security controls
 

@@ -111,7 +111,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough. In short:
 
 1. Configure `.env` (copy from `.env.example`) and set the matching `WPCC_SHARED_SECRET` in `wp-config.php`.
 2. Run the container - published image (GHCR or Docker Hub), build-from-repo, or local build. See `docker-compose.example.yml`.
-3. Install the **WP Critical CSS** plugin: download `wp-critical-css-vX.Y.Z.zip` from a [release](https://github.com/solarssk/wp-critical-css/releases), then in wp-admin go to `Plugins` → `Add New Plugin` → `Upload Plugin` and activate. No server file access needed.
+3. Install the **WP Critical CSS** plugin: download `wp-critical-css-X.Y.Z.zip` from a [release](https://github.com/solarssk/wp-critical-css/releases), then in wp-admin go to `Plugins` → `Add New Plugin` → `Upload Plugin` and activate. No server file access needed.
 
 ## Repo layout
 
