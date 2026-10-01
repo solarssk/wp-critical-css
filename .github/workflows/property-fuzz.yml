@@ -20,8 +20,12 @@ on:
 
 permissions: {}
 
+# One group per invocation, on purpose: a group holds at most one running AND one pending run, and a
+# third arrival REPLACES the pending one, so a shared key would silently drop a scheduled run or a
+# manually requested run count (see AGENTS.md, compounding rules). Every run here is independent
+# (its own random seed, read-only, ~4 minutes), so overlapping is harmless and nothing is discarded.
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
