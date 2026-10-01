@@ -1,0 +1,38 @@
+name: Chrome freshness
+
+# Chrome renders untrusted pages here with its sandbox off, and it is the one
+# component Trivy, npm audit and Dependabot cannot see. service/Dockerfile pins
+# it (PUPPETEER_CHROME_VERSION) to Chrome for Testing's Stable channel, because
+# puppeteer's own pin trails Stable's security fixes - but a pin does not update
+# itself. This daily check fails when a Stable build newer than the pin has
+# been out for more than 7 days (scripts/check-chrome-freshness.sh; an
+# upstream outage only warns, an API that changed shape fails). A red run means:
+# bump the pin in service/Dockerfile, let CI render with it, release - the fix
+# only reaches users with a release. Not a merge gate and not a required check.
+on:
+  schedule:
+    - cron: "17 7 * * *" # daily, off the :00 minute that GitHub's scheduler delays or drops under load
+  workflow_dispatch:
+
+permissions: {}
+
+# One group per invocation, on purpose (see property-fuzz.yml and AGENTS.md,
+# compounding rules): a shared key would let a third arrival replace a pending run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  chrome-freshness:
+    name: Pinned Chrome vs Stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare the pinned Chrome with Stable
+        run: bash scripts/check-chrome-freshness.sh

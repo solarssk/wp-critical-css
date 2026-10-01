@@ -91,7 +91,7 @@ Two independent triggers feed the same queue - editing a post regenerates just t
 | 🟢 | **Service runtime** | Node.js 24 (ESM), Express 5, node-cron 4 |
 | 🌐 | **Rendering** | Puppeteer + [`critical`](https://www.npmjs.com/package/critical) (via its `penthouse-esm` dependency) |
 | 🐘 | **WordPress plugin** | PHP 7.4+, WordPress 6.0+ - REST receiver, `save_post` hook, WP-Cron trigger |
-| 🐳 | **Container** | `ghcr.io/puppeteer/puppeteer` base, pinned by digest - published to GHCR and mirrored to Docker Hub |
+| 🐳 | **Container** | `ghcr.io/puppeteer/puppeteer` base, pinned by digest, with Chrome pinned to a recent Stable build (checked daily) - published to GHCR and mirrored to Docker Hub |
 | 🛡️ | **CI/CD security** | CodeQL, Semgrep, Trivy (CRITICAL gate + weekly re-scan of the published image), SonarCloud, gitleaks, workflow linting (actionlint, zizmor), OpenSSF Scorecard, SBOM + signed build provenance |
 
 ## Documentation

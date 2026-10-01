@@ -1,5 +1,6 @@
-# Pinned by digest, not just tag, so downstream users and CI get a
-# byte-identical Chrome build. Dependabot's docker ecosystem entry
+# Pinned by digest, not just tag, so downstream users and CI get
+# byte-identical base layers (OS, libraries, Node; the Chrome that runs is
+# pinned separately, see below). Dependabot's docker ecosystem entry
 # (see /.github/dependabot.yml) tracks and PRs digest bumps for this line -
 # but ONLY this line: it can't also bump service/package.json's own
 # puppeteer dependency in the same PR, and this base image's tag/digest is
@@ -10,7 +11,16 @@
 # package-lock.json on that PR's branch still had puppeteer-core@25.9.0
 # locked, whose own installer registers a DIFFERENT Chrome build than what
 # this newer base image ships. Bump both together, always - see the
-# puppeteer dependency in package.json just below.
+# puppeteer dependency in package.json just below. (Since Chrome is pinned
+# explicitly below, a mismatch no longer surfaces as "Could not find
+# Chrome", and CI no longer detects npm/base skew on its own: the two should
+# still move together for the system libraries and Node.)
+#
+# The Chrome that actually runs is NOT this image's: it is pinned further
+# down (PUPPETEER_CHROME_VERSION). puppeteer pins the Chrome it was released
+# with, which can trail Chrome Stable's security fixes, and Chrome is the
+# one component here that executes untrusted pages' JavaScript with its
+# sandbox off - while Trivy, npm audit and Dependabot cannot see it.
 FROM ghcr.io/puppeteer/puppeteer:25.12.0@sha256:60ad89b1d8ca14877120250b9c96694dd19a4eda5890fdbad64f4740c6a27361
 
 USER root
@@ -104,13 +114,10 @@ ENV NODE_ENV=production
 # shipping silently broken.
 #
 # `unzip` is deliberately NOT purged, despite nothing in this Dockerfile
-# ever invoking it directly: `critical`'s own puppeteer dependency version
-# (resolved by npm, independent of whatever Chrome build happens to be
-# pre-cached in this base image) can require downloading and extracting a
-# different Chrome/chrome-headless-shell build at `npm ci` time below -
-# `@puppeteer/browsers`' extractor needs a real `unzip` binary on Linux and
-# fails outright without one. This was purged once already and broke every
-# from-scratch build (a `docker build --no-cache` reproduces it) - CI's
+# ever invoking it directly: the pinned Chrome (below) is downloaded and
+# extracted in the npm RUN below, and `@puppeteer/browsers`' extractor needs
+# a real `unzip` binary on Linux and fails outright without one. This was
+# purged once already and broke every from-scratch build (a `docker build --no-cache` reproduces it) - CI's
 # layer cache silently kept passing on a stale pre-purge layer the whole
 # time, which is exactly why this needs a comment, not just a diff. Same
 # for `wget`: the HEALTHCHECK at the bottom runs it.
@@ -160,16 +167,61 @@ RUN apt-get update \
 		git mercurial openssh-client curl libcurl4 libcurl3-gnutls \
 	&& rm -rf /var/lib/apt/lists/*
 
+# Chrome. Pinned HERE, to Chrome for Testing's Stable channel
+# (https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json),
+# not to the build puppeteer-core was released with (154.0.8037.57 for
+# puppeteer 25.12.0: Stable when puppeteer released it, but 32 security
+# fixes behind Stable by the time this was pinned, per Chrome's release
+# notes). PUPPETEER_CHROME_VERSION is puppeteer's own documented setting
+# (Configuration `chrome.version`): it wins over the build ID baked into
+# puppeteer-core and is read by BOTH `install.mjs` below and the launch-time
+# lookup, so it has to be ENV, not RUN-local. PUPPETEER_CACHE_DIR is the
+# directory pptruser reads at runtime; `install.mjs` runs as root and would
+# otherwise fill /root/.cache/puppeteer, a second copy nothing ever reads.
+# The headless shell is never launched (`puppeteer.launch()` without a
+# `headless` option, which is what server.js and penthouse-esm call, runs the
+# full chrome), so it is not downloaded. linux/amd64 only, like the published
+# image.
+#
+# Dependabot cannot see this line (neither its npm nor its docker ecosystem
+# parses it): .github/workflows/chrome-freshness.yml checks it against Stable
+# every day and fails when a Stable build newer than the pin has been out for
+# more than 7 days - then bump it by hand, let CI render with it, release.
+# Keep it alone on its own line: scripts/check-chrome-freshness.sh and the
+# Chrome assertion in ci.yml parse exactly that.
+#
+# Trust: unless the base image already ships that exact build, the pinned
+# Chrome is downloaded at build time from Chrome for Testing over TLS, which
+# publishes no checksum, so nothing but TLS vouches for the bytes (the build
+# log prints the binary's sha256 for the record). Before this pin the Chrome
+# that ran was the base image's digest-pinned copy. A failed download now
+# fails the build instead of being ignored: builds need egress to Chrome for
+# Testing's storage (every publish downloads it again), and a transient
+# failure is fixed by re-running.
+ENV PUPPETEER_CHROME_VERSION=154.0.8037.92
+ENV PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer \
+	PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD=true
+
 COPY --chown=pptruser:pptruser package.json package-lock.json ./
 # --ignore-scripts blocks install-time scripts for every dependency
 # (including transitive ones we haven't individually audited) except the
 # one we deliberately run ourselves right after: puppeteer's own
-# postinstall does more than "download Chrome if missing" - it registers
-# the browser at the exact cache path its runtime later reads from, so
-# skipping it entirely (tried first) breaks Chrome discovery even with a
-# copy already present from the base image. Running only that one script,
-# explicitly, gets the same result with every other dependency's install
-# script blocked.
+# install.mjs is what downloads the pinned Chrome (above) into
+# PUPPETEER_CACHE_DIR. Running only that one script, explicitly, gets the
+# download with every other dependency's install script blocked. (Its log
+# line "Skipping Chrome download as instructed" is puppeteer mislabelling the
+# headless-shell skip; the Chrome download line follows it.)
+#
+# install.mjs exits 0 even when its download FAILED ("Browser download
+# failed ... 404", exit code 0 - measured), so the checks after it are what
+# keep a failed download from shipping an image with the wrong or no Chrome:
+# the newest Chrome in the cache must be the pin (this also fails the build
+# when a base-image bump brings a Chrome NEWER than the pin - bump the pin
+# then, or drop it as AGENTS.md describes, never ship the older one); then
+# every other Chrome and the
+# headless shell are removed from the final filesystem (the base image's
+# layer still carries the old bytes); and the pinned binary must run and
+# report the pinned version.
 #
 # npm's own bundled node_modules (under /usr/local/lib/node_modules/npm)
 # ships its own vendored dependencies, independent of anything above -
@@ -178,8 +230,17 @@ COPY --chown=pptruser:pptruser package.json package-lock.json ./
 # again after this step. Nothing at runtime needs `npm`/`npx` - only
 # `node` - so remove them once install is done rather than ship a CVE
 # with no code path to it.
-RUN npm ci --omit=dev --ignore-scripts \
+RUN : "${PUPPETEER_CHROME_VERSION:?PUPPETEER_CHROME_VERSION must be set to the pinned Chrome build}" \
+	&& npm ci --omit=dev --ignore-scripts \
 	&& node node_modules/puppeteer/install.mjs \
+	&& { [ "$(find "$PUPPETEER_CACHE_DIR/chrome" -mindepth 1 -maxdepth 1 -printf '%f\n' | sed 's/^linux-//' | sort -V | tail -n 1)" = "$PUPPETEER_CHROME_VERSION" ] \
+		|| { echo "ERROR: the newest Chrome in $PUPPETEER_CACHE_DIR/chrome is not the pinned $PUPPETEER_CHROME_VERSION (the download failed, the cache layout changed, or the base image ships a newer Chrome): fix or bump PUPPETEER_CHROME_VERSION" >&2; exit 1; }; } \
+	&& find "$PUPPETEER_CACHE_DIR/chrome" -mindepth 1 -maxdepth 1 ! -name "linux-$PUPPETEER_CHROME_VERSION" -exec rm -rf {} + \
+	&& rm -rf "$PUPPETEER_CACHE_DIR/chrome-headless-shell" \
+	&& CHROME_BIN="$PUPPETEER_CACHE_DIR/chrome/linux-$PUPPETEER_CHROME_VERSION/chrome-linux64/chrome" \
+	&& { "$CHROME_BIN" --version | grep -F "$PUPPETEER_CHROME_VERSION" \
+		|| { echo "ERROR: the pinned Chrome ($CHROME_BIN) did not run or did not report $PUPPETEER_CHROME_VERSION" >&2; exit 1; }; } \
+	&& sha256sum "$CHROME_BIN" \
 	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --chown=pptruser:pptruser server.js lib.js ./
 
