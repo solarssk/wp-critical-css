@@ -43,7 +43,10 @@ concurrency:
 jobs:
   build-zip:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 10 min was the whole budget before signing (the job itself takes seconds). The fail-open signing steps can use
+    # 14 more in the worst case (2+2+3+3+2+2), and a job-level timeout is NOT absorbed by continue-on-error, so this
+    # limit has to cover both: 10 + 14, plus a minute of margin.
+    timeout-minutes: 25
     permissions:
       contents: write
       id-token: write # OIDC token for keyless Sigstore signing (cosign)
