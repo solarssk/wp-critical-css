@@ -74,7 +74,12 @@
 #                   Leave it empty if your resolvers are public. Not every
 #                   setup needs it (on Docker Desktop the host's resolver was
 #                   not affected); the check under "Verify" below shows
-#                   whether DNS works.
+#                   whether DNS works. ON AZURE the VM's default resolver is
+#                   168.63.129.16, which these rules refuse like any other
+#                   address of that kind: set EGRESS_ALLOW_DNS=168.63.129.16
+#                   there (the code-level check of the same address, in
+#                   service/lib.js, only judges where a page points, not which
+#                   resolver the host uses).
 #
 # Restarts
 # --------
@@ -149,7 +154,7 @@ services:
         die() { echo "egress-guard: ERROR: $$*" >&2; exit 1; }
 
         # Same ranges as BLOCKED_IPV4_CIDRS in service/lib.js (the code-level layer).
-        V4_BLOCK='0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4'
+        V4_BLOCK='0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 168.63.129.16/32 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4'
         # Same special-purpose blocks inside 2000::/3 as SPECIAL_PURPOSE_IPV6 in service/lib.js.
         V6_BLOCK='2001::/23 2001:db8::/32 2002::/16 2620:4f:8000::/48 3fff::/20 3ffe::/16'
 
