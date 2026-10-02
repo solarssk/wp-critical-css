@@ -21,7 +21,7 @@ updates:
       # penthouse/Puppeteer (it launches its own Playwright Chromium with a
       # hard-coded --no-sandbox) and pages are fetched with a bare fetch(), so
       # neither the private/reserved-address policy nor the Chromium request
-      # interception in service/server.js has anywhere to attach. #91 failed the
+      # interception in service/ssrf-chromium.js has anywhere to attach. #91 failed the
       # Docker smoke test at the very first import. Moving to v9 needs its own
       # design (SSRF model included), not a Dependabot PR. Minor and patch
       # updates of 8.x and security updates are not affected by this rule;

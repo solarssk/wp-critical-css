@@ -30,7 +30,7 @@ ENV NODE_ENV=production
 # runtime: a C/C++
 # toolchain, 46 -dev header packages, ImageMagick, and git/mercurial/curl/ssh.
 # None of it is exercised here (nothing compiles anything: `npm ci` below
-# runs with --ignore-scripts, and server.js/lib.js spawn no child
+# runs with --ignore-scripts, and server.js/lib.js/ssrf-chromium.js spawn no child
 # processes), yet Trivy flags it. Measured on the 25.12.0 base (Trivy 0.74.0,
 # vulnerability DB of 2026-09-30, --ignore-unfixed, all severities): 732
 # findings, of which 607 are the single package linux-libc-dev (kernel
@@ -181,7 +181,7 @@ COPY --chown=pptruser:pptruser package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts \
 	&& node node_modules/puppeteer/install.mjs \
 	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-COPY --chown=pptruser:pptruser server.js lib.js ./
+COPY --chown=pptruser:pptruser server.js lib.js ssrf-chromium.js ./
 
 USER pptruser
 

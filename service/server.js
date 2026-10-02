@@ -35,12 +35,12 @@ import {
 	extractUrlsFromUrlset,
 	isPrivateOrReservedAddress,
 	isBlockedLiteralAddress,
-	isPrivateOrReservedTarget,
 	safeFetch,
 	stripInapplicableMediaQueries,
 	SERVED_WIDTH_RANGES,
 	createJobQueue,
 } from './lib.js';
+import { JS_OFF_LAUNCH_ARGS, guardBrowser } from './ssrf-chromium.js';
 
 const PORT = process.env.PORT || 3939;
 const SHARED_SECRET = process.env.SHARED_SECRET;
@@ -244,47 +244,6 @@ async function generateAndSubmit(url) {
 }
 
 /**
- * Everything above (ssrfSafeBeforeRequest/ssrfSafeDnsLookup) only guards
- * requests `critical` itself makes via `got` (the top-level page fetch,
- * plus every `<link rel=stylesheet>`/`<link rel=preload>` href it finds).
- * It never touches Chromium's OWN network stack - `critical` hands
- * Puppeteer a local `file://` copy of the fetched page (see
- * docs/SECURITY-CONTROLS.md), but that copy still contains the page's
- * original markup verbatim, so anything Chromium itself resolves while
- * rendering it (an <iframe src="...">, an <img src="...">, a
- * background-image: url(...), a fetch()/XHR the page's own JS makes) is
- * fetched directly by Chromium, completely bypassing every guard above.
- * `<iframe src="http://169.254.169.254/...">` on an otherwise-legitimate
- * allowed page is a real, confirmed example of this.
- *
- * Puppeteer's own `page.setRequestInterception()` is the equivalent
- * mechanism for Chromium's network stack - checked here against the exact
- * same private/reserved-address policy as the `got` path above, applied
- * to every request Chromium itself makes (navigation, subresources,
- * fetch/XHR), not just the top-level document.
- *
- * `penthouse` (the package `critical` uses to drive Puppeteer) already
- * sets up its own request interception by default (to block `.js`
- * requests during critical-CSS extraction) - `blockJSRequests: false`
- * below turns that off so this replaces it outright with one handler that
- * does both: only one interception handler is safe per page, since
- * Puppeteer requires each intercepted request to be resolved (continued/
- * aborted) exactly once.
- *
- * Known residual gap, not fully closable via Puppeteer's own request-
- * interception API: unlike the `got` path (where `dnsLookup` overrides
- * the DNS resolution `got` itself uses to connect, closing the gap
- * completely), this checks the destination via a separate DNS lookup
- * BEFORE calling request.continue() - Chromium then does its own,
- * independent DNS resolution when it actually opens the connection.  A
- * sufficiently fast DNS-rebinding attack between those two lookups could
- * theoretically slip a different address past this check. Operators who
- * need this fully closed should add network-level egress filtering
- * (block RFC1918/link-local destinations at the container/firewall
- * level) - the same mitigation already documented for the stylesheet-href
- * vector's own residual gap.
- */
-/**
  * --no-sandbox/--disable-setuid-sandbox mean Chrome's own internal sandbox
  * never runs - deliberately not the elevated-capability alternative
  * (cap_add: SYS_ADMIN in the container, so Chrome's real sandbox can use
@@ -294,83 +253,9 @@ async function generateAndSubmit(url) {
  * would do nothing for Chrome specifically. Change either side only
  * together with the other, and re-verify with a real render.
  */
-const PUPPETEER_LAUNCH_ARGS = ['--disable-setuid-sandbox', '--no-sandbox', '--ignore-certificate-errors'];
+const PUPPETEER_LAUNCH_ARGS = ['--disable-setuid-sandbox', '--no-sandbox', '--ignore-certificate-errors', ...JS_OFF_LAUNCH_ARGS];
 
 let cachedBrowserPromise = null;
-
-async function isChromiumRequestTargetBlocked(url) {
-	let target;
-	try {
-		target = new URL(url);
-	} catch {
-		return false; // unparseable - not a real network destination (shouldn't happen for a request Chromium itself is making)
-	}
-
-	if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-		return false; // data:, blob:, about:, chrome-error:, etc. - no real network fetch happens for these
-	}
-
-	// Literal-IP-then-DNS-lookup check shared with safeFetch() in lib.js -
-	// see isPrivateOrReservedTarget's own doc comment for the policy and its
-	// one known gap (a DNS-then-connect TOCTOU window, same as everywhere
-	// else in this codebase that can't hook the actual connection's own
-	// resolver).
-	return isPrivateOrReservedTarget(target.hostname);
-}
-
-const ssrfGuardedPages = new WeakSet();
-
-async function setupSsrfSafeRequestInterception(page) {
-	if (ssrfGuardedPages.has(page)) {
-		return;
-	}
-	ssrfGuardedPages.add(page);
-
-	// CDP's Fetch-domain request interception (below) never sees a WebSocket
-	// handshake at all - a structural limitation, not a bug in the handler
-	// below - verified directly: page.on('request') simply never fires for
-	// a page-side `new WebSocket(...)`, so without this a private-network
-	// WebSocket target is a completely unguarded connection. CDP's
-	// Network.setBlockedURLs was tried first and rejected: it does tear the
-	// connection down, but only after the TCP connection and the HTTP
-	// upgrade request have already reached the target - too late for SSRF
-	// purposes (confirmed: the target still received a full request).
-	// Overriding the constructor before any page script runs is what
-	// actually stops the connection from ever being attempted - confirmed
-	// with a real file:// navigation (matching what critical actually hands
-	// Puppeteer), not just page.setContent(), since only a real navigation
-	// exercises evaluateOnNewDocument()'s "runs before the page's own
-	// scripts" guarantee.
-	await page.evaluateOnNewDocument(() => {
-		window.WebSocket = function BlockedWebSocket() {
-			throw new Error('wpcc: WebSocket is disabled during critical CSS extraction');
-		};
-	});
-
-	await page.setRequestInterception(true);
-	page.on('request', async (request) => {
-		try {
-			// Replicates penthouse's own default blockJSRequests behavior,
-			// disabled below (blockJSRequests: false) since this handler now
-			// owns every interception decision for this page - JS execution
-			// during critical-CSS extraction adds nothing critical rendering
-			// needs and only expands what a malicious page could attempt.
-			if (/\.js(\?.*)?$/.test(request.url())) {
-				await request.abort();
-				return;
-			}
-			const blocked = await isChromiumRequestTargetBlocked(request.url());
-			if (blocked) {
-				await request.abort();
-			} else {
-				await request.continue();
-			}
-		} catch {
-			// Already handled (e.g. the page navigated away mid-check) -
-			// nothing more to do.
-		}
-	});
-}
 
 /**
  * Shared by both viewport renders of the SAME url (called via Promise.all
@@ -388,60 +273,32 @@ async function getSsrfSafeBrowser() {
 	if (cachedBrowserPromise) {
 		return cachedBrowserPromise;
 	}
-	cachedBrowserPromise = puppeteer
-		.launch({
-			args: PUPPETEER_LAUNCH_ARGS,
-			ignoreHTTPSErrors: true,
-		})
-		.then(async (browser) => {
-			browser.once('disconnected', () => {
-				cachedBrowserPromise = null;
-			});
-
-			// A freshly launched browser already has at least one open page
-			// (about:blank) before this code ever runs - penthouse's own
-			// page-reuse logic (getOpenBrowserPage() in
-			// penthouse-esm/src/browser.js) hands this exact pre-existing
-			// page out FIRST, before ever calling browser.newPage(), to
-			// whichever of a url's two concurrent viewport jobs asks for a
-			// page first. Confirmed directly: without this explicit pass,
-			// that job's entire render (every subresource, JS execution
-			// included, since blockJSRequests: false also means penthouse
-			// never sets up its own fallback interception either) proceeds
-			// with zero SSRF guarding of any kind - not degraded, none.
-			// 'targetcreated' below only fires for pages created AFTER the
-			// listener is attached, so it can't retroactively cover this
-			// one; it has to be handled explicitly, up front.
-			const existingPages = await browser.pages();
-			await Promise.all(existingPages.map((page) => setupSsrfSafeRequestInterception(page)));
-
-			// Backstop for any OTHER page-creation path this app doesn't
-			// explicitly drive - a page penthouse pulls from its own reuse
-			// pool later, a popup, anything not covered by the pass above or
-			// the newPage() override below. setupSsrfSafeRequestInterception()
-			// is idempotent (a WeakSet guard) specifically so this can safely
-			// overlap with that override - browser.newPage() itself also
-			// fires 'targetcreated', so a page created that way would
-			// otherwise get set up twice.
-			browser.on('targetcreated', async (target) => {
-				if (target.type() !== 'page') {
-					return;
-				}
-				const page = await target.page();
-				if (page) {
-					await setupSsrfSafeRequestInterception(page);
-				}
-			});
-
-			const originalNewPage = browser.newPage.bind(browser);
-			browser.newPage = async (...args) => {
-				const page = await originalNewPage(...args);
-				await setupSsrfSafeRequestInterception(page);
-				return page;
-			};
-			return browser;
-		});
+	cachedBrowserPromise = launchGuardedBrowser();
 	return cachedBrowserPromise;
+}
+
+async function launchGuardedBrowser() {
+	const browser = await puppeteer.launch({
+		args: PUPPETEER_LAUNCH_ARGS,
+		ignoreHTTPSErrors: true,
+	});
+	browser.once('disconnected', () => {
+		cachedBrowserPromise = null;
+	});
+
+	try {
+		return await guardBrowser(browser);
+	} catch (error) {
+		// A browser whose pages could not be locked down is never used, and
+		// must not stay behind running or cached (closing it also fires
+		// 'disconnected', which drops the cached promise).
+		try {
+			await browser.close();
+		} catch {
+			// already gone
+		}
+		throw error;
+	}
 }
 
 async function generateForViewport(url, dimensions, servedWidthRange) {
@@ -461,6 +318,12 @@ async function generateForViewport(url, dimensions, servedWidthRange) {
 		postcss: [stripInapplicableMediaQueries(servedWidthRange)],
 		penthouse: {
 			timeout: 60000,
+			// One handler owns every interception decision per page
+			// (setupSsrfSafeRequestInterception in ssrf-chromium.js), so
+			// penthouse's own must be off - which ALSO drops its
+			// page.setJavaScriptEnabled(false). That module turns page
+			// JavaScript off itself; ssrf-chromium.test.js and the CI smoke test
+			// fail if it ever stops doing so.
 			blockJSRequests: false,
 			puppeteer: {
 				getBrowser: getSsrfSafeBrowser,
@@ -507,7 +370,7 @@ async function fetchSitemapUrls() {
 	// with none of the SSRF protections the rest of this service already
 	// applies to page/stylesheet fetching (ssrfSafeBeforeRequest/
 	// ssrfSafeDnsLookup) and Chromium's own requests
-	// (isChromiumRequestTargetBlocked). expectedHostname pins every hop -
+	// (isChromiumRequestTargetBlocked in ssrf-chromium.js). expectedHostname pins every hop -
 	// including the top-level fetch - to the sitemap's own host, so even a
 	// compromised/misconfigured SITE_SITEMAP_URL can't redirect this
 	// service somewhere else entirely.

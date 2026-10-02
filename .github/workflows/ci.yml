@@ -208,6 +208,18 @@ jobs:
           console.log('Puppeteer render OK,', css.toString().length, 'bytes of CSS');
           "
 
+      # Page JavaScript must stay OFF while rendering (penthouse's default; a
+      # refactor once dropped it unnoticed), in the page AND in cross-site
+      # frames, which the per-page switch alone does not reach (a Chrome launch
+      # switch does). Unit tests use fakes, so prove it in a real browser through
+      # the same guardBrowser() and launch switches server.js uses, on the page
+      # a fresh browser already has (penthouse uses that one FIRST) and on a
+      # newPage() page, next to a control run in which the scripts must run.
+      - name: Smoke test - page JavaScript stays off during rendering
+        timeout-minutes: 3
+        run: |
+          docker run --rm -i --network none wp-critical-css:ci node --input-type=module - < service/scripts/check-js-off.mjs
+
       - name: Smoke test - HTTP server responds
         run: |
           docker run -d --rm --name wpcc-smoke -p 3939:3939 \

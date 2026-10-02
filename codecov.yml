@@ -9,11 +9,11 @@ coverage:
   status:
     project:
       default:
-        # Relative to the base commit, not a fixed percentage: lib.js (the
-        # only unit-tested file) is already at 100%, while server.js's
-        # Express/Puppeteer wiring is exercised by the separate smoke
-        # tests in ci.yml instead, which don't produce lcov data - a fixed
-        # project-wide target would be measuring the wrong thing.
+        # Relative to the base commit, not a fixed percentage: lib.js and
+        # ssrf-chromium.js (the unit-tested files) are already at 100%, while
+        # server.js's Express/Puppeteer wiring is exercised by the separate
+        # smoke tests in ci.yml instead, which don't produce lcov data - a
+        # fixed project-wide target would be measuring the wrong thing.
         target: auto
         threshold: 1%
     patch:
