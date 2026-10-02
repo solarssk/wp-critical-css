@@ -15,39 +15,39 @@
 // included.
 
 import http from 'node:http';
-import fs from 'node:fs';
 import puppeteer from 'puppeteer';
 import { JS_OFF_LAUNCH_ARGS, guardBrowser } from './ssrf-chromium.js';
 
 const SETTLE_MS = 1500;
 const ran = [];
+// Fixed documents, never built from the request: the frame beacons to /ran?from=<its own name>.
+const beaconPage = (name) => `<!doctype html><title>frame</title><script>new Image().src = '/ran?from=${name}';</script>`;
+const PAGES = { '/iframe': beaconPage('iframe'), '/object': beaconPage('object') };
 const server = http.createServer((req, res) => {
 	if (req.url.startsWith('/ran')) {
 		ran.push(req.url);
 		res.writeHead(200, { 'content-type': 'image/gif' });
 		return res.end();
 	}
-	res.writeHead(200, { 'content-type': 'text/html' });
-	res.end(`<!doctype html><title>frame</title><script>new Image().src = '/ran?from=${req.url.slice(1)}';</script>`);
+	res.writeHead(PAGES[req.url] ? 200 : 404, { 'content-type': 'text/html' });
+	res.end(PAGES[req.url] ?? '');
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-const base = `http://127.0.0.1:${server.address().port}`;
-
-// A file:// top page, like the copy `critical` hands to penthouse, so that every
-// http:// frame in it is cross-site.
-fs.writeFileSync(
-	'/tmp/check-js-off.html',
-	`<!doctype html><title>off</title>
-<iframe src="${base}/iframe"></iframe>
-<object data="${base}/object" type="text/html"></object>
-<script>document.title = 'JS ran'; new Image().src = '${base}/ran?from=top';</script>`,
-);
+// The top page is served as http://localhost:<port>/top and its frames are http://127.0.0.1:<port>/...:
+// different sites, so the frames are cross-site and out-of-process, as they are in the file:// copy
+// `critical` hands to penthouse (a file:// page would need a file in a shared temp directory).
+const port = server.address().port;
+const TOP = `<!doctype html><title>off</title>
+<iframe src="http://127.0.0.1:${port}/iframe"></iframe>
+<object data="http://127.0.0.1:${port}/object" type="text/html"></object>
+<script>document.title = 'JS ran'; new Image().src = 'http://127.0.0.1:${port}/ran?from=top';</script>`;
+PAGES['/top'] = TOP;
 
 async function visit(page) {
 	ran.length = 0;
-	await page.goto('file:///tmp/check-js-off.html', { waitUntil: 'load' });
+	await page.goto(`http://localhost:${port}/top`, { waitUntil: 'load' });
 	await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
-	return { title: await page.title(), scripts: [...ran].sort() };
+	return { title: await page.title(), scripts: [...ran].sort((a, b) => a.localeCompare(b)) };
 }
 
 const noSandbox = ['--no-sandbox', '--disable-setuid-sandbox'];

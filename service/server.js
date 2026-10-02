@@ -273,26 +273,32 @@ async function getSsrfSafeBrowser() {
 	if (cachedBrowserPromise) {
 		return cachedBrowserPromise;
 	}
-	cachedBrowserPromise = puppeteer
-		.launch({
-			args: PUPPETEER_LAUNCH_ARGS,
-			ignoreHTTPSErrors: true,
-		})
-		.then(async (browser) => {
-			browser.once('disconnected', () => {
-				cachedBrowserPromise = null;
-			});
-
-			try {
-				return await guardBrowser(browser);
-			} catch (error) {
-				// A browser whose pages could not be locked down is never used,
-				// and must not stay behind running or cached.
-				await browser.close().catch(() => {});
-				throw error;
-			}
-		});
+	cachedBrowserPromise = launchGuardedBrowser();
 	return cachedBrowserPromise;
+}
+
+async function launchGuardedBrowser() {
+	const browser = await puppeteer.launch({
+		args: PUPPETEER_LAUNCH_ARGS,
+		ignoreHTTPSErrors: true,
+	});
+	browser.once('disconnected', () => {
+		cachedBrowserPromise = null;
+	});
+
+	try {
+		return await guardBrowser(browser);
+	} catch (error) {
+		// A browser whose pages could not be locked down is never used, and
+		// must not stay behind running or cached (closing it also fires
+		// 'disconnected', which drops the cached promise).
+		try {
+			await browser.close();
+		} catch {
+			// already gone
+		}
+		throw error;
+	}
 }
 
 async function generateForViewport(url, dimensions, servedWidthRange) {
