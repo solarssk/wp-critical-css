@@ -211,10 +211,12 @@ const BLOCKED_IPV4_CIDRS = [
 	['10.0.0.0', 8], // NOSONAR javascript:S1313 - RFC1918 private, see table comment above
 	['100.64.0.0', 10], // NOSONAR javascript:S1313 - carrier-grade NAT, see table comment above
 	['127.0.0.0', 8], // loopback
+	['168.63.129.16', 32], // NOSONAR javascript:S1313 - Azure's WireServer / platform virtual IP (VM agent, DNS, DHCP, health probes): public-looking, but it is the host itself, never an ordinary website
 	['169.254.0.0', 16], // NOSONAR javascript:S1313 - link-local, includes cloud metadata (169.254.169.254)
 	['172.16.0.0', 12], // NOSONAR javascript:S1313 - RFC1918 private, see table comment above
 	['192.0.0.0', 24], // NOSONAR javascript:S1313 - IETF protocol assignments, see table comment above
 	['192.0.2.0', 24], // documentation (TEST-NET-1)
+	['192.88.99.0', 24], // NOSONAR javascript:S1313 - deprecated 6to4 relay anycast, not to be reassigned (RFC 7526): no ordinary website can legitimately live in it
 	['192.168.0.0', 16], // NOSONAR javascript:S1313 - RFC1918 private, see table comment above
 	['198.18.0.0', 15], // NOSONAR javascript:S1313 - benchmarking, see table comment above
 	['198.51.100.0', 24], // documentation (TEST-NET-2)
