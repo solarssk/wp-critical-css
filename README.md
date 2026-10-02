@@ -117,7 +117,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough. In short:
 
 | Path | Role |
 |------|------|
-| [`service/`](service/) | The generator - `server.js`, `lib.js`, `package.json`, `Dockerfile` |
+| [`service/`](service/) | The generator - `server.js`, `lib.js`, `ssrf-chromium.js`, `package.json`, `Dockerfile` |
 | [`wordpress-plugin/wp-critical-css/`](wordpress-plugin/wp-critical-css/) | The installable plugin - `wp-critical-css.php` plus `includes/wpcc-trigger.php`, `wpcc-receiver.php`, `wpcc-inject.php`, `wpcc-shared.php` |
 | [`wordpress-plugin/wp-critical-css-tests/`](wordpress-plugin/wp-critical-css-tests/) | PHPUnit + PHPCS tooling for the plugin (dev-only, not shipped) |
 | [`.env.example`](.env.example) | Configuration template, including the shared secret format |

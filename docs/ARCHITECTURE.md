@@ -109,7 +109,11 @@ each.
   already-launched browser instance instead of letting penthouse start its
   own - `getSsrfSafeBrowser()` uses this to call `puppeteer.launch()`
   itself with `PUPPETEER_LAUNCH_ARGS` (and to wire up this project's own
-  SSRF-guarded request interception on every page it hands out).
+  SSRF-guarded request interception on every page it hands out). Those
+  launch args also point Chrome at a small proxy the service runs on
+  `127.0.0.1` (`service/ssrf-proxy.js`), which is Chrome's only way onto the
+  network: it resolves each name once, refuses private/reserved addresses and
+  connects to the address it validated (see `docs/SECURITY-CONTROLS.md`).
 
 ## Rollback
 

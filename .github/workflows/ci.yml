@@ -208,6 +208,29 @@ jobs:
           console.log('Puppeteer render OK,', css.toString().length, 'bytes of CSS');
           "
 
+      # Page JavaScript must stay OFF while rendering (penthouse's default; a
+      # refactor once dropped it unnoticed), in the page AND in cross-site
+      # frames, which the per-page switch alone does not reach (a Chrome launch
+      # switch does). Unit tests use fakes, so prove it in a real browser through
+      # the same guardBrowser() and launch switches server.js uses, on the page
+      # a fresh browser already has (penthouse uses that one FIRST) and on a
+      # newPage() page, next to a control run in which the scripts must run.
+      - name: Smoke test - page JavaScript stays off during rendering
+        timeout-minutes: 3
+        run: |
+          docker run --rm -i --network none wp-critical-css:ci node --input-type=module - < service/scripts/check-js-off.mjs
+
+      # The SSRF proxy only protects anything if Chrome really sends everything
+      # through it. Run Chrome of the built image with the production switches
+      # against loopback listeners, with page JavaScript on and request
+      # interception off (the worst case), next to a control run without the
+      # switches that must reach them: a Chrome upgrade that stops honouring a
+      # switch fails here, not in production.
+      - name: Smoke test - Chrome cannot reach loopback around the SSRF proxy
+        timeout-minutes: 5
+        run: |
+          docker run --rm -i wp-critical-css:ci node --input-type=module - < service/scripts/check-chrome-egress.mjs
+
       - name: Smoke test - HTTP server responds
         run: |
           docker run -d --rm --name wpcc-smoke -p 3939:3939 \
@@ -222,6 +245,55 @@ jobs:
           done
           curl -sf http://localhost:3939/health | grep -q '"status":"ok"'
           docker stop wpcc-smoke
+
+      # The renders above call `critical` directly, so none of them goes
+      # through the service's OWN browser factory (getSsrfSafeBrowser in
+      # server.js) - the place where Chrome is pointed at the local policy
+      # proxy (ssrf-proxy.js). A broken flag there would only show in
+      # production, so drive a real /generate through the running container
+      # and check the CSS arrives at a receiver on the runner.
+      - name: Smoke test - real /generate through the service's own browser
+        run: |
+          cat > /tmp/wpcc-receiver.mjs <<'EOF'
+          import http from 'node:http';
+          import fs from 'node:fs';
+          http.createServer((req, res) => {
+            let body = '';
+            req.on('data', (chunk) => (body += chunk));
+            req.on('end', () => {
+              fs.writeFileSync('/tmp/wpcc-delivery.json', body);
+              res.end('{}');
+            });
+          }).listen(18081, '0.0.0.0');
+          EOF
+          node /tmp/wpcc-receiver.mjs &
+          RECEIVER_PID=$!
+          cleanup() { docker rm -f wpcc-e2e >/dev/null 2>&1 || true; kill "$RECEIVER_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          docker run -d --rm --name wpcc-e2e --add-host=host.docker.internal:host-gateway -p 3941:3939 \
+            -e SHARED_SECRET=ci-e2e-test \
+            -e WP_RECEIVER_URL=http://host.docker.internal:18081/receiver \
+            -e ALLOWED_HOSTNAME=example.com \
+            -e SWEEP_ENABLED=false \
+            wp-critical-css:ci
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:3941/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf -X POST http://localhost:3941/generate \
+            -H 'Content-Type: application/json' -H 'X-WPCC-Secret: ci-e2e-test' \
+            -d '{"url":"https://example.com/"}'
+          echo
+          for _ in $(seq 1 90); do
+            if [ -s /tmp/wpcc-delivery.json ]; then break; fi
+            sleep 1
+          done
+          if [ ! -s /tmp/wpcc-delivery.json ]; then
+            echo "::error::no CSS was delivered to the receiver within 90 s"
+            docker logs wpcc-e2e
+            exit 1
+          fi
+          node -e "const d = JSON.parse(require('fs').readFileSync('/tmp/wpcc-delivery.json', 'utf8')); if (!d.css_mobile || !d.css_desktop) { console.error('empty CSS delivered'); process.exit(1); } console.log('delivered', d.url, d.css_mobile.length + ' B mobile,', d.css_desktop.length + ' B desktop');"
 
   # Moved here from the former php-tests.yml (a separate workflow file) so
   # sonarcloud-scan below can `needs:` this job directly and download its
