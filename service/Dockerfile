@@ -23,6 +23,13 @@ WORKDIR /app
 # setting - this is a second, independent layer, not the only guard.
 ENV NODE_ENV=production
 
+# libuv's thread pool (4 threads by default) runs every DNS lookup, fs call and
+# zlib/crypto job in the process. ssrf-proxy.js resolves each name Chrome asks
+# for there and lets at most HALF of the pool be busy with that, so a page
+# naming many slow hosts cannot starve got's lookups and the receiver POST:
+# 16 threads leave 8 for those.
+ENV UV_THREADPOOL_SIZE=16
+
 # The base image (built FROM a full node:*-bookworm image, which is
 # buildpack-deps underneath) leaves 168 of the 426 packages still installed
 # after the libpq/subversion purge that used to be the only one here (counted
@@ -181,7 +188,7 @@ COPY --chown=pptruser:pptruser package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts \
 	&& node node_modules/puppeteer/install.mjs \
 	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-COPY --chown=pptruser:pptruser server.js lib.js ssrf-chromium.js ./
+COPY --chown=pptruser:pptruser server.js lib.js ssrf-chromium.js ssrf-proxy.js ./
 
 USER pptruser
 

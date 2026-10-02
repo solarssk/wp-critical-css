@@ -44,16 +44,14 @@
  *    all (verified directly; Network.setBlockedURLs only tears the connection
  *    down after the request has already reached the target).
  *
- * What interception does NOT cover (known, measured, documented in
- * docs/SECURITY-CONTROLS.md; network-level egress filtering closes them):
- * - DNS rebinding: the destination is checked via a separate DNS lookup
- *   BEFORE request.continue(), and Chromium then does its own, independent
- *   resolution when it opens the connection. A fast rebinding attack between
- *   the two lookups slips a different address past the check.
- * - Names Chromium resolves itself (`*.localhost` goes to loopback in
- *   Chromium whatever the DNS says).
- * - Connections that are not requests at all: `<link rel=preconnect>` opens
- *   a TCP connection that never surfaces as a request.
+ * What these three layers do NOT cover, because they only see requests and
+ * check them before Chromium resolves and connects on its own: DNS rebinding
+ * (the destination is checked with a separate DNS lookup BEFORE
+ * request.continue(), and Chromium then resolves again), names Chromium
+ * resolves itself (`*.localhost` goes to loopback whatever the DNS says), and
+ * connections that are not requests at all (`<link rel=preconnect>`). Those
+ * are closed by the fourth layer, outside this module: Chromium's only way
+ * onto the network is the local proxy in ssrf-proxy.js.
  */
 
 import { isPrivateOrReservedTarget } from './lib.js';

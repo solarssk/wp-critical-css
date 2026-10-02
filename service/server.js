@@ -41,6 +41,7 @@ import {
 	createJobQueue,
 } from './lib.js';
 import { JS_OFF_LAUNCH_ARGS, guardBrowser } from './ssrf-chromium.js';
+import { chromeProxyArgs, createSsrfProxy } from './ssrf-proxy.js';
 
 const PORT = process.env.PORT || 3939;
 const SHARED_SECRET = process.env.SHARED_SECRET;
@@ -244,6 +245,25 @@ async function generateAndSubmit(url) {
 }
 
 /**
+ * Chrome's ONLY way onto the network is a local policy proxy (ssrf-proxy.js):
+ * for every http:// request and every CONNECT tunnel (https://, ws://, wss://)
+ * it resolves the name itself, refuses anything that resolves to a
+ * private/reserved address, and connects to the address it validated - so
+ * DNS rebinding, `*.localhost` names and `<link rel=preconnect>` cannot get
+ * around request interception (ssrf-chromium.js), which only sees requests
+ * and checks them before Chrome resolves the name on its own. The switches
+ * that do this, and why each is needed, are documented at chromeProxyArgs().
+ * If the proxy stops, Chrome has no fallback to a direct connection: every
+ * request fails. The process exits if it errors rather than limp on.
+ */
+const ssrfProxy = createSsrfProxy();
+const ssrfProxyPort = await ssrfProxy.listen();
+ssrfProxy.server.on('error', (error) => {
+	console.error(`[critical-css] SSRF proxy failed, exiting: ${logSafe(error.message)}`);
+	process.exit(1);
+});
+
+/**
  * --no-sandbox/--disable-setuid-sandbox mean Chrome's own internal sandbox
  * never runs - deliberately not the elevated-capability alternative
  * (cap_add: SYS_ADMIN in the container, so Chrome's real sandbox can use
@@ -253,7 +273,7 @@ async function generateAndSubmit(url) {
  * would do nothing for Chrome specifically. Change either side only
  * together with the other, and re-verify with a real render.
  */
-const PUPPETEER_LAUNCH_ARGS = ['--disable-setuid-sandbox', '--no-sandbox', '--ignore-certificate-errors', ...JS_OFF_LAUNCH_ARGS];
+const PUPPETEER_LAUNCH_ARGS = ['--disable-setuid-sandbox', '--no-sandbox', '--ignore-certificate-errors', ...JS_OFF_LAUNCH_ARGS, ...chromeProxyArgs(ssrfProxyPort)];
 
 let cachedBrowserPromise = null;
 
