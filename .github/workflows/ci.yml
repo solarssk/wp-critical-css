@@ -165,6 +165,43 @@ jobs:
             echo "::endgroup::"
           done < <(find wordpress-plugin -name '*.php' -print0)
 
+  # The Wiki's only source is docs/wiki (publish-wiki.yml replaces the Wiki with it after every
+  # merge), so this is where its quality is decided: the checker's own tests, then the checker
+  # against the repository - links, anchors, sidebar, and the Configuration tables against what
+  # service/ and the plugin actually read (see scripts/check-wiki-docs.mjs) - then, on pull
+  # requests, that the "Documentation impact" declaration agrees with the diff. Runs on every
+  # PR and every push, with no `paths:` filter: a filter that keeps a required check from
+  # starting leaves the PR waiting for a status that never comes. The declaration step reads
+  # the description from the API (hence pull-requests: read), so fixing a wrong description and
+  # re-running the job is enough.
+  wiki-docs:
+    name: Wiki docs (sync and links)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Test the docs checkers
+        run: node --test "scripts/*.test.mjs"
+
+      - name: Validate the Wiki source against the code
+        run: node scripts/check-wiki-docs.mjs
+
+      - name: Validate the pull request's documentation declaration
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-pr-docs-impact.mjs
+
   # Runs in parallel with build-test/php-lint rather than after them: the
   # image is built solely from service/, which build-test already validates
   # independently (audit, syntax check, unit tests) - there's no dependency

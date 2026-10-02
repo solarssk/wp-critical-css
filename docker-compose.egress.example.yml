@@ -42,14 +42,29 @@
 # -------------------------------------------
 # The service now shares the guard's network namespace, so everything that
 # configures networking has to be on the GUARD, not on the service:
-#   networks / aliases / ipv4_address, ports, dns, dns_search, extra_hosts,
-#   hostname, sysctls.
+#   networks / aliases / ipv4_address, ports, expose, dns, dns_search,
+#   extra_hosts, hostname, sysctls.
 # This file already moves `networks` (the guard joins your WordPress
 # network and answers to the name critical-css-service, so WordPress keeps
 # reaching http://critical-css-service:3939). If your docker-compose.yml
 # publishes ports for the service, or sets dns / extra_hosts on it, move
-# those lines to the egress-guard service below; Docker refuses the
-# combination on a service that uses network_mode: service:...
+# those lines to the egress-guard service below. Docker refuses ports,
+# expose, dns, extra_hosts and hostname on a service that uses
+# network_mode: service:... (checked with Engine 29.8.1 / Compose 5.5.1);
+# dns_search is ignored without an error, and a net.* sysctl on the service
+# changes the shared namespace.
+#
+# Always name both files
+# ----------------------
+# With only the base file Compose does not know the guard, and `up -d`
+# recreates the service from the base file alone - without
+# network_mode: service:egress-guard, so the filtering is silently gone (the
+# only hint is a warning about an orphan container). Either type both -f
+# flags every time, or put
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.egress.example.yml
+# in the .env next to your docker-compose.yml (an explicit -f overrides it).
+# After an `up -d`, `docker inspect -f '{{.HostConfig.NetworkMode}}'
+# critical-css-service` must print container:<id>.
 #
 # What you must set (in the .env file next to your docker-compose.yml)
 # --------------------------------------------------------------------
@@ -87,7 +102,8 @@
 # Restarts
 # --------
 #   docker restart critical-css-service   rules stay (the guard owns the namespace)
-#   docker compose restart egress-guard   restarts the service as well (restart: true)
+#   docker compose -f docker-compose.yml -f docker-compose.egress.example.yml restart egress-guard
+#                                         restarts the service as well (restart: true)
 #   docker restart critical-css-egress-guard   (plain Docker, no Compose) leaves the
 #       service with NO network until you also run: docker restart critical-css-service
 #

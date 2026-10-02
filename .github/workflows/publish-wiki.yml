@@ -1,0 +1,80 @@
+name: Publish wiki
+
+# docs/wiki is the only versioned source of the project's GitHub Wiki. This workflow makes the
+# Wiki match it exactly after every merge to main (pages deleted from the folder are deleted from
+# the Wiki), so nothing is ever edited in the Wiki itself - see docs/wiki/Editing-the-Wiki.md.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/wiki/**'
+      - '.github/workflows/publish-wiki.yml'
+  workflow_dispatch:
+
+# Read-only by default: the one job below declares the write it needs itself.
+permissions:
+  contents: read
+
+# Wiki pushes must not overlap, and a newer publish must not cancel a running one halfway
+# through its push (cancel-in-progress would leave the Wiki half-written). Keyed on the ref so that
+# a manual run from another branch (a no-op, see the job's `if`) cannot take the place of a
+# publish from main that is waiting in the queue.
+concurrency:
+  group: publish-wiki-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish docs/wiki to the GitHub Wiki
+    # A manual run from any other branch must not publish unreviewed pages.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # The Wiki is a separate git repository (<repo>.wiki.git) and GitHub has no narrower scope
+      # for it: pushing to it is gated by the same Contents permission as the repository itself.
+      contents: write
+    steps:
+      # Always the tip of main, not the commit that triggered this run: re-running an older run
+      # (the error below suggests re-running) must publish the current docs, not roll the Wiki back.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      # The same check as the wiki-docs job in ci.yml, so a source CI would reject is never
+      # published, whichever way this run was started.
+      - name: Validate the Wiki source
+        run: node scripts/check-wiki-docs.mjs
+
+      - name: Synchronize the GitHub Wiki
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WIKI_REPOSITORY: ${{ github.repository }}.wiki
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          wiki_dir=$(mktemp -d)
+          trap 'rm -rf "$wiki_dir"' EXIT
+          # A repository's Wiki git remote only exists once its first page has been created in the
+          # Wiki tab; until then the clone fails with "Repository not found".
+          if ! git clone --quiet "https://x-access-token:${GITHUB_TOKEN}@github.com/${WIKI_REPOSITORY}.git" "$wiki_dir"; then
+            echo "::error::Could not clone ${WIKI_REPOSITORY}. Create the first page once in the repository's Wiki tab, then re-run this workflow."
+            exit 1
+          fi
+          rsync -a --delete --exclude=.git docs/wiki/ "$wiki_dir/"
+          git -C "$wiki_dir" add --all
+          git -C "$wiki_dir" diff --cached --check
+          if git -C "$wiki_dir" diff --cached --quiet; then
+            echo "Wiki is already current."
+            exit 0
+          fi
+          git -C "$wiki_dir" config user.name "github-actions[bot]"
+          git -C "$wiki_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$wiki_dir" commit --quiet -m "docs(wiki): publish ${source_sha}"
+          git -C "$wiki_dir" push --quiet origin HEAD
+          echo "Published ${source_sha} to the Wiki."

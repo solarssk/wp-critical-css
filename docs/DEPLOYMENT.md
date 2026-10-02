@@ -2,12 +2,13 @@
 
 ## Prerequisites
 
-- An existing WordPress install running under Docker Compose, with the
-  `wp-content` volume reachable from the compose project you'll add this
-  service to.
+- An existing WordPress install running under Docker Compose, on a network
+  the generator's container can join (the service calls WordPress back over it).
 - A sitemap plugin that emits a sitemap index with `post-sitemap*.xml` /
-  `page-sitemap.xml` sub-sitemaps (Yoast, Rank Math, and WordPress core's
-  own sitemaps all do this by default).
+  `page-sitemap*.xml` sub-sitemaps (Yoast and Rank Math do this by default).
+  WordPress core's own sitemaps name them differently
+  (`wp-sitemap-posts-post-1.xml`), which the sweep's filter does not match, so
+  the sweep finds no URLs with them; saving a post still regenerates it.
 
 ## 1. Configure the generator
 
@@ -41,7 +42,7 @@ both GHCR and Docker Hub - use whichever your setup already pulls from:
 ```bash
 docker pull ghcr.io/solarssk/wp-critical-css:latest
 # or: docker pull solarssk/wp-critical-css:latest
-docker run --env-file .env -p 3939:3939 ghcr.io/solarssk/wp-critical-css:latest
+docker run --env-file .env -p 127.0.0.1:3939:3939 ghcr.io/solarssk/wp-critical-css:latest
 ```
 
 **Let your compose/Portainer stack build straight from this repo** (no
@@ -52,7 +53,7 @@ local checkout needed) - see the `build:` alternative commented in
 
 ```bash
 docker build -t wp-critical-css ./service
-docker run --env-file .env -p 3939:3939 wp-critical-css
+docker run --env-file .env -p 127.0.0.1:3939:3939 wp-critical-css
 ```
 
 ## 4. Verify the container is up
@@ -61,7 +62,9 @@ docker run --env-file .env -p 3939:3939 wp-critical-css
 curl -s http://localhost:3939/health
 ```
 
-Should return `{"status":"ok","queueLength":0,"processing":false}`.
+(That needs a published port, as in the `docker run` examples above. The example compose file publishes none, so use `docker exec critical-css-service wget -qO- http://localhost:3939/health`; the image has `wget` but no `curl`.)
+
+Should return `{"status":"ok","queueLength":0,"queueFull":false,"processing":false}`.
 
 ## 5. Install the plugin
 
@@ -95,8 +98,10 @@ curl -s -X POST http://localhost:3939/sweep \
   -H "X-WPCC-Secret: <your SHARED_SECRET>"
 ```
 
+(Without a published port: `docker exec critical-css-service sh -c 'wget -qO- --post-data= --header="X-WPCC-Secret: $SHARED_SECRET" http://localhost:${PORT:-3939}/sweep'`.)
+
 Watch progress: `docker logs -f critical-css-service`. This walks every
-URL in your `post-sitemap*.xml`/`page-sitemap.xml` sub-sitemaps at
+URL in your `post-sitemap*.xml`/`page-sitemap*.xml` sub-sitemaps at
 `SWEEP_DELAY_MS` apart (5s default) - expect it to take a while on a
 sizeable site.
 
@@ -106,7 +111,7 @@ On a real post/page that's been processed, view source and check for:
 
 - `<style id="wpcc-critical-css">` in `<head>`.
 - The theme/plugin `<link rel="stylesheet">` tags now carry
-  `media="print" onload="this.media='all'"`.
+  `media="print" onload="this.media='all';this.onload=null;"`, each followed by a `<noscript>` copy.
 
 ## Optional: network-level egress filtering
 
@@ -128,12 +133,14 @@ The service renders your site with headless Chrome and guards what that Chrome c
    EGRESS_ALLOW_DNS=
    ```
 
-4. The service now shares the guard's network namespace, so anything that configures networking has to be on the `egress-guard` service instead of `critical-css-service`: `ports`, `dns`, `dns_search`, `extra_hosts`, `hostname`, `sysctls`. The override already moves `networks` and keeps the name `critical-css-service` working for WordPress (`aliases`). Docker refuses these settings on a service that uses `network_mode: service:...`.
+4. The service now shares the guard's network namespace, so anything that configures networking has to be on the `egress-guard` service instead of `critical-css-service`: `ports`, `expose`, `dns`, `dns_search`, `extra_hosts`, `hostname`, `sysctls`. The override already moves `networks` and keeps the name `critical-css-service` working for WordPress (`aliases`). Docker refuses `ports`, `expose`, `dns`, `extra_hosts` and `hostname` on a service that uses `network_mode: service:...` (checked with Docker Engine 29.8.1 and Compose 5.5.1); `dns_search` is ignored without an error and a `net.*` sysctl on the service changes the shared namespace.
 5. Start both files together:
 
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.egress.example.yml up -d
    ```
+
+   From then on, every `docker compose` command for this stack needs both `-f` flags: with only the base file Compose does not know the guard, and `up -d` (with or without a new image) recreates the service from the base file alone, without `network_mode: service:egress-guard`, so the filtering is silently gone (the only hint is a warning about an orphan container). Putting `COMPOSE_FILE=docker-compose.yml:docker-compose.egress.example.yml` in the `.env` next to the compose file does the same as typing both flags (`;` as separator on Windows; an explicit `-f` overrides it). `docker inspect -f '{{.HostConfig.NetworkMode}}' critical-css-service` must print `container:` and an ID after any `up -d`. Changes to the `.env` are read when a container is created: `docker restart` does not apply them, `up -d` does.
 
 ### Verify
 
@@ -156,7 +163,7 @@ docker exec critical-css-service node -e "fetch('http://169.254.169.254/',{signa
 | Action | Result |
 |---|---|
 | `docker restart critical-css-service` | Rules stay (the namespace belongs to the guard); the start gate passes at once. |
-| `docker compose restart egress-guard` | Restarts the service as well (`restart: true`). |
+| `docker compose -f docker-compose.yml -f docker-compose.egress.example.yml restart egress-guard` | Restarts the service as well (`restart: true`). |
 | `docker restart critical-css-egress-guard` (plain Docker) | The service is left with no network at all until you also run `docker restart critical-css-service`. Fails closed, but does not heal by itself. |
 | Guard stops or dies | The service loses its network (fails closed). |
 
@@ -205,4 +212,4 @@ What actually publishes is the resolved ref matching a semver tag (`vX.Y.Z`), no
 
 ## Rollback
 
-Deactivate (or delete) the plugin from `Plugins` in wp-admin and stop the container. Nothing else depends on this pipeline - stylesheets simply go back to loading render-blocking, exactly as before it existed.
+Deactivate (or delete) the plugin from `Plugins` in wp-admin and remove the container (`docker compose down`, with both `-f` flags if you use the egress override; the example compose file sets `restart: always`, so a container that is merely stopped comes back after a reboot). Nothing else depends on this pipeline - stylesheets simply go back to loading render-blocking, exactly as before it existed.
