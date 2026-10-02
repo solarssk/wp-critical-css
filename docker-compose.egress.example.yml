@@ -1,0 +1,271 @@
+# Network-level egress filtering for the critical-css-service container.
+#
+# WHY: the service renders pages with headless Chrome and guards what that
+# Chrome can reach in code (request interception, and a local proxy that is
+# Chrome's only way onto the network). A network rule is the independent
+# second line for whatever those miss - a bug in the classifier or the proxy,
+# a future Chrome feature that bypasses the proxy switches, any other process
+# in the container: make the dangerous destinations unreachable from the
+# container at all, whatever tries. This file does that: it blocks the container's
+# outbound traffic to private, link-local (cloud metadata, 169.254.169.254),
+# carrier-grade-NAT, multicast and other reserved addresses, for IPv4 and
+# IPv6, and leaves the public internet and the few private addresses you
+# list (your WordPress receiver) open. It mirrors BLOCKED_IPV4_CIDRS and the
+# IPv6 allow-list of service/lib.js, so the network and the code agree on what
+# "private or reserved" means. Keep the lists identical when you change either
+# (a unit test in service/ compares them).
+#
+# HOW: a tiny helper container ("egress-guard") owns the network namespace
+# (the container's private network stack), installs the rules in it with
+# iptables, and only then does the service start INSIDE that same namespace
+# (network_mode: "service:egress-guard"). Because the service never gets
+# NET_ADMIN (cap_drop: ALL stays), nothing running in it can remove the
+# rules. Because the guard owns the namespace:
+#   * the service cannot start before the rules exist (depends_on below);
+#   * `docker restart critical-css-service` keeps the rules (the namespace
+#     lives as long as the guard does);
+#   * if the guard fails to install the rules it never becomes healthy and
+#     the service never starts (fail closed);
+#   * if the guard dies later, its network interface goes with it and the
+#     service has no network at all (also closed); it gets one again when
+#     the service is restarted after the guard is back (see "Restarts").
+#
+# USAGE: put this file next to your docker-compose.yml and run
+#   docker compose -f docker-compose.yml -f docker-compose.egress.example.yml up -d
+# (rename it if you like; add EGRESS_ALLOW to the .env file Compose reads,
+# see below). Needs Docker Compose v2.24 or newer (the `!reset` tag below) and
+# a kernel with nf_tables or legacy iptables. Tested with Docker Engine 29.8.1
+# (Docker Desktop) and Compose 5.5.1; see docs/DEPLOYMENT.md for what has not
+# been tested on a plain Linux host.
+#
+# The service's networking moves to the guard
+# -------------------------------------------
+# The service now shares the guard's network namespace, so everything that
+# configures networking has to be on the GUARD, not on the service:
+#   networks / aliases / ipv4_address, ports, dns, dns_search, extra_hosts,
+#   hostname, sysctls.
+# This file already moves `networks` (the guard joins your WordPress
+# network and answers to the name critical-css-service, so WordPress keeps
+# reaching http://critical-css-service:3939). If your docker-compose.yml
+# publishes ports for the service, or sets dns / extra_hosts on it, move
+# those lines to the egress-guard service below; Docker refuses the
+# combination on a service that uses network_mode: service:...
+#
+# What you must set (in the .env file next to your docker-compose.yml)
+# --------------------------------------------------------------------
+# EGRESS_ALLOW      Space-separated ADDRESS:PORT pairs the service may open
+#                   TCP connections to even though they are private. At
+#                   minimum your WordPress receiver (the host and port of
+#                   WP_RECEIVER_URL), as an IP address, not a name:
+#                     EGRESS_ALLOW=172.20.0.10:80
+#                   IPv6 is written [fd00::10]:80. Leave it empty if
+#                   WP_RECEIVER_URL points at a public address. Give the
+#                   receiver a fixed IP (ipv4_address on your network),
+#                   otherwise a recreated container gets a new address and
+#                   the delivery is blocked. Allow only what is needed:
+#                   anything listed here is reachable by page content too.
+# EGRESS_ALLOW_DNS  Space-separated DNS resolver addresses (port 53, UDP and
+#                   TCP). When a resolver that Docker's built-in DNS
+#                   (127.0.0.11) forwards to is one of the addresses these
+#                   rules refuse - a private address (a `dns:` entry, or a
+#                   router / 10.x / 192.168.x resolver copied from the host),
+#                   a link-local one (the AWS and Google Cloud default
+#                   resolvers) or AZURE's 168.63.129.16 - it is queried from
+#                   INSIDE the container's namespace, so every lookup would
+#                   fail (SERVFAIL). List such resolvers here, e.g.
+#                     EGRESS_ALLOW_DNS=192.168.1.1
+#                   On an Azure VM that uses Azure-provided DNS (the default
+#                   for a virtual network without custom DNS servers):
+#                     EGRESS_ALLOW_DNS=168.63.129.16
+#                   (port 53 only: the WireServer's HTTP ports stay refused).
+#                   Or point `dns:` on the guard at public resolvers instead.
+#                   Leave it empty if your resolvers are public. Not every
+#                   setup needs it (on Docker Desktop the host's resolver was
+#                   not affected); the check under "Verify" below shows
+#                   whether DNS works.
+#
+# Restarts
+# --------
+#   docker restart critical-css-service   rules stay (the guard owns the namespace)
+#   docker compose restart egress-guard   restarts the service as well (restart: true)
+#   docker restart critical-css-egress-guard   (plain Docker, no Compose) leaves the
+#       service with NO network until you also run: docker restart critical-css-service
+#
+# Verify (prints OK when 169.254.169.254, the cloud metadata address, is refused)
+# ------
+#   docker exec critical-css-service node -e "fetch('http://169.254.169.254/',{signal:AbortSignal.timeout(4000)}).then(()=>console.log('NOT FILTERED'),e=>console.log(e.cause?.code==='ECONNREFUSED'?'OK: egress filtering is active':'NOT CONCLUSIVE: '+(e.cause?.code||e.name)))"
+#
+# What this does NOT cover
+# ------------------------
+# * Anything inside the container's own namespace: the service's port
+#   3939, Chrome's DevTools port and every 127.0.0.0/8 / ::1 address stay
+#   reachable from Chrome (loopback must stay open, node and Chrome talk
+#   over it, and so does Docker's DNS at 127.0.0.11), and `*.localhost`
+#   names, which Chrome maps to loopback itself, fall in the same bucket.
+#   A network rule cannot help there; the local proxy in service/ssrf-proxy.js
+#   keeps Chrome off loopback (see docs/SECURITY-CONTROLS.md).
+# * Whatever you put in EGRESS_ALLOW / EGRESS_ALLOW_DNS.
+# * Public internet destinations (by design: the service renders your public
+#   site and its assets).
+
+services:
+  egress-guard:
+    # Pinned by tag AND digest (the digest is the multi-arch index: amd64 and
+    # arm64 both resolve from it). Official Kubernetes release-engineering
+    # image: Debian-based, ~50 MB, contains iptables 1.8.9 (nf_tables and
+    # legacy) and nothing else of note. To bump it, take the new digest from:
+    #   docker buildx imagetools inspect registry.k8s.io/build-image/distroless-iptables:<tag>
+    image: registry.k8s.io/build-image/distroless-iptables:v0.9.7@sha256:a12570f44d38f4a23a37194600bfc773cac77ecc275e6313f3cf0b5c2fbd6e93
+    container_name: critical-css-egress-guard
+    restart: always
+    init: true # PID 1 handling so `docker stop` is immediate
+    user: "0:0" # iptables needs root inside the namespace; the capability set below is what bounds it
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN # the one privilege that can change the namespace's firewall; only THIS container has it
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 32m
+    pids_limit: 32
+    networks:
+      your_wordpress_network: # same name as in your docker-compose.yml
+        aliases:
+          - critical-css-service # keeps http://critical-css-service:3939 working for WordPress
+    environment:
+      EGRESS_ALLOW: ${EGRESS_ALLOW:-}
+      EGRESS_ALLOW_DNS: ${EGRESS_ALLOW_DNS:-}
+    entrypoint: ["/bin/sh", "-c"]
+    # The script is POSIX sh (the image has dash, no bash). Every dollar sign
+    # is doubled because Compose would otherwise expand it itself. Rules, in
+    # order: loopback, replies to connections that already exist (that is how
+    # WordPress gets its answers), then your explicit allow-list, then REJECT
+    # for the private/reserved ranges. REJECT, not DROP, so a blocked connect
+    # fails at once instead of hanging the render until its timeout. IPv6 is
+    # an allow-list like in service/lib.js: only 2000::/3 (minus special-purpose
+    # blocks) and the NAT64 prefix 64:ff9b::/96 (minus the embedded private
+    # IPv4 ranges) leave the container; ICMPv6 is allowed so neighbour
+    # discovery keeps working. Invalid input aborts the script, the guard never turns
+    # healthy, and the service does not start.
+    command:
+      - |
+        set -eu
+        set -f
+        log() { echo "egress-guard: $$*"; }
+        die() { echo "egress-guard: ERROR: $$*" >&2; exit 1; }
+
+        # Mirrors BLOCKED_IPV4_CIDRS in service/lib.js (the code-level layer); keep the two identical.
+        V4_BLOCK='0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 168.63.129.16/32 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4'
+        # Same special-purpose blocks inside 2000::/3 as SPECIAL_PURPOSE_IPV6 in service/lib.js.
+        V6_BLOCK='2001::/23 2001:db8::/32 2002::/16 2620:4f:8000::/48 3fff::/20 3ffe::/16'
+
+        # Splits ADDRESS:PORT or [IPv6-ADDRESS]:PORT into E_FAM, E_ADDR, E_PORT.
+        split_entry() {
+          case $$1 in
+            \[*\]:*) E_FAM=6; E_ADDR=$${1#\[}; E_ADDR=$${E_ADDR%%\]*}; E_PORT=$${1##*\]:} ;;
+            \[*) die "malformed entry '$$1' (write IPv6 as [address]:port)" ;;
+            *:*:*) die "IPv6 entries must be written [address]:port, got '$$1'" ;;
+            *:*) E_FAM=4; E_ADDR=$${1%%:*}; E_PORT=$${1##*:} ;;
+            *) die "entry '$$1' must be ADDRESS:PORT" ;;
+          esac
+          case $$E_PORT in ''|*[!0-9]*) die "bad port in '$$1'" ;; esac
+          [ "$$E_PORT" -ge 1 ] && [ "$$E_PORT" -le 65535 ] || die "port out of range in '$$1'"
+          case $$E_ADDR in ''|*[!0-9A-Fa-f:./]*) die "bad address in '$$1'" ;; esac
+        }
+
+        # Prints one iptables-restore input for the filter table. $$1 is 4 or 6.
+        emit() {
+          echo '*filter'
+          echo ':INPUT ACCEPT [0:0]'
+          echo ':FORWARD ACCEPT [0:0]'
+          echo ':OUTPUT ACCEPT [0:0]'
+          echo '-A OUTPUT -o lo -j ACCEPT'
+          echo '-A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT'
+          if [ "$$1" = 6 ]; then echo '-A OUTPUT -p 58 -j ACCEPT'; fi
+          for e in $${EGRESS_ALLOW:-}; do
+            split_entry "$$e"
+            if [ "$$E_FAM" = "$$1" ]; then echo "-A OUTPUT -d $$E_ADDR -p tcp --dport $$E_PORT -j ACCEPT"; fi
+          done
+          for d in $${EGRESS_ALLOW_DNS:-}; do
+            case $$d in ''|*[!0-9A-Fa-f:./]*) die "bad DNS address '$$d'" ;; esac
+            case $$d in *:*) f=6 ;; *) f=4 ;; esac
+            if [ "$$f" = "$$1" ]; then
+              echo "-A OUTPUT -d $$d -p udp --dport 53 -j ACCEPT"
+              echo "-A OUTPUT -d $$d -p tcp --dport 53 -j ACCEPT"
+            fi
+          done
+          if [ "$$1" = 4 ]; then
+            for c in $$V4_BLOCK; do echo "-A OUTPUT -d $$c -j REJECT"; done
+          else
+            # NAT64 (RFC 6052): public IPv4-only hosts resolve into 64:ff9b::/96 on an IPv6-only
+            # network with DNS64, and the low 32 bits of such an address ARE an IPv4 address, so an
+            # IPv4 /p is the IPv6 /(96+p). Refuse the embedded private/reserved ranges (the list
+            # above), then let the rest of the prefix out - how service/lib.js classifies it too.
+            for c in $$V4_BLOCK; do echo "-A OUTPUT -d 64:ff9b::$${c%%/*}/$$((96 + $${c##*/})) -j REJECT"; done
+            echo '-A OUTPUT -d 64:ff9b::/96 -j ACCEPT'
+            for c in $$V6_BLOCK; do echo "-A OUTPUT -d $$c -j REJECT"; done
+            echo '-A OUTPUT -d 2000::/3 -j ACCEPT'
+            echo '-A OUTPUT -j REJECT'
+          fi
+          echo 'COMMIT'
+        }
+
+        # Installs the rules for family $$1 (4 or 6); nf_tables first, legacy as the fallback.
+        apply() {
+          emit "$$1" > "/tmp/rules$$1"
+          if [ "$$1" = 4 ]; then t=iptables; else t=ip6tables; fi
+          if "$$t-nft-restore" < "/tmp/rules$$1"; then echo nft > "/tmp/backend$$1"; log "IPv$$1 rules installed (nf_tables)"; return 0; fi
+          if "$$t-legacy-restore" < "/tmp/rules$$1"; then echo legacy > "/tmp/backend$$1"; log "IPv$$1 rules installed (legacy iptables)"; return 0; fi
+          return 1
+        }
+
+        apply 4 || die "could not install the IPv4 rules; refusing to start"
+        if ! apply 6; then
+          # Only acceptable when this network namespace has no IPv6 address at all (besides lo).
+          if [ ! -e /proc/net/if_inet6 ] || ! grep -qv ' lo$$' /proc/net/if_inet6; then
+            echo skipped > /tmp/backend6
+            log "WARNING: no ip6tables support and no IPv6 address in this namespace; IPv6 rules skipped"
+          else
+            die "could not install the IPv6 rules and this namespace has IPv6 addresses; refusing to start"
+          fi
+        fi
+        log "ready"
+        exec sleep infinity
+    healthcheck:
+      # Healthy only while the rules are really in the kernel (checked, not
+      # assumed), so a flushed or half-installed firewall is visible in
+      # `docker compose ps`.
+      test:
+        - CMD-SHELL
+        - >-
+          b4=$$(cat /tmp/backend4) && iptables-$$b4 -S OUTPUT | grep -q -e '-d 169.254.0.0/16 .*-j REJECT'
+          && b6=$$(cat /tmp/backend6) && { [ "$$b6" = skipped ] || ip6tables-$$b6 -S OUTPUT | grep -q -e '-A OUTPUT -j REJECT'; }
+      interval: 3s
+      timeout: 5s
+      retries: 3
+
+  critical-css-service:
+    # Joins the guard's network namespace instead of getting its own.
+    network_mode: "service:egress-guard"
+    networks: !reset [] # the base file's `networks:` is not allowed together with network_mode
+    depends_on:
+      egress-guard:
+        condition: service_healthy # do not start until the rules are installed and verified
+        restart: true # `docker compose restart/up` of the guard restarts the service too (its namespace changes)
+    # `depends_on` is only honoured when Compose itself starts things. When Docker
+    # restarts the containers on its own (host or daemon restart, `restart: always`)
+    # the service can start the moment the guard's namespace exists, which is BEFORE
+    # the guard's script has installed the rules. So the service gates itself: node
+    # starts only once a connection to the cloud metadata address is REFUSED locally,
+    # which is what the rules do (the "Verify" check below). Keep the last line in
+    # step with the image's CMD (`node server.js`).
+    command:
+      - sh
+      - -c
+      - |
+        gate() { node -e "const s = require('node:net').connect({ host: '169.254.169.254', port: 80 }); s.setTimeout(2000, () => process.exit(1)); s.on('connect', () => process.exit(1)); s.on('error', (e) => process.exit(e.code === 'ECONNREFUSED' ? 0 : 1));"; }
+        gate || { echo "critical-css-service: waiting for the egress guard's firewall rules"; until gate; do sleep 1; done; }
+        exec node server.js

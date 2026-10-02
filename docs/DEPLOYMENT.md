@@ -108,6 +108,76 @@ On a real post/page that's been processed, view source and check for:
 - The theme/plugin `<link rel="stylesheet">` tags now carry
   `media="print" onload="this.media='all'"`.
 
+## Optional: network-level egress filtering
+
+The service renders your site with headless Chrome and guards what that Chrome can reach in code: request interception, and a local proxy (`service/ssrf-proxy.js`) that is Chrome's only way onto the network, resolves each name once and refuses private and reserved addresses. A network rule is the independent second line for whatever those miss (a bug in the classifier or the proxy, a future Chrome feature that bypasses the proxy switches, any other process in the container): make private, link-local (cloud metadata), carrier-grade-NAT, multicast and other reserved addresses unreachable from the container, whatever Chrome tries. `docker-compose.egress.example.yml` does that with a small helper container (`egress-guard`) that installs firewall rules in the service's network namespace, using the same address ranges as the code-level check, so the two layers agree. It is a second layer on top of the code-level checks, not a replacement for them.
+
+### Steps
+
+1. Work out where `WP_RECEIVER_URL` points. If it is a public address (`https://your-site.example/...`), you need no exception. If it is a private one (WordPress in another container, a LAN host, `host.docker.internal`), you need its IP address and port. Give a WordPress container a fixed address (`ipv4_address:` under its network, which needs an `ipam` subnet on that network), otherwise a recreated container gets a new address and the delivery is refused.
+2. Copy `docker-compose.egress.example.yml` next to your `docker-compose.yml`. In the copy, replace `your_wordpress_network` with your network's name (the same one your `docker-compose.yml` uses).
+3. Add to the `.env` file next to your `docker-compose.yml` (Compose reads it for substitution; `env_file: .env` also passes these two lines into the service, which is harmless):
+
+   ```
+   # Private destinations the service may still open TCP connections to: ADDRESS:PORT, space-separated.
+   # IPv6 is written [fd00::10]:80. Leave empty if WP_RECEIVER_URL is public.
+   EGRESS_ALLOW=172.20.0.10:80
+   # Only if your DNS resolver is one of the refused addresses (a private one, a link-local one,
+   # or Azure's 168.63.129.16), see "Known limitations". On Azure with the default DNS:
+   # EGRESS_ALLOW_DNS=168.63.129.16
+   EGRESS_ALLOW_DNS=
+   ```
+
+4. The service now shares the guard's network namespace, so anything that configures networking has to be on the `egress-guard` service instead of `critical-css-service`: `ports`, `dns`, `dns_search`, `extra_hosts`, `hostname`, `sysctls`. The override already moves `networks` and keeps the name `critical-css-service` working for WordPress (`aliases`). Docker refuses these settings on a service that uses `network_mode: service:...`.
+5. Start both files together:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.egress.example.yml up -d
+   ```
+
+### Verify
+
+```bash
+docker exec critical-css-service node -e "fetch('http://169.254.169.254/',{signal:AbortSignal.timeout(4000)}).then(()=>console.log('NOT FILTERED'),e=>console.log(e.cause?.code==='ECONNREFUSED'?'OK: egress filtering is active':'NOT CONCLUSIVE: '+(e.cause?.code||e.name)))"
+```
+
+`OK` means the connection was refused locally, at once. `NOT FILTERED` means the address answered. `NOT CONCLUSIVE` (usually a timeout) means nothing refused it: the rules are not active, check `docker compose ps` (the guard should be `healthy`) and `docker logs critical-css-egress-guard`. Also run a normal render (section 7 above) to confirm that delivery to your receiver still works, and `docker exec critical-css-service node -e "require('dns').lookup('example.com',console.log)"` to confirm that name resolution still works (see "Known limitations" if it does not). Packet counters per rule: `docker exec critical-css-egress-guard iptables-nft -nvL OUTPUT`.
+
+### What it does
+
+- Allows everything on the loopback interface (node and Chrome talk over it, so does Docker's DNS at 127.0.0.11) and replies to connections that already exist (that is how WordPress gets its answers).
+- Allows the `EGRESS_ALLOW` and `EGRESS_ALLOW_DNS` addresses you list, before the blocks.
+- Refuses (`REJECT`, so a blocked connect fails at once instead of stalling a render) IPv4 `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`, `168.63.129.16/32` (Azure's WireServer), `169.254.0.0/16`, `172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.88.99.0/24` (deprecated 6to4 relay), `192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`, `224.0.0.0/4`, `240.0.0.0/4`. For IPv6 only `2000::/3` leaves the container, minus the special-purpose blocks inside it, plus the NAT64 well-known prefix `64:ff9b::/96` (on an IPv6-only network with DNS64, IPv4-only public hosts resolve into it) with the same private/reserved IPv4 ranges refused inside it, because the low 32 bits of such an address are an IPv4 address (ICMPv6 stays allowed so neighbour discovery works). IPv4-mapped IPv6 addresses become IPv4 connections and are covered by the IPv4 rules.
+- Starts before the service and gates it: the service is only created once the guard reports that the rules are in the kernel (`depends_on: condition: service_healthy`), and a guard that cannot install them (bad `EGRESS_ALLOW`, missing `NET_ADMIN`, no iptables support) never becomes healthy, so the service never starts. `depends_on` is only honoured when Compose itself starts things, not when Docker restarts containers on its own (host or daemon restart), so the service's start command also waits, by itself, until a connection to the cloud metadata address is refused locally, and only then starts node. The override therefore replaces the service's `command`; keep its last line (`exec node server.js`) in step with the image's `CMD`.
+- Leaves the service container unprivileged: only the guard has `NET_ADMIN`; the service keeps `cap_drop: ALL` and cannot change the rules.
+
+### Restarts
+
+| Action | Result |
+|---|---|
+| `docker restart critical-css-service` | Rules stay (the namespace belongs to the guard); the start gate passes at once. |
+| `docker compose restart egress-guard` | Restarts the service as well (`restart: true`). |
+| `docker restart critical-css-egress-guard` (plain Docker) | The service is left with no network at all until you also run `docker restart critical-css-service`. Fails closed, but does not heal by itself. |
+| Guard stops or dies | The service loses its network (fails closed). |
+
+### What it does not cover
+
+- Anything inside the container's own namespace. The service's port 3939, Chrome's DevTools port and every `127.0.0.0/8` / `::1` address stay reachable from Chrome, because loopback has to stay open. `*.localhost` names, which Chrome maps to loopback by itself, fall in this bucket. A network rule cannot help there; the local proxy keeps Chrome off loopback (see docs/SECURITY-CONTROLS.md).
+- Whatever you put in `EGRESS_ALLOW` and `EGRESS_ALLOW_DNS`: page content can reach those addresses too. List the receiver's exact address and port, nothing wider.
+- Public internet destinations. The service renders your public site and its assets, so those stay open by design.
+- Other containers on the same Docker network ARE covered (they sit on private addresses), which is why the receiver exception matters.
+
+### Known limitations
+
+- Tested with Docker Engine 29.8.1 on Docker Desktop (Compose 5.5.1) against the real service image. Not yet run on a plain Linux host: if you try it there, the guard's own log (`docker logs critical-css-egress-guard` should end with `ready`), the verify command above and the DNS lookup above are the three things to check first.
+- Needs Docker Compose 2.24 or newer (the `!reset` tag in the override).
+- If a resolver that Docker's built-in resolver has to query from inside the container is one of the refused addresses - a private one (a private `dns:` entry; on a Linux host, probably also a router or `10.x` resolver copied from the host, i.e. the resolvers in the host's `/etc/resolv.conf`, or `/run/systemd/resolve/resolv.conf` with systemd-resolved), a link-local one (the default resolvers of AWS and Google Cloud), or Azure's `168.63.129.16` - the rules refuse it and every lookup fails with `SERVFAIL`. Put the resolver in `EGRESS_ALLOW_DNS`, or set `dns:` on the guard to public resolvers. With Docker Desktop's host resolver this was not needed. **On Azure**, a VM whose virtual network uses Azure-provided DNS (the default) resolves through `168.63.129.16`: set `EGRESS_ALLOW_DNS=168.63.129.16` in the `.env` file (this opens port 53 only, the WireServer's HTTP ports stay refused). With custom DNS servers on the network or the NIC the resolver is whatever you configured. This is based on Microsoft's documentation and the firewall behaviour checked here, not on a run on Azure.
+- Needs a kernel with nf_tables or legacy iptables (nearly every current Docker host); the guard prefers nf_tables and falls back to legacy. Hosts without them (some NAS and VPS kernels) cannot run it, and then the service does not start.
+- A host reboot starts containers by their restart policy, not by `depends_on`. The service's start command waits for the rules itself (tested by starting it with no rules in its namespace, where it waited, and adding the rule afterwards, where it started; not tested with an actual host reboot).
+- Compose only. Plain `docker run`, Swarm, Kubernetes and rootless Docker or Podman are untested (on Kubernetes use a `NetworkPolicy` with an `ipBlock` `except` list instead).
+- Do not combine it with `network_mode: host`: the rules would land in the host's namespace.
+- The guard image (`registry.k8s.io/build-image/distroless-iptables`, ~11-13 MB compressed per platform, amd64 and arm64) is pinned by tag and digest; bump it by taking a new digest from `docker buildx imagetools inspect`. The repository's Dependabot `docker` entry covers only `/service`, so this pin has to be bumped by hand.
+
 ## Releases
 
 Only the latest tagged release is supported - deploy from a tagged
