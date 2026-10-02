@@ -110,7 +110,7 @@ On a real post/page that's been processed, view source and check for:
 
 ## Optional: network-level egress filtering
 
-The service renders your site with headless Chrome, and the SSRF checks in `service/lib.js` and `service/server.js` cannot fully police what Chrome connects to by itself (a DNS answer that changes between the check and Chrome's own connect, `<link rel="preconnect">` raw TCP connects, anything a future Chrome feature invents). The reliable fix is at the network level: make private, link-local (cloud metadata), carrier-grade-NAT, multicast and other reserved addresses unreachable from the container, whatever Chrome tries. `docker-compose.egress.example.yml` does that with a small helper container (`egress-guard`) that installs firewall rules in the service's network namespace, using the same address ranges as the code-level check, so the two layers agree. It is a second layer on top of the code-level checks, not a replacement for them.
+The service renders your site with headless Chrome and guards what that Chrome can reach in code: request interception, and a local proxy (`service/ssrf-proxy.js`) that is Chrome's only way onto the network, resolves each name once and refuses private and reserved addresses. A network rule is the independent second line for whatever those miss (a bug in the classifier or the proxy, a future Chrome feature that bypasses the proxy switches, any other process in the container): make private, link-local (cloud metadata), carrier-grade-NAT, multicast and other reserved addresses unreachable from the container, whatever Chrome tries. `docker-compose.egress.example.yml` does that with a small helper container (`egress-guard`) that installs firewall rules in the service's network namespace, using the same address ranges as the code-level check, so the two layers agree. It is a second layer on top of the code-level checks, not a replacement for them.
 
 ### Steps
 
@@ -162,7 +162,7 @@ docker exec critical-css-service node -e "fetch('http://169.254.169.254/',{signa
 
 ### What it does not cover
 
-- Anything inside the container's own namespace. The service's port 3939, Chrome's DevTools port and every `127.0.0.0/8` / `::1` address stay reachable from Chrome, because loopback has to stay open. `*.localhost` names, which Chrome maps to loopback by itself, fall in this bucket. A network rule cannot help there; only keeping Chrome off loopback in code can, which is a separate layer (see docs/SECURITY-CONTROLS.md).
+- Anything inside the container's own namespace. The service's port 3939, Chrome's DevTools port and every `127.0.0.0/8` / `::1` address stay reachable from Chrome, because loopback has to stay open. `*.localhost` names, which Chrome maps to loopback by itself, fall in this bucket. A network rule cannot help there; the local proxy keeps Chrome off loopback (see docs/SECURITY-CONTROLS.md).
 - Whatever you put in `EGRESS_ALLOW` and `EGRESS_ALLOW_DNS`: page content can reach those addresses too. List the receiver's exact address and port, nothing wider.
 - Public internet destinations. The service renders your public site and its assets, so those stay open by design.
 - Other containers on the same Docker network ARE covered (they sit on private addresses), which is why the receiver exception matters.

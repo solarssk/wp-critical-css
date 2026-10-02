@@ -1,11 +1,12 @@
 # Network-level egress filtering for the critical-css-service container.
 #
-# WHY: the service renders pages with headless Chrome, and a page can make
-# Chrome connect to places the service's own code-level SSRF checks cannot
-# fully police (DNS answers that change between the check and Chrome's own
-# connect, <link rel="preconnect"> raw TCP connects, ...). The reliable
-# fix is to make those destinations unreachable from the container at all,
-# whatever Chrome tries. This file does that: it blocks the container's
+# WHY: the service renders pages with headless Chrome and guards what that
+# Chrome can reach in code (request interception, and a local proxy that is
+# Chrome's only way onto the network). A network rule is the independent
+# second line for whatever those miss - a bug in the classifier or the proxy,
+# a future Chrome feature that bypasses the proxy switches, any other process
+# in the container: make the dangerous destinations unreachable from the
+# container at all, whatever tries. This file does that: it blocks the container's
 # outbound traffic to private, link-local (cloud metadata, 169.254.169.254),
 # carrier-grade-NAT, multicast and other reserved addresses, for IPv4 and
 # IPv6, and leaves the public internet and the few private addresses you
@@ -101,8 +102,8 @@
 #   reachable from Chrome (loopback must stay open, node and Chrome talk
 #   over it, and so does Docker's DNS at 127.0.0.11), and `*.localhost`
 #   names, which Chrome maps to loopback itself, fall in the same bucket.
-#   A network rule cannot help there; only keeping Chrome off loopback in
-#   code can (see docs/SECURITY-CONTROLS.md).
+#   A network rule cannot help there; the local proxy in service/ssrf-proxy.js
+#   keeps Chrome off loopback (see docs/SECURITY-CONTROLS.md).
 # * Whatever you put in EGRESS_ALLOW / EGRESS_ALLOW_DNS.
 # * Public internet destinations (by design: the service renders your public
 #   site and its assets).
