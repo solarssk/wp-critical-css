@@ -620,32 +620,23 @@ describe('peers, departed clients and truncated upstreams', () => {
 		await new Promise((resolve) => echo.server.close(resolve));
 	});
 
-	test('a CONNECT client that hung up during the lookup does not leave a tunnel behind', async () => {
-		const upstreamClosed = new Promise((resolve) => {
-			const server = net.createServer((socket) => {
-				socket.on('error', () => {});
-				socket.on('data', () => {});
-				socket.on('close', () => {
-					server.close();
-					resolve(true);
-				});
-			});
-			server.listen(0, '127.0.0.1', async () => {
-				const proxy = createSsrfProxy({
-					lookup: () => delay(80).then(() => [{ address: '127.0.0.1', family: 4 }]),
-					isBlockedAddress: () => false,
-					logger: recordingLogger(),
-				});
-				const proxyPort = await proxy.listen();
-				const tunnel = net.connect(proxyPort, '127.0.0.1');
-				tunnel.on('error', () => {});
-				tunnel.write(`CONNECT public.test:${server.address().port} HTTP/1.1\r\nHost: x\r\n\r\n`);
-				await delay(20);
-				tunnel.destroy();
-				setTimeout(() => proxy.close(), 1500).unref();
-			});
+	test('a CONNECT client that hung up during the lookup does not get a connection made for it at all', async () => {
+		const echo = await startEcho();
+		const proxy = createSsrfProxy({
+			lookup: () => delay(80).then(() => [{ address: '127.0.0.1', family: 4 }]),
+			isBlockedAddress: () => false,
+			logger: recordingLogger(),
 		});
-		assert.equal(await Promise.race([upstreamClosed, delay(1400).then(() => false)]), true);
+		const proxyPort = await proxy.listen();
+		const tunnel = net.connect(proxyPort, '127.0.0.1');
+		tunnel.on('error', () => {});
+		tunnel.write(`CONNECT public.test:${echo.port} HTTP/1.1\r\nHost: x\r\n\r\n`);
+		await delay(20);
+		tunnel.destroy();
+		await delay(300);
+		assert.equal(echo.connections, 0);
+		await proxy.close();
+		await new Promise((resolve) => echo.server.close(resolve));
 	});
 
 	test('closes the upstream socket when the client hangs up while the connection is being made', async () => {
@@ -1539,5 +1530,140 @@ describe('responses that go wrong half way', () => {
 		assert.ok(!out.includes('0\r\n\r\n'), 'the truncated body must not end like a complete one');
 		await proxy.close();
 		await new Promise((resolve) => upstream.close(resolve));
+	});
+});
+
+describe('a queued lookup nobody waits for any more is not run', () => {
+	/** cap 1: 'slow.test' holds the only slot until its gate is opened, so whatever is asked next queues behind it. */
+	async function proxyWithOneSlot() {
+		const calls = [];
+		const gates = [];
+		const proxy = createSsrfProxy({
+			lookup: (name) => {
+				calls.push(name);
+				return new Promise((resolve) => gates.push(() => resolve([{ address: '127.0.0.1', family: 4 }])));
+			},
+			isBlockedAddress: () => false,
+			connect: () => new net.Socket(),
+			connectTimeoutMs: 30,
+			maxConcurrentLookups: 1,
+			lookupTimeoutMs: 5000, // far away: only the client leaving can be what drops the job
+			logger: recordingLogger(),
+		});
+		const proxyPort = await proxy.listen();
+		const hold = connectVia(proxyPort, 'slow.test:443'); // running, not answered
+		await delay(30);
+		return { proxy, proxyPort, calls, gates, hold };
+	}
+	const plainVia = (proxyPort, name) => {
+		const socket = net.connect(proxyPort, '127.0.0.1');
+		socket.on('error', () => {});
+		socket.write(`GET http://${name}/ HTTP/1.1\r\nHost: ${name}\r\n\r\n`);
+		return socket;
+	};
+	const tunnelVia = (proxyPort, name) => {
+		const socket = net.connect(proxyPort, '127.0.0.1');
+		socket.on('error', () => {});
+		socket.write(`CONNECT ${name}:443 HTTP/1.1\r\nHost: ${name}:443\r\n\r\n`);
+		return socket;
+	};
+
+	for (const [kind, via] of [
+		['plain request', plainVia],
+		['CONNECT tunnel', tunnelVia],
+	]) {
+		test(`${kind}: the client leaves while its name waits for a thread, so the lookup never runs`, async () => {
+			const { proxy, proxyPort, calls, gates, hold } = await proxyWithOneSlot();
+			const client = via(proxyPort, 'queued.test');
+			await delay(50);
+			client.destroy();
+			await delay(50);
+			gates[0](); // the slow lookup settles, a slot opens
+			await hold;
+			await delay(50);
+			assert.deepEqual(calls, ['slow.test']);
+			await proxy.close();
+		});
+	}
+
+	test('a client that resets the connection (no orderly end) while its name waits is noticed too', async () => {
+		const { proxy, proxyPort, calls, gates, hold } = await proxyWithOneSlot();
+		const client = plainVia(proxyPort, 'reset.test');
+		await delay(50);
+		client.resetAndDestroy();
+		await delay(50);
+		gates[0]();
+		await hold;
+		await delay(50);
+		assert.deepEqual(calls, ['slow.test']);
+		await proxy.close();
+	});
+
+	test('a lookup that one live client still waits for runs, even if the other client that asked for the same name left', async () => {
+		const { proxy, proxyPort, calls, gates, hold } = await proxyWithOneSlot();
+		const leaving = tunnelVia(proxyPort, 'shared.test');
+		const staying = tunnelVia(proxyPort, 'shared.test');
+		await delay(50);
+		leaving.destroy();
+		await delay(50);
+		gates[0]();
+		await hold;
+		await delay(50);
+		assert.deepEqual(calls, ['slow.test', 'shared.test']);
+		staying.destroy();
+		await proxy.close();
+	});
+
+	test('when every client that asked for a shared name has left, the lookup is dropped', async () => {
+		const { proxy, proxyPort, calls, gates, hold } = await proxyWithOneSlot();
+		const first = tunnelVia(proxyPort, 'shared.test');
+		const second = plainVia(proxyPort, 'shared.test');
+		await delay(50);
+		first.destroy();
+		second.destroy();
+		await delay(50);
+		gates[0]();
+		await hold;
+		await delay(50);
+		assert.deepEqual(calls, ['slow.test']);
+		await proxy.close();
+	});
+
+	test('a name asked for again after its queued lookup was dropped gets a fresh lookup', async () => {
+		const { proxy, proxyPort, calls, gates, hold } = await proxyWithOneSlot();
+		const gone = tunnelVia(proxyPort, 'again.test');
+		await delay(50);
+		gone.destroy();
+		await delay(50);
+		gates[0]();
+		await hold;
+		const back = tunnelVia(proxyPort, 'again.test');
+		await delay(80);
+		assert.deepEqual(calls, ['slow.test', 'again.test']);
+		back.destroy();
+		await proxy.close();
+	});
+
+	test('one keep-alive connection carrying many requests adds no listeners per request', async () => {
+		const target = await startHttpTarget();
+		const proxy = createSsrfProxy({ lookup: async () => [{ address: '127.0.0.1', family: 4 }], isBlockedAddress: () => false, logger: recordingLogger() });
+		const proxyPort = await proxy.listen();
+		const warnings = [];
+		const onWarning = (warning) => warnings.push(warning.name);
+		process.on('warning', onWarning);
+		const socket = net.connect(proxyPort, '127.0.0.1');
+		socket.on('error', () => {});
+		socket.on('data', () => {});
+		for (let i = 0; i < 25; i++) {
+			socket.write(`GET http://public.test:${target.port}/${i} HTTP/1.1\r\nHost: public.test\r\n\r\n`);
+			await delay(5);
+		}
+		await delay(100);
+		process.removeListener('warning', onWarning);
+		assert.deepEqual(warnings, []);
+		assert.ok(target.requests.length >= 20);
+		socket.destroy();
+		await proxy.close();
+		await new Promise((resolve) => target.server.close(resolve));
 	});
 });
