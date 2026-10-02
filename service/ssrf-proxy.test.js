@@ -1175,37 +1175,201 @@ describe('connect attempts', () => {
 	});
 });
 
-describe('name lookups share a thread pool and are capped', () => {
-	test('at most maxConcurrentLookups run at once, a slow one counts until it really settles, and refusals are logged', async () => {
-		const gates = [];
-		const logger = recordingLogger();
-		const proxy = createSsrfProxy({
-			lookup: () =>
-				new Promise((resolve) => {
-					gates.push(() => resolve([{ address: '1.1.1.1', family: 4 }]));
-				}),
+describe('name lookups share a thread pool: they queue, share, and are reused', () => {
+	/** A proxy whose connect never succeeds: 502 means the name resolved AND passed the policy, 403 means it was refused. */
+	function proxyWith(options) {
+		return createSsrfProxy({
 			isBlockedAddress: () => false,
 			connect: () => new net.Socket(),
 			connectTimeoutMs: 30,
-			lookupTimeoutMs: 60,
+			logger: recordingLogger(),
+			...options,
+		});
+	}
+	const statusOf = (proxyPort, name) => connectVia(proxyPort, `${name}:443`).then((r) => r.status);
+
+	test('lookups beyond the cap wait their turn instead of being refused, and never run more than the cap at once', async () => {
+		let running = 0;
+		let peak = 0;
+		let calls = 0;
+		const proxy = proxyWith({
+			lookup: async () => {
+				calls++;
+				running++;
+				peak = Math.max(peak, running);
+				await delay(40);
+				running--;
+				return [{ address: '1.1.1.1', family: 4 }];
+			},
 			maxConcurrentLookups: 2,
+			lookupTimeoutMs: 2000,
+		});
+		const proxyPort = await proxy.listen();
+		const statuses = await Promise.all(['a', 'b', 'c', 'd', 'e', 'f'].map((n) => statusOf(proxyPort, `${n}.test`)));
+		assert.deepEqual(statuses, [502, 502, 502, 502, 502, 502]); // every name was resolved, none refused
+		assert.equal(calls, 6);
+		assert.equal(peak, 2);
+		await proxy.close();
+	});
+
+	test('requests for one name that arrive together share one lookup', async () => {
+		let calls = 0;
+		const proxy = proxyWith({
+			lookup: async () => {
+				calls++;
+				await delay(40);
+				return [{ address: '1.1.1.1', family: 4 }];
+			},
+		});
+		const proxyPort = await proxy.listen();
+		const statuses = await Promise.all(Array.from({ length: 5 }, () => statusOf(proxyPort, 'same.test')));
+		assert.deepEqual(statuses, [502, 502, 502, 502, 502]);
+		assert.equal(calls, 1);
+		await proxy.close();
+	});
+
+	test('an answer is reused for lookupCacheMs and looked up again after that; a failed lookup is not remembered', async () => {
+		const calls = [];
+		let failNext = true;
+		const proxy = proxyWith({
+			lookup: async (name) => {
+				calls.push(name);
+				if (failNext) {
+					failNext = false;
+					throw new Error('ENOTFOUND');
+				}
+				return [{ address: '1.1.1.1', family: 4 }];
+			},
+			lookupCacheMs: 150,
+		});
+		const proxyPort = await proxy.listen();
+		assert.equal(await statusOf(proxyPort, 'x.test'), 403); // failed, quietly
+		assert.equal(await statusOf(proxyPort, 'x.test'), 502); // not remembered: looked up again, resolved
+		assert.equal(await statusOf(proxyPort, 'x.test'), 502); // reused
+		assert.equal(calls.length, 2);
+		await delay(200);
+		assert.equal(await statusOf(proxyPort, 'x.test'), 502); // window over: looked up again
+		assert.equal(calls.length, 3);
+		await proxy.close();
+	});
+
+	test('a malformed or empty answer is not remembered: the next request looks the name up again', async () => {
+		const answers = [[null], [], [{ address: '1.1.1.1', family: 4 }]];
+		let calls = 0;
+		const proxy = proxyWith({ lookup: async () => answers[calls++] });
+		const proxyPort = await proxy.listen();
+		assert.equal(await statusOf(proxyPort, 'odd.test'), 403);
+		assert.equal(await statusOf(proxyPort, 'odd.test'), 403);
+		assert.equal(await statusOf(proxyPort, 'odd.test'), 502);
+		assert.equal(calls, 3);
+		await proxy.close();
+	});
+
+	test('within the window a name that changes its answer is still connected to the address that was validated', async () => {
+		const dialled = [];
+		let answer = '1.1.1.1';
+		const proxy = createSsrfProxy({
+			lookup: async () => [{ address: answer, family: 4 }],
+			isBlockedAddress: (address) => address === '10.0.0.1',
+			connect: ({ host }) => {
+				dialled.push(host);
+				return new net.Socket();
+			},
+			connectTimeoutMs: 30,
+			lookupCacheMs: 150,
+			logger: recordingLogger(),
+		});
+		const proxyPort = await proxy.listen();
+		await statusOf(proxyPort, 'flip.test');
+		answer = '10.0.0.1'; // the name now answers with a private address
+		await statusOf(proxyPort, 'flip.test');
+		assert.deepEqual(dialled, ['1.1.1.1', '1.1.1.1']); // never the private one
+		await delay(200);
+		assert.equal(await statusOf(proxyPort, 'flip.test'), 403); // the window is over: judged again, refused
+		assert.deepEqual(dialled, ['1.1.1.1', '1.1.1.1']);
+		await proxy.close();
+	});
+
+	test('an answer that is private is looked up once and refused every time', async () => {
+		let calls = 0;
+		const proxy = createSsrfProxy({
+			lookup: async () => {
+				calls++;
+				return [{ address: '10.0.0.1', family: 4 }];
+			},
+			logger: recordingLogger(),
+		});
+		const proxyPort = await proxy.listen();
+		for (let i = 0; i < 3; i++) {
+			assert.equal(await statusOf(proxyPort, 'internal.test'), 403);
+		}
+		assert.equal(calls, 1);
+		await proxy.close();
+	});
+
+	test('the cache keeps at most maxCachedNames names, oldest out first', async () => {
+		const calls = [];
+		const proxy = proxyWith({
+			lookup: async (name) => {
+				calls.push(name);
+				return [{ address: '1.1.1.1', family: 4 }];
+			},
+			maxCachedNames: 2,
+		});
+		const proxyPort = await proxy.listen();
+		for (const n of ['a.test', 'b.test', 'c.test']) {
+			await statusOf(proxyPort, n);
+		}
+		await statusOf(proxyPort, 'c.test'); // still cached
+		await statusOf(proxyPort, 'a.test'); // evicted: looked up again
+		assert.deepEqual(calls, ['a.test', 'b.test', 'c.test', 'a.test']);
+		await proxy.close();
+	});
+
+	test('a slow lookup keeps its slot until it really settles, and a queued lookup nobody waits for any more is never run', async () => {
+		const calls = [];
+		const gates = [];
+		const proxy = proxyWith({
+			lookup: (name) => {
+				calls.push(name);
+				return new Promise((resolve) => {
+					gates.push(() => resolve([{ address: '1.1.1.1', family: 4 }]));
+				});
+			},
+			maxConcurrentLookups: 1,
+			lookupTimeoutMs: 60,
+		});
+		const proxyPort = await proxy.listen();
+		const [first, second] = await Promise.all([statusOf(proxyPort, 'slow.test'), statusOf(proxyPort, 'queued.test')]);
+		assert.deepEqual([first, second], [403, 403]); // both timed out: one running, one still waiting for a thread
+		assert.deepEqual(calls, ['slow.test']); // the thread is still held
+		gates[0](); // the slow lookup finally settles; the queued one expired and is dropped without a lookup
+		await delay(30);
+		assert.deepEqual(calls, ['slow.test']);
+		assert.equal(await statusOf(proxyPort, 'next.test'), 403); // a new name does get a lookup now (and times out here)
+		assert.deepEqual(calls, ['slow.test', 'next.test']);
+		gates[1]();
+		await proxy.close();
+	});
+
+	test('beyond maxQueuedLookups a name is refused at once and logged', async () => {
+		const logger = recordingLogger();
+		const gates = [];
+		const proxy = proxyWith({
+			lookup: () => new Promise((resolve) => gates.push(() => resolve([{ address: '1.1.1.1', family: 4 }]))),
+			maxConcurrentLookups: 1,
+			maxQueuedLookups: 1,
+			lookupTimeoutMs: 150,
 			logger,
 		});
 		const proxyPort = await proxy.listen();
-		const first = await Promise.all([connectVia(proxyPort, 'a.test:443'), connectVia(proxyPort, 'b.test:443')]);
-		assert.deepEqual(
-			first.map((r) => r.status),
-			[403, 403],
-		); // timed out - but the two lookups have not settled, so they still hold their slots
-		assert.equal(gates.length, 2);
-		assert.equal((await connectVia(proxyPort, 'c.test:443')).status, 403);
-		assert.equal(gates.length, 2, 'a third lookup was started');
-		assert.ok(logger.warnings.some((line) => /too many name lookups/.test(line)));
-		gates.forEach((release) => release());
+		const first = statusOf(proxyPort, 'one.test'); // running
+		const second = statusOf(proxyPort, 'two.test'); // queued
 		await delay(30);
-		await connectVia(proxyPort, 'd.test:443'); // slots are free again
-		assert.equal(gates.length, 3);
-		gates[2]();
+		assert.equal(await statusOf(proxyPort, 'three.test'), 403); // the queue is full
+		assert.ok(logger.warnings.some((line) => /too many name lookups queued/.test(line)));
+		await Promise.all([first, second]);
+		gates.forEach((release) => release());
 		await proxy.close();
 	});
 
