@@ -9,9 +9,10 @@
 # outbound traffic to private, link-local (cloud metadata, 169.254.169.254),
 # carrier-grade-NAT, multicast and other reserved addresses, for IPv4 and
 # IPv6, and leaves the public internet and the few private addresses you
-# list (your WordPress receiver) open. It uses the same address ranges as
-# BLOCKED_IPV4_CIDRS / the IPv6 allow-list in service/lib.js, so the network
-# and the code agree on what "private or reserved" means.
+# list (your WordPress receiver) open. It mirrors BLOCKED_IPV4_CIDRS and the
+# IPv6 allow-list of service/lib.js, so the network and the code agree on what
+# "private or reserved" means. Keep the lists identical when you change either
+# (a unit test in service/ compares them).
 #
 # HOW: a tiny helper container ("egress-guard") owns the network namespace
 # (the container's private network stack), installs the rules in it with
@@ -63,23 +64,24 @@
 #                   the delivery is blocked. Allow only what is needed:
 #                   anything listed here is reachable by page content too.
 # EGRESS_ALLOW_DNS  Space-separated DNS resolver addresses (port 53, UDP and
-#                   TCP). When a container's DNS server is a private address
-#                   (a `dns:` entry, or a router / 10.x / 192.168.x resolver
-#                   copied from the host), Docker's built-in DNS (127.0.0.11)
-#                   queries it from INSIDE the container's namespace, so the
-#                   rules below would refuse it and every lookup would fail
-#                   (SERVFAIL). List such resolvers here, e.g.
+#                   TCP). When a resolver that Docker's built-in DNS
+#                   (127.0.0.11) forwards to is one of the addresses these
+#                   rules refuse - a private address (a `dns:` entry, or a
+#                   router / 10.x / 192.168.x resolver copied from the host),
+#                   a link-local one (the AWS and Google Cloud default
+#                   resolvers) or AZURE's 168.63.129.16 - it is queried from
+#                   INSIDE the container's namespace, so every lookup would
+#                   fail (SERVFAIL). List such resolvers here, e.g.
 #                     EGRESS_ALLOW_DNS=192.168.1.1
-#                   or point `dns:` on the guard at public resolvers instead.
+#                   On an Azure VM that uses Azure-provided DNS (the default
+#                   for a virtual network without custom DNS servers):
+#                     EGRESS_ALLOW_DNS=168.63.129.16
+#                   (port 53 only: the WireServer's HTTP ports stay refused).
+#                   Or point `dns:` on the guard at public resolvers instead.
 #                   Leave it empty if your resolvers are public. Not every
 #                   setup needs it (on Docker Desktop the host's resolver was
 #                   not affected); the check under "Verify" below shows
-#                   whether DNS works. ON AZURE the VM's default resolver is
-#                   168.63.129.16, which these rules refuse like any other
-#                   address of that kind: set EGRESS_ALLOW_DNS=168.63.129.16
-#                   there (the code-level check of the same address, in
-#                   service/lib.js, only judges where a page points, not which
-#                   resolver the host uses).
+#                   whether DNS works.
 #
 # Restarts
 # --------
@@ -153,7 +155,7 @@ services:
         log() { echo "egress-guard: $$*"; }
         die() { echo "egress-guard: ERROR: $$*" >&2; exit 1; }
 
-        # Same ranges as BLOCKED_IPV4_CIDRS in service/lib.js (the code-level layer).
+        # Mirrors BLOCKED_IPV4_CIDRS in service/lib.js (the code-level layer); keep the two identical.
         V4_BLOCK='0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 168.63.129.16/32 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4'
         # Same special-purpose blocks inside 2000::/3 as SPECIAL_PURPOSE_IPV6 in service/lib.js.
         V6_BLOCK='2001::/23 2001:db8::/32 2002::/16 2620:4f:8000::/48 3fff::/20 3ffe::/16'

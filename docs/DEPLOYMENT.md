@@ -122,7 +122,9 @@ The service renders your site with headless Chrome, and the SSRF checks in `serv
    # Private destinations the service may still open TCP connections to: ADDRESS:PORT, space-separated.
    # IPv6 is written [fd00::10]:80. Leave empty if WP_RECEIVER_URL is public.
    EGRESS_ALLOW=172.20.0.10:80
-   # Only if your DNS resolver is a private address, see "Known limitations".
+   # Only if your DNS resolver is one of the refused addresses (a private one, a link-local one,
+   # or Azure's 168.63.129.16), see "Known limitations". On Azure with the default DNS:
+   # EGRESS_ALLOW_DNS=168.63.129.16
    EGRESS_ALLOW_DNS=
    ```
 
@@ -169,7 +171,7 @@ docker exec critical-css-service node -e "fetch('http://169.254.169.254/',{signa
 
 - Tested with Docker Engine 29.8.1 on Docker Desktop (Compose 5.5.1) against the real service image. Not yet run on a plain Linux host: if you try it there, the guard's own log (`docker logs critical-css-egress-guard` should end with `ready`), the verify command above and the DNS lookup above are the three things to check first.
 - Needs Docker Compose 2.24 or newer (the `!reset` tag in the override).
-- If your DNS resolver is a private address that Docker's built-in resolver has to query from inside the container (a private `dns:` entry; on a Linux host, probably also a router or `10.x` resolver copied from the host), the rules refuse it and every lookup fails with `SERVFAIL`. Put the resolver in `EGRESS_ALLOW_DNS`, or set `dns:` on the guard to public resolvers. With Docker Desktop's host resolver this was not needed. **On Azure** the VM's default resolver is `168.63.129.16`, one of the refused addresses: set `EGRESS_ALLOW_DNS=168.63.129.16` there (or the lookups fail with `SERVFAIL`).
+- If a resolver that Docker's built-in resolver has to query from inside the container is one of the refused addresses - a private one (a private `dns:` entry; on a Linux host, probably also a router or `10.x` resolver copied from the host, i.e. the resolvers in the host's `/etc/resolv.conf`, or `/run/systemd/resolve/resolv.conf` with systemd-resolved), a link-local one (the default resolvers of AWS and Google Cloud), or Azure's `168.63.129.16` - the rules refuse it and every lookup fails with `SERVFAIL`. Put the resolver in `EGRESS_ALLOW_DNS`, or set `dns:` on the guard to public resolvers. With Docker Desktop's host resolver this was not needed. **On Azure**, a VM whose virtual network uses Azure-provided DNS (the default) resolves through `168.63.129.16`: set `EGRESS_ALLOW_DNS=168.63.129.16` in the `.env` file (this opens port 53 only, the WireServer's HTTP ports stay refused). With custom DNS servers on the network or the NIC the resolver is whatever you configured. This is based on Microsoft's documentation and the firewall behaviour checked here, not on a run on Azure.
 - Needs a kernel with nf_tables or legacy iptables (nearly every current Docker host); the guard prefers nf_tables and falls back to legacy. Hosts without them (some NAS and VPS kernels) cannot run it, and then the service does not start.
 - A host reboot starts containers by their restart policy, not by `depends_on`. Whether the service can come up a moment before the guard's rules on a reboot has not been tested.
 - Compose only. Plain `docker run`, Swarm, Kubernetes and rootless Docker or Podman are untested (on Kubernetes use a `NetworkPolicy` with an `ipBlock` `except` list instead).
