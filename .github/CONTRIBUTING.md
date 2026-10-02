@@ -18,6 +18,10 @@ Branches are prefixed by what they do, matching the labels used on PRs:
 
 Every PR must have a **milestone**, at least one `type:`/`area:`/`prio:` **label**, and an **assignee** set on the PR itself before it's opened - see [pull_request_template.md](pull_request_template.md), which the PR description is required to follow.
 
+## Documentation
+
+The project's GitHub Wiki is generated from `docs/wiki/` - edit those files, never the Wiki itself (it is overwritten after every merge to `main`). Check your change with `node scripts/check-wiki-docs.mjs`: besides links and structure it compares the tables on `docs/wiki/Configuration.md` with the environment variables, `WPCC_*` constants and endpoints in the code, so a new setting needs its row. How the pages are written and what CI checks: [docs/wiki/Editing-the-Wiki.md](../docs/wiki/Editing-the-Wiki.md).
+
 ## Running tests locally
 
 ```bash
