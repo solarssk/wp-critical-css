@@ -146,8 +146,9 @@ services:
     # for the private/reserved ranges. REJECT, not DROP, so a blocked connect
     # fails at once instead of hanging the render until its timeout. IPv6 is
     # an allow-list like in service/lib.js: only 2000::/3 (minus special-purpose
-    # blocks) leaves the container; ICMPv6 is allowed so neighbour discovery
-    # keeps working. Invalid input aborts the script, the guard never turns
+    # blocks) and the NAT64 prefix 64:ff9b::/96 (minus the embedded private
+    # IPv4 ranges) leave the container; ICMPv6 is allowed so neighbour
+    # discovery keeps working. Invalid input aborts the script, the guard never turns
     # healthy, and the service does not start.
     command:
       - |
@@ -199,6 +200,12 @@ services:
           if [ "$$1" = 4 ]; then
             for c in $$V4_BLOCK; do echo "-A OUTPUT -d $$c -j REJECT"; done
           else
+            # NAT64 (RFC 6052): public IPv4-only hosts resolve into 64:ff9b::/96 on an IPv6-only
+            # network with DNS64, and the low 32 bits of such an address ARE an IPv4 address, so an
+            # IPv4 /p is the IPv6 /(96+p). Refuse the embedded private/reserved ranges (the list
+            # above), then let the rest of the prefix out - how service/lib.js classifies it too.
+            for c in $$V4_BLOCK; do echo "-A OUTPUT -d 64:ff9b::$${c%%/*}/$$((96 + $${c##*/})) -j REJECT"; done
+            echo '-A OUTPUT -d 64:ff9b::/96 -j ACCEPT'
             for c in $$V6_BLOCK; do echo "-A OUTPUT -d $$c -j REJECT"; done
             echo '-A OUTPUT -d 2000::/3 -j ACCEPT'
             echo '-A OUTPUT -j REJECT'
@@ -248,3 +255,17 @@ services:
       egress-guard:
         condition: service_healthy # do not start until the rules are installed and verified
         restart: true # `docker compose restart/up` of the guard restarts the service too (its namespace changes)
+    # `depends_on` is only honoured when Compose itself starts things. When Docker
+    # restarts the containers on its own (host or daemon restart, `restart: always`)
+    # the service can start the moment the guard's namespace exists, which is BEFORE
+    # the guard's script has installed the rules. So the service gates itself: node
+    # starts only once a connection to the cloud metadata address is REFUSED locally,
+    # which is what the rules do (the "Verify" check below). Keep the last line in
+    # step with the image's CMD (`node server.js`).
+    command:
+      - sh
+      - -c
+      - |
+        gate() { node -e "const s = require('node:net').connect({ host: '169.254.169.254', port: 80 }); s.setTimeout(2000, () => process.exit(1)); s.on('connect', () => process.exit(1)); s.on('error', (e) => process.exit(e.code === 'ECONNREFUSED' ? 0 : 1));"; }
+        gate || { echo "critical-css-service: waiting for the egress guard's firewall rules"; until gate; do sleep 1; done; }
+        exec node server.js
