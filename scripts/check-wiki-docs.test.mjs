@@ -57,6 +57,7 @@ Use \`SHARED_SECRET\` and \`WPCC_SHARED_SECRET\`, \`UV_THREADPOOL_SIZE\`, \`PORT
 const PHP_FILE = 'wordpress-plugin/wp-critical-css/includes/receiver.php';
 const SERVER = 'service/server.js';
 const DOCKERFILE = 'service/Dockerfile';
+const EGRESS = 'docker-compose.egress.example.yml';
 
 function sidebar() {
 	return REQUIRED_PAGES.map((page) => `- [${page}](${page})`).join('\n') + '\n';
@@ -71,7 +72,7 @@ function validRepository() {
 	files.set('docs/wiki/_Sidebar.md', sidebar());
 	files.set('docs/wiki/Configuration.md', CONFIGURATION);
 	files.set('docs/wiki/Getting-Started.md', '# Getting Started\n\nNeeds WordPress 6.0 and PHP 7.4.\n');
-	files.set('docs/wiki/Network-Egress-Filtering.md', '# Network Egress Filtering\n\nSet `EGRESS_ALLOW`.\n');
+	files.set('docs/wiki/Network-Egress-Filtering.md', '# Network Egress Filtering\n\n## Settings\n\n| Variable | What it does |\n|---|---|\n| `EGRESS_ALLOW` | Allow-list. |\n');
 	files.set('docs/DEPLOYMENT.md', '# Deployment\n\n## Releases\n');
 	files.set(SERVER, [
 		'// A comment may mention process.env.ONLY_IN_A_COMMENT and app.post(\'/in-a-comment\') freely.',
@@ -105,7 +106,12 @@ function validRepository() {
 		"register_rest_route( 'wpcc/v1', '/critical-css', array( 'methods' => 'POST' ) );",
 	].join('\n'));
 	files.set('.env.example', 'PORT=3939\nSHARED_SECRET=placeholder\n');
-	files.set('docker-compose.egress.example.yml', 'environment:\n  EGRESS_ALLOW: ${EGRESS_ALLOW:-}\n');
+	files.set(EGRESS, [
+		'# A comment may mention ${EGRESS_ONLY_IN_A_COMMENT} freely.',
+		'environment:',
+		'  EGRESS_ALLOW: ${EGRESS_ALLOW:-} # and ${EGRESS_IN_A_TRAILING_COMMENT}',
+		'command: for e in $${EGRESS_SHELL_VARIABLE:-}; do :; done',
+	].join('\n'));
 	return files;
 }
 
@@ -221,7 +227,20 @@ describe('checkWiki', () => {
 		['a plugin requirement the docs do not state', (files) => edit(files, 'wordpress-plugin/wp-critical-css/wp-critical-css.php', '7.4', '8.1'), 'PHP 8.1'],
 		['a longer version that only starts like the required one', (files) => edit(files, 'docs/wiki/Getting-Started.md', 'PHP 7.4.', 'PHP 7.40.'), 'does not say "PHP 7.4"'],
 		['a plugin header without a requirement', (files) => files.set('wordpress-plugin/wp-critical-css/wp-critical-css.php', '<?php\n'), 'has no "Requires at least" header'],
-		['an egress variable the docs do not describe', (files) => edit(files, 'docker-compose.egress.example.yml', 'EGRESS_ALLOW:', 'EGRESS_ALLOW_NEW: ${EGRESS_ALLOW_NEW:-}\n  EGRESS_ALLOW:'), 'reads EGRESS_ALLOW_NEW'],
+		['an egress variable the docs do not describe', (files) => edit(files, EGRESS, 'environment:', 'environment:\n  EGRESS_ALLOW_NEW: ${EGRESS_ALLOW_NEW:-}'), 'reads EGRESS_ALLOW_NEW'],
+		['an egress variable the docs describe but the active lines no longer read', (files) => edit(files, EGRESS, '  EGRESS_ALLOW: ${EGRESS_ALLOW:-} # and ${EGRESS_IN_A_TRAILING_COMMENT}\n', '# EGRESS_ALLOW: ${EGRESS_ALLOW:-}\n'), 'EGRESS_ALLOW is documented in docs/wiki/Network-Egress-Filtering.md ("Settings") but'],
+		['an egress row without a variable', (files) => edit(files, 'docs/wiki/Network-Egress-Filtering.md', '| `EGRESS_ALLOW` |', '| `EGRESS_OLD` | Old. |\n| `EGRESS_ALLOW` |'), 'EGRESS_OLD is documented'],
+		['an egress page without its Settings section', (files) => edit(files, 'docs/wiki/Network-Egress-Filtering.md', '## Settings', '## Options'), 'no "## Settings" section'],
+		['an image that points out of the wiki folder at an existing file', (files) => {
+			files.set('README.md', 'readme\n');
+			files.set('docs/wiki/Home.md', '# Home\n\n![outside](../../README.md)\n');
+		}, 'uses the image ../../README.md, which is not a file under docs/wiki/images'],
+		['an image that is a page', home('![page](Home.md)\n'), 'uses the image Home.md'],
+		['an image that climbs out of images/ and back', (files) => {
+			files.set('docs/wiki/images/a.png', 'png');
+			files.set('docs/wiki/Home.md', '# Home\n\n![page](images/../Home.md)\n');
+		}, 'uses the image images/../Home.md'],
+		['a repository link that leaves the repository', home(`[x](${REPO}/blob/main/../outside.md)\n`), 'outside this repository'],
 		['a source file that moved', (files) => files.delete(SERVER), 'service/server.js is missing'],
 		['a missing table', (files) => edit(files, 'docs/wiki/Configuration.md', '## Endpoints', '## Routes'), 'no "## Endpoints" section'],
 	];

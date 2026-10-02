@@ -22,7 +22,7 @@ That makes the documentation reviewable like code, versioned with the release it
 - **The first line is the title**, `# Getting Started` - the file name with spaces - and it is the only `# ` heading on the page. (`Home` may use any title.)
 - **Link pages by name, with no extension:** `[Configuration](Configuration)`, or to a heading with `[text](Configuration#endpoints)`. A link to another folder or a `.md` file would break in the Wiki.
 - **Link repository files by their full address:** `https://github.com/solarssk/wp-critical-css/blob/main/docs/DEPLOYMENT.md#releases`. CI checks that the file, and the heading, exist.
-- **Images** go under `docs/wiki/images/` (by convention; CI only requires the file to exist under `docs/wiki/`) and need alt text.
+- **Images** go under `docs/wiki/images/` (CI rejects an image path that points anywhere else, because only `docs/wiki/` is published) and need alt text.
 - **No real secrets or real hosts in examples.** Use placeholders and `example.com`.
 - **New page:** create the file, add it to `_Sidebar.md`, and - if the Wiki cannot do without it - add its name to `REQUIRED_PAGES` in `scripts/check-wiki-docs.mjs`.
 
@@ -33,11 +33,11 @@ The `wiki-docs` job in `ci.yml` runs on every pull request and on every push to 
 | Check | What fails it |
 |---|---|
 | Structure | A required page is missing; a page name with characters other than letters, digits and hyphens; a page with no title, a title that is not its file name, or a second `# ` heading; a page the sidebar does not link to; trailing whitespace, a space before a tab, a conflict marker or a blank line at the end of a page (what `git diff --check` rejects when publishing); anything in `docs/wiki/` that is not a regular Markdown page or an image under `images/` (symbolic links and hidden files would be published unchecked). |
-| Links | A link to a page, heading or repository file that does not exist; a relative link that would break in the Wiki; an image without alt text. |
+| Links | A link to a page, heading or repository file that does not exist (or a repository link that leaves the repository); a relative link that would break in the Wiki; an image without alt text. |
 | Secrets | A 64-character hex value, which looks like a real shared secret. |
 | Reference tables | The tables on [Configuration](Configuration) no longer match the code, see below. |
 | Requirements | [Getting Started](Getting-Started) does not state the WordPress and PHP versions the plugin header requires. |
-| Egress variables | A variable of `docker-compose.egress.example.yml` is not documented on [Network Egress Filtering](Network-Egress-Filtering). |
+| Egress variables | A `${EGRESS_...}` substitution on an active line of `docker-compose.egress.example.yml` (comments do not count) has no row in the **Settings** table of [Network Egress Filtering](Network-Egress-Filtering), or a row there names a variable the file no longer reads. |
 | The checkers | The unit tests of the two checker scripts fail. |
 | Documentation impact (pull requests) | The pull request's *Documentation impact* section contradicts its diff, see below. |
 

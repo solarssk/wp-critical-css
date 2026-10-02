@@ -18,7 +18,7 @@
 //
 // Usage: node scripts/check-wiki-docs.mjs
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_URL = 'https://github.com/solarssk/wp-critical-css';
@@ -344,7 +344,8 @@ function resolveRepoLink(root, link) {
 	} catch {
 		return `has a link with a malformed address (${link.target})`;
 	}
-	const absolute = join(root, path);
+	const absolute = resolve(root, path);
+	if (!isInside(root, absolute)) return `links to ${path}, which is outside this repository`;
 	if (!existsSync(absolute)) return `links to ${path} in this repository, which does not exist`;
 	if (anchor && path.endsWith('.md') && !headingAnchors(readFileSync(absolute, 'utf8')).has(anchor)) {
 		return `links to #${anchor} in ${path}, but that file has no such heading`;
@@ -352,13 +353,25 @@ function resolveRepoLink(root, link) {
 	return null;
 }
 
+/** Whether `path` is a proper descendant of `directory` (a `..` segment cannot lead out of it). */
+function isInside(directory, path) {
+	const inside = relative(directory, path);
+	return inside !== '' && !inside.startsWith('..') && !isAbsolute(inside);
+}
+
+/** An image has to be a file under docs/wiki/images: that is all publish-wiki.yml copies, so a path
+ * that leaves the folder (or names a page) would be a broken image in the published Wiki. */
+function resolveImage(wikiRoot, link) {
+	const images = join(wikiRoot, 'images');
+	const absolute = resolve(images, '..', link.target);
+	return isInside(images, absolute) && existsSync(absolute) ? null : `uses the image ${link.target}, which is not a file under docs/wiki/images`;
+}
+
 function checkLink({ root, wikiRoot, file, link, pages }) {
 	if (link.isImage && !link.label) return 'has an image without alternative text';
 	if (/^(?:mailto:|tel:)/i.test(link.target)) return null;
 	if (/^https?:\/\//i.test(link.target)) return resolveRepoLink(root, link);
-	if (link.isImage) {
-		return existsSync(join(wikiRoot, link.target)) ? null : `uses the image ${link.target}, which is not under docs/wiki`;
-	}
+	if (link.isImage) return resolveImage(wikiRoot, link);
 	return resolveWikiLink(file, link, pages);
 }
 
@@ -596,9 +609,13 @@ function readEnvExampleKeys(root, problems) {
 	return new Set([...text.matchAll(new RegExp(`^(${NAME})=`, 'gm'))].map((match) => match[1]));
 }
 
+/** The EGRESS_* variables Compose substitutes in the example file: its active lines only (a comment
+ * that mentions one is not a setting), and not the `$${...}` escapes, which are the container's own
+ * shell variables. */
 function readEgressVariables(root, problems) {
 	const text = readText(root, EGRESS_COMPOSE_FILE, problems);
-	return new Set([...text.matchAll(/\$\{(EGRESS_[A-Z0-9_]+)/g)].map((match) => match[1]));
+	const active = text.split('\n').filter((line) => !line.trimStart().startsWith('#')).map((line) => line.split(' #', 1)[0]).join('\n');
+	return new Set([...active.matchAll(/(?<!\$)\$\{(EGRESS_[A-Z0-9_]+)/g)].map((match) => match[1]));
 }
 
 function readPluginRequirements(root, problems) {
@@ -710,10 +727,19 @@ function checkRequirements(gettingStarted, requirements) {
 	return problems;
 }
 
+/** The "Settings" table of the egress page against the variables the example file substitutes, in
+ * both directions. */
 function checkEgressVariables(egressPage, variables) {
-	return [...variables]
-		.filter((name) => !mentionsCode(egressPage, name))
-		.map((name) => `${EGRESS_COMPOSE_FILE} reads ${name}, but docs/wiki/Network-Egress-Filtering.md does not document it.`);
+	if (tableRows(egressPage, 'Settings') === null) return ['docs/wiki/Network-Egress-Filtering.md has no "## Settings" section.'];
+	const problems = [];
+	const documented = documentedRows('Network-Egress-Filtering', egressPage, ['Settings'], problems);
+	for (const name of variables) {
+		if (!documented.has(name)) problems.push(`${EGRESS_COMPOSE_FILE} reads ${name}, but it has no row in docs/wiki/Network-Egress-Filtering.md ("Settings").`);
+	}
+	for (const name of documented.keys()) {
+		if (!variables.has(name)) problems.push(`${name} is documented in docs/wiki/Network-Egress-Filtering.md ("Settings") but ${EGRESS_COMPOSE_FILE} no longer reads it.`);
+	}
+	return problems;
 }
 
 function checkAgainstCode(root, pages) {

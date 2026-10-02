@@ -10,13 +10,7 @@ This page is the working summary. The complete behaviour, the restart table and 
 
 1. **Find out where `WP_RECEIVER_URL` points.** A public address (`https://your-site.example/...`) needs no exception. A private one (WordPress in another container, a LAN host, `host.docker.internal`) needs its IP address and port. Give a WordPress container a fixed address (`ipv4_address:` in its network, which needs an `ipam` subnet), or a recreated container gets a new address and delivery is refused.
 2. **Copy the example** next to your `docker-compose.yml`, and replace `your_wordpress_network` with the network name your own compose file uses.
-3. **Add two lines to the `.env` next to your `docker-compose.yml`:**
-
-   | Variable | Value |
-   |---|---|
-   | `EGRESS_ALLOW` | Private destinations the service may still open TCP connections to, as space-separated `ADDRESS:PORT` pairs, e.g. `172.20.0.10:80`. IPv6 is written `[fd00::10]:80`. Leave it empty if `WP_RECEIVER_URL` is public. List the receiver's exact address and port, nothing wider. |
-   | `EGRESS_ALLOW_DNS` | Only if your DNS resolver is itself one of the refused addresses (a private or link-local one, or Azure's `168.63.129.16`). Space-separated resolver addresses, port 53 only. |
-
+3. **Add the settings below to the `.env` next to your `docker-compose.yml`** (see [Settings](#settings)): `EGRESS_ALLOW` with your receiver's `ADDRESS:PORT` if it is private, and `EGRESS_ALLOW_DNS` only if your resolver needs it.
 4. **Move networking settings to the guard.** The service now shares the guard's network namespace, so `ports`, `expose`, `dns`, `dns_search`, `extra_hosts`, `hostname` and `sysctls` belong on the `egress-guard` service, not on `critical-css-service`. Docker refuses `ports`, `expose`, `dns`, `extra_hosts` and `hostname` on a service that uses `network_mode: service:...` (checked with Docker Engine 29.8.1 and Compose 5.5.1); `dns_search` is ignored without an error, and a `net.*` sysctl on the service changes the shared namespace, so neither belongs there.
 5. **Start both files together:**
 
@@ -35,6 +29,15 @@ docker inspect -f '{{.HostConfig.NetworkMode}}' critical-css-service
 It must print `container:` followed by an ID; a network name such as `<project>_<network>` means the guard is bypassed.
 
 You need Docker Compose 2.24 or newer.
+
+## Settings
+
+Read from the `.env` next to your `docker-compose.yml` when the guard is created. Both are optional.
+
+| Variable | Value |
+|---|---|
+| `EGRESS_ALLOW` | Private destinations the service may still open TCP connections to, as space-separated `ADDRESS:PORT` pairs, e.g. `172.20.0.10:80`. IPv6 is written `[fd00::10]:80`. Leave it empty if `WP_RECEIVER_URL` is public. List the receiver's exact address and port, nothing wider. |
+| `EGRESS_ALLOW_DNS` | Only if your DNS resolver is itself one of the refused addresses (a private or link-local one, or Azure's `168.63.129.16`). Space-separated resolver addresses, port 53 only. |
 
 ## Verify it
 
