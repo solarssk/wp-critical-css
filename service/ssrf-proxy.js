@@ -9,7 +9,8 @@
  * decision at the one place every connection has to pass closes all of them:
  * Chrome is launched with `--proxy-server` pointing here, so for every
  * http:// request and every CONNECT tunnel (https://, wss://, ws://) THIS
- * code resolves the name ONCE, classifies EVERY resulting address with the
+ * code resolves the name (once per request, the answer reused for a few
+ * seconds), classifies EVERY resulting address with the
  * same policy as the rest of the service (isPrivateOrReservedAddress in
  * lib.js), and then connects to that exact, already-validated IP address -
  * there is no second resolution anywhere that an attacker could answer
@@ -31,7 +32,9 @@
  *   policy refusals are logged, plain resolution failures are not (Chrome's
  *   own background lookups would flood the log with them);
  * - bounded: connection count, idle limit, connect attempts and timeouts, and
- *   the number of name lookups in flight (they run in the shared thread pool).
+ *   the name lookups (they run in the shared thread pool: at most half of it,
+ *   the rest queue; concurrent requests for a name share one lookup and its
+ *   answer is reused for a few seconds).
  *
  * Chrome must also be told not to bypass it for loopback and link-local
  * (`--proxy-bypass-list=<-loopback>`), otherwise it would talk to those
@@ -67,7 +70,12 @@ const noResolution = (_hostname, _options, callback) => callback(new Error('the 
 // service shares (got's lookups, the receiver POST) and which a timeout does
 // NOT free: a lookup that is slow keeps its thread. So at most half of the
 // pool (UV_THREADPOOL_SIZE, 4 by default, 16 in the Dockerfile) may be busy
-// with this proxy's lookups at once; beyond that a name is refused.
+// with this proxy's lookups at once; the others wait in a bounded queue (a
+// page naming a dozen hosts at once is normal, and refusing the surplus would
+// silently drop images and fonts), and concurrent requests for one name share
+// one lookup, whose answer is reused for a few seconds. A queued lookup is
+// dropped, not run, once every client that asked for it has gone or it has
+// waited longer than the lookup timeout.
 const DEFAULT_MAX_CONCURRENT_LOOKUPS = Math.max(1, Math.floor((Number(process.env.UV_THREADPOOL_SIZE) || 4) / 2));
 
 // A name with many addresses gets this many connection attempts, no more.
@@ -97,6 +105,33 @@ export function chromeProxyArgs(proxyPort) {
 
 export function isLoopbackAddress(address) {
 	return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'; // NOSONAR javascript:S1313 - the loopback peer addresses, which are the whole point of this check
+}
+
+const clientWatchers = new WeakMap();
+
+/**
+ * () => true once the client's socket has ended or closed. `destroyed` alone is
+ * not enough: Node stops reading a socket it has handed over as a CONNECT, so
+ * the client leaving shows only as 'end' there. One watcher per socket, however
+ * many requests it carries.
+ */
+function watchClient(socket) {
+	let watcher = clientWatchers.get(socket);
+	if (!watcher) {
+		let gone = false;
+		const mark = () => {
+			gone = true;
+		};
+		socket.once('end', mark); // 'close' and errors leave `destroyed` true, which the watcher also reads
+		watcher = () => gone || socket.destroyed;
+		clientWatchers.set(socket, watcher);
+	}
+	return watcher;
+}
+
+/** A resolver answer that is a non-empty list of { address: string, family: 4 | 6 }. */
+function wellFormed(addresses) {
+	return Array.isArray(addresses) && addresses.length > 0 && addresses.every((a) => a && typeof a.address === 'string' && (a.family === 4 || a.family === 6));
 }
 
 function refuse(socket, status, text) {
@@ -173,6 +208,9 @@ export function createSsrfProxy({
 	logger = console,
 	lookupTimeoutMs = 5_000,
 	maxConcurrentLookups = DEFAULT_MAX_CONCURRENT_LOOKUPS,
+	maxQueuedLookups = 512,
+	lookupCacheMs = 10_000,
+	maxCachedNames = 512,
 	connectTimeoutMs = 10_000,
 	idleTimeoutMs = 120_000,
 	maxConnections = 256,
@@ -181,20 +219,88 @@ export function createSsrfProxy({
 } = {}) {
 	const sockets = new Set();
 
-	let lookupsInFlight = 0;
+	// --- name lookups: cache -> one shared lookup per name -> bounded queue -> thread pool
+	const answers = new Map(); // name -> { addresses, expires }; Map order = age, oldest first
+	const lookupsByName = new Map(); // name -> { promise, watchers }: the one lookup in progress for it
+	const queued = []; // { name, deadline, watchers, resolve, reject }
+	let lookupsRunning = 0;
 
-	/** lookup() with a timeout, counted as in flight until it REALLY settles (see DEFAULT_MAX_CONCURRENT_LOOKUPS). */
-	function limitedLookup(name) {
-		lookupsInFlight++;
-		const pending = Promise.resolve().then(() => lookup(name, { all: true }));
-		const release = () => {
-			lookupsInFlight--;
-		};
-		pending.then(release, release);
-		return withTimeout(pending, lookupTimeoutMs, 'lookup timed out');
+	function pumpLookups() {
+		while (lookupsRunning < maxConcurrentLookups && queued.length > 0) {
+			const job = queued.shift();
+			if (Date.now() >= job.deadline) {
+				job.reject(new Error('lookup timed out while waiting for a free thread')); // nobody is waiting for this any more
+				continue;
+			}
+			if (job.watchers.every((gone) => gone())) {
+				// Every client that asked for this name has left: it would only burn a thread.
+				job.reject(new Error('lookup abandoned: every client that asked for it has gone'));
+				continue;
+			}
+			lookupsRunning++;
+			const pending = Promise.resolve().then(() => lookup(job.name, { all: true }));
+			pending.then(job.resolve, job.reject);
+			// The slot is freed when the lookup REALLY settles, not when its
+			// caller gave up: a lookup that is slow keeps its thread.
+			const release = () => {
+				lookupsRunning--;
+				pumpLookups();
+			};
+			pending.then(release, release);
+		}
 	}
 
-	async function resolveAllowedAddresses(hostname) {
+	function queueLookup(name, watchers) {
+		return new Promise((resolve, reject) => {
+			if (queued.length >= maxQueuedLookups) {
+				reject(Object.assign(new Error('too many name lookups queued'), { code: 'LOOKUP_QUEUE_FULL' }));
+				return;
+			}
+			queued.push({ name, deadline: Date.now() + lookupTimeoutMs, watchers, resolve, reject });
+			pumpLookups();
+		});
+	}
+
+	/**
+	 * The addresses of `name`, from a recent answer, a lookup already in progress, or a new queued one.
+	 * `isGone()` says whether the client that asks has left; a queued lookup is dropped once every client that asked for it has.
+	 */
+	function addressesOf(name, isGone) {
+		const known = answers.get(name);
+		if (known && known.expires > Date.now()) {
+			return Promise.resolve(known.addresses);
+		}
+		let entry = lookupsByName.get(name);
+		if (entry) {
+			entry.watchers.push(isGone);
+		} else {
+			const watchers = [isGone];
+			const promise = queueLookup(name, watchers)
+				.then((addresses) => {
+					if (wellFormed(addresses)) {
+						// Reusing an answer cannot help a rebinding name: every connection in
+						// the window goes to an address that was validated, and a changed answer
+						// is validated again once the window is over.
+						answers.delete(name);
+						answers.set(name, { addresses, expires: Date.now() + lookupCacheMs });
+						if (answers.size > maxCachedNames) {
+							answers.delete(answers.keys().next().value);
+						}
+					}
+					return addresses;
+				})
+				.finally(() => {
+					if (lookupsByName.get(name) === entry) {
+						lookupsByName.delete(name);
+					}
+				});
+			entry = { promise, watchers };
+			lookupsByName.set(name, entry);
+		}
+		return withTimeout(entry.promise, lookupTimeoutMs, 'lookup timed out');
+	}
+
+	async function resolveAllowedAddresses(hostname, isGone = () => false) {
 		const clean = hostname.replace(/^\[/, '').replace(/\]$/, '');
 		const family = net.isIP(clean);
 		if (family !== 0) {
@@ -204,19 +310,19 @@ export function createSsrfProxy({
 		if (name === 'localhost' || name.endsWith('.localhost')) {
 			return { ok: false, reason: 'localhost name' };
 		}
-		if (lookupsInFlight >= maxConcurrentLookups) {
-			return { ok: false, reason: 'too many name lookups in flight' };
-		}
 		let addresses;
 		try {
-			addresses = await limitedLookup(name);
-		} catch {
+			addresses = await addressesOf(name, isGone);
+		} catch (error) {
+			if (error?.code === 'LOOKUP_QUEUE_FULL') {
+				return { ok: false, reason: 'too many name lookups queued' };
+			}
 			return { ok: false, quiet: true, reason: 'name did not resolve' };
 		}
 		if (!Array.isArray(addresses) || addresses.length === 0) {
 			return { ok: false, quiet: true, reason: 'name did not resolve' };
 		}
-		if (!addresses.every((a) => a && typeof a.address === 'string' && (a.family === 4 || a.family === 6))) {
+		if (!wellFormed(addresses)) {
 			return { ok: false, reason: 'resolver returned a malformed answer' };
 		}
 		if (addresses.some((a) => isBlockedAddress(a.address, a.family))) {
@@ -317,25 +423,23 @@ export function createSsrfProxy({
 			return send(501);
 		}
 		const port = url.port ? Number(url.port) : 80;
-		const verdict = await resolveAllowedAddresses(url.hostname);
+		const gone = watchClient(req.socket);
+		const verdict = await resolveAllowedAddresses(url.hostname, gone);
 		if (!verdict.ok) {
 			if (!verdict.quiet) {
 				logRefusal(url.hostname, port, verdict.reason);
 			}
 			return send(403);
 		}
-		if (req.socket.destroyed) {
-			return;
-		}
 		// The same fallback and connect timeout as a tunnel gets; the validated
 		// socket is then handed to the HTTP client, which never resolves a name.
 		let upstreamSocket;
 		try {
-			upstreamSocket = await connectAny(verdict.addresses, port, () => req.socket.destroyed);
+			upstreamSocket = await connectAny(verdict.addresses, port, gone);
 		} catch {
 			return send(502);
 		}
-		if (req.socket.destroyed) {
+		if (gone()) {
 			upstreamSocket.destroy();
 			return;
 		}
@@ -426,20 +530,17 @@ export function createSsrfProxy({
 			logRefusal(String(req.url).slice(0, 80), 0, 'malformed CONNECT target');
 			return refuse(clientSocket, 400, 'Bad Request');
 		}
-		const verdict = await resolveAllowedAddresses(target.hostname);
+		const gone = watchClient(clientSocket);
+		const verdict = await resolveAllowedAddresses(target.hostname, gone);
 		if (!verdict.ok) {
 			if (!verdict.quiet) {
 				logRefusal(target.hostname, target.port, verdict.reason);
 			}
 			return refuse(clientSocket, 403, 'Forbidden');
 		}
-		// No "client already gone?" checks here: Node stops reading a socket once
-		// it has handed it over as a CONNECT, so `destroyed` is never true yet
-		// (measured: such a check never ran). A client that left is noticed when
-		// the 200 is written or the first byte is piped, and that ends the tunnel.
 		let upstream;
 		try {
-			upstream = await connectAny(verdict.addresses, target.port);
+			upstream = await connectAny(verdict.addresses, target.port, gone);
 		} catch {
 			return refuse(clientSocket, 502, 'Bad Gateway');
 		}
