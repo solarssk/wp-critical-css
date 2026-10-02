@@ -59,7 +59,7 @@ const HOP_BY_HOP = new Set([
 // host:port as Chrome writes it in CONNECT. The host is a bracketed IPv6
 // literal or a run of host characters (letters, digits, dot, hyphen,
 // underscore - enough for punycode names and every IPv4 spelling).
-const CONNECT_AUTHORITY_RE = /^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+):([0-9]{1,5})$/;
+const CONNECT_AUTHORITY_RE = /^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+):(\d{1,5})$/;
 
 const noResolution = (_hostname, _options, callback) => callback(new Error('the proxy never lets a connect resolve a name'));
 
@@ -96,7 +96,22 @@ export function chromeProxyArgs(proxyPort) {
 }
 
 export function isLoopbackAddress(address) {
-	return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+	return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'; // NOSONAR javascript:S1313 - the loopback peer addresses, which are the whole point of this check
+}
+
+function refuse(socket, status, text) {
+	if (!socket.destroyed) {
+		socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, () => socket.destroy());
+	}
+}
+
+/** `name` without its trailing dots, in linear time (a /\.+$/ regex is quadratic on a long run of dots). */
+function stripTrailingDots(name) {
+	let end = name.length;
+	while (end > 0 && name.codePointAt(end - 1) === 46) {
+		end--;
+	}
+	return name.slice(0, end);
 }
 
 function withTimeout(promise, ms, message) {
@@ -123,7 +138,7 @@ export function parseConnectAuthority(authority) {
 	} catch {
 		return null;
 	}
-	return hostname ? { hostname, port } : null;
+	return { hostname, port };
 }
 
 function stripHopByHop(headers) {
@@ -185,7 +200,7 @@ export function createSsrfProxy({
 		if (family !== 0) {
 			return isBlockedAddress(clean, family) ? { ok: false, reason: 'private or reserved address' } : { ok: true, addresses: [{ address: clean, family }] };
 		}
-		const name = clean.toLowerCase().replace(/\.+$/, '');
+		const name = stripTrailingDots(clean.toLowerCase());
 		if (name === 'localhost' || name.endsWith('.localhost')) {
 			return { ok: false, reason: 'localhost name' };
 		}
@@ -255,12 +270,6 @@ export function createSsrfProxy({
 		return attempt(0);
 	}
 
-	function refuse(socket, status, text) {
-		if (!socket.destroyed) {
-			socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, () => socket.destroy());
-		}
-	}
-
 	// A page can name thousands of refused hosts: log a burst per window, then
 	// one line saying how many were left out.
 	let logWindowStart = 0;
@@ -278,7 +287,7 @@ export function createSsrfProxy({
 		}
 		if (logged < logBurst) {
 			logged++;
-			logger.warn(`[ssrf-proxy] refused ${logSafe(hostname)}:${port} (${reason})`);
+			logger.warn(`[ssrf-proxy] refused ${logSafe(hostname)}:${port} (${reason})`); // NOSONAR jssecurity:S5145 - logSafe() JSON.stringifies the value, escaping CR/LF and control characters before it reaches the log
 		} else {
 			suppressed++;
 		}
@@ -330,7 +339,7 @@ export function createSsrfProxy({
 			upstreamSocket.destroy();
 			return;
 		}
-		const upstream = http.request({
+		const upstream = http.request({ // NOSONAR jssecurity:S5144 - this IS the SSRF guard: the destination was validated by resolveAllowedAddresses() and the socket is the one connected to that validated address, never one Node resolves itself
 			method: req.method,
 			path: `${url.pathname}${url.search}`,
 			headers: { ...stripHopByHop(req.headers), host: url.host },
@@ -424,18 +433,15 @@ export function createSsrfProxy({
 			}
 			return refuse(clientSocket, 403, 'Forbidden');
 		}
-		if (clientSocket.destroyed) {
-			return;
-		}
+		// No "client already gone?" checks here: Node stops reading a socket once
+		// it has handed it over as a CONNECT, so `destroyed` is never true yet
+		// (measured: such a check never ran). A client that left is noticed when
+		// the 200 is written or the first byte is piped, and that ends the tunnel.
 		let upstream;
 		try {
-			upstream = await connectAny(verdict.addresses, target.port, () => clientSocket.destroyed);
+			upstream = await connectAny(verdict.addresses, target.port);
 		} catch {
 			return refuse(clientSocket, 502, 'Bad Gateway');
-		}
-		if (clientSocket.destroyed) {
-			upstream.destroy();
-			return;
 		}
 		upstream.on('error', () => clientSocket.destroy());
 		clientSocket.on('error', () => upstream.destroy());

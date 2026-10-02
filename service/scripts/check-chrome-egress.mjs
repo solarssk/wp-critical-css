@@ -114,7 +114,7 @@ if (control.tcp === 0 || control.udp === 0) {
 if (guarded.tcp !== 0 || guarded.udp !== 0) {
 	problems.push(`with the proxy switches Chrome still reached the listeners (tcp ${guarded.tcp}, udp ${guarded.udp})`);
 }
-const mustBeRefused = ['127.0.0.1', 'localhost', 'x.localhost', '169.254.169.254', 'fe80::1', '10.0.0.1', '172.17.0.1', 'fd00:ec2::254'];
+const mustBeRefused = ['127.0.0.1', 'localhost', 'x.localhost', '169.254.169.254', 'fe80::1', '10.0.0.1', '172.17.0.1', 'fd00:ec2::254']; // NOSONAR javascript:S1313 - the private, loopback, link-local and metadata targets are the test's input
 for (const target of mustBeRefused) {
 	if (!refused.some((line) => line.includes(target))) {
 		problems.push(`the proxy never refused ${target}: that traffic did not go through it`);

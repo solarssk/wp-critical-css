@@ -1322,3 +1322,58 @@ describe('the refusal log', () => {
 		await proxy.close();
 	});
 });
+
+describe('responses that go wrong half way', () => {
+	test('response headers that cannot be written back are answered with 502, and the proxy keeps serving', async () => {
+		const upstream = await startRawUpstream('HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok');
+		const proxy = createSsrfProxy({
+			lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+			isBlockedAddress: () => false,
+			logger: recordingLogger(),
+		});
+		const proxyPort = await proxy.listen();
+		const request = `GET http://public.test:${upstream.port}/ HTTP/1.1\r\nHost: public.test\r\nConnection: close\r\n\r\n`;
+		// The raw upstream has no ServerResponse, so the first writeHead() is the proxy's own.
+		const original = http.ServerResponse.prototype.writeHead;
+		let refused = false;
+		http.ServerResponse.prototype.writeHead = function (...args) {
+			if (!refused) {
+				refused = true;
+				throw new RangeError('headers refused');
+			}
+			return original.apply(this, args);
+		};
+		let out;
+		try {
+			out = await rawVia(proxyPort, request);
+		} finally {
+			http.ServerResponse.prototype.writeHead = original;
+		}
+		assert.match(out, /^HTTP\/1\.1 502 /);
+		assert.match(await rawVia(proxyPort, request), /^HTTP\/1\.1 200 /);
+		await proxy.close();
+		await new Promise((resolve) => upstream.server.close(resolve));
+	});
+
+	test('an upstream that resets the connection after the headers closes the client instead of leaving it waiting', async () => {
+		const upstream = net.createServer((socket) => {
+			socket.on('error', () => {});
+			socket.once('data', () => {
+				socket.write('HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nonly the beginning');
+				setTimeout(() => socket.resetAndDestroy(), 30);
+			});
+		});
+		await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+		const proxy = createSsrfProxy({
+			lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+			isBlockedAddress: () => false,
+			logger: recordingLogger(),
+		});
+		const proxyPort = await proxy.listen();
+		const out = await rawVia(proxyPort, `GET http://public.test:${upstream.address().port}/ HTTP/1.1\r\nHost: public.test\r\nConnection: close\r\n\r\n`);
+		assert.match(out, /^HTTP\/1\.1 200 /);
+		assert.ok(!out.includes('0\r\n\r\n'), 'the truncated body must not end like a complete one');
+		await proxy.close();
+		await new Promise((resolve) => upstream.close(resolve));
+	});
+});
