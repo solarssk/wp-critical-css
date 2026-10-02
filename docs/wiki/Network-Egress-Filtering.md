@@ -17,12 +17,22 @@ This page is the working summary. The complete behaviour, the restart table and 
    | `EGRESS_ALLOW` | Private destinations the service may still open TCP connections to, as space-separated `ADDRESS:PORT` pairs, e.g. `172.20.0.10:80`. IPv6 is written `[fd00::10]:80`. Leave it empty if `WP_RECEIVER_URL` is public. List the receiver's exact address and port, nothing wider. |
    | `EGRESS_ALLOW_DNS` | Only if your DNS resolver is itself one of the refused addresses (a private or link-local one, or Azure's `168.63.129.16`). Space-separated resolver addresses, port 53 only. |
 
-4. **Move networking settings to the guard.** The service now shares the guard's network namespace, so `ports`, `dns`, `dns_search`, `extra_hosts`, `hostname` and `sysctls` belong on the `egress-guard` service, not on `critical-css-service`. Docker refuses them on a service that uses `network_mode: service:...`.
+4. **Move networking settings to the guard.** The service now shares the guard's network namespace, so `ports`, `expose`, `dns`, `dns_search`, `extra_hosts`, `hostname` and `sysctls` belong on the `egress-guard` service, not on `critical-css-service`. Docker refuses `ports`, `expose`, `dns`, `extra_hosts` and `hostname` on a service that uses `network_mode: service:...` (checked with Docker Engine 29.8.1 and Compose 5.5.1); `dns_search` is ignored without an error, and a `net.*` sysctl on the service changes the shared namespace, so neither belongs there.
 5. **Start both files together:**
 
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.egress.example.yml up -d
    ```
+
+From now on **every `docker compose` command for this stack needs both `-f` flags**. With only the base file, Compose does not know the guard: `up -d` recreates the service, with or without a new image, from the base file alone, without `network_mode: service:egress-guard`, and the filtering is silently gone (the only hint is a warning about an orphan container). `restart egress-guard` fails, `logs` leaves out the guard and `down` leaves it running.
+
+To avoid typing both flags you can put `COMPOSE_FILE=docker-compose.yml:docker-compose.egress.example.yml` in the `.env` next to your compose file (the separator is `;` on Windows). An explicit `-f` overrides it, so the commands above stay correct either way. After any `up -d` you can check that the service is still inside the guard's namespace:
+
+```bash
+docker inspect -f '{{.HostConfig.NetworkMode}}' critical-css-service
+```
+
+It must print `container:` followed by an ID; a network name such as `<project>_<network>` means the guard is bypassed.
 
 You need Docker Compose 2.24 or newer.
 
@@ -34,7 +44,7 @@ docker exec critical-css-service node -e "fetch('http://169.254.169.254/',{signa
 
 - `OK` - the connection was refused locally, at once.
 - `NOT FILTERED` - the address answered; the rules are not working.
-- `NOT CONCLUSIVE` (usually a timeout) - nothing refused it. Check `docker compose ps` (the guard should be `healthy`) and `docker logs critical-css-egress-guard`, which should end with `ready`.
+- `NOT CONCLUSIVE` (usually a timeout) - nothing refused it. Check `docker compose -f docker-compose.yml -f docker-compose.egress.example.yml ps` (the guard should be `healthy`) and `docker logs critical-css-egress-guard`, which should end with `ready`.
 
 Then run a normal render ([Getting Started](Getting-Started#7-confirm-it-works)) to confirm delivery to your receiver still works, and `docker exec critical-css-service node -e "require('dns').lookup('example.com',console.log)"` to confirm name resolution still works.
 
@@ -42,7 +52,8 @@ Then run a normal render ([Getting Started](Getting-Started#7-confirm-it-works))
 
 - The guard starts first and **gates the service**: it only starts once the rules are in the kernel, and the service's own start command also waits until a connection to the metadata address is refused. A guard that cannot install the rules never becomes healthy, so the service never starts.
 - If the guard dies, the service loses its network. That fails closed.
-- Restarting only the service keeps the rules. Restarting only the guard with plain Docker leaves the service without a network until you restart it too; `docker compose restart egress-guard` does both.
+- Changes to `EGRESS_ALLOW` and `EGRESS_ALLOW_DNS` (and every other `.env` value) are read when a container is created. `docker restart` does not re-read the `.env`: apply a change with `docker compose -f docker-compose.yml -f docker-compose.egress.example.yml up -d`.
+- Restarting only the service keeps the rules. Restarting only the guard with plain Docker leaves the service without a network until you restart it too; the same with both compose files, `docker compose -f docker-compose.yml -f docker-compose.egress.example.yml restart egress-guard`, does both.
 - If name lookups start failing with `SERVFAIL` after you switch it on, your DNS resolver is one of the refused addresses. Put it in `EGRESS_ALLOW_DNS`.
 
 ## What it does not cover

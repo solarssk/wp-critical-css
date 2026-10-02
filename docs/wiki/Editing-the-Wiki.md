@@ -45,7 +45,7 @@ The `wiki-docs` job in `ci.yml` runs on every pull request and on every push to 
 
 [Configuration](Configuration) holds three tables whose rows are compared with the source on every run:
 
-- **Service settings** against the environment variables `service/*.js` reads (`process.env.NAME`), including each default that can be read from the code;
+- **Service settings** against the environment variables `service/*.js` reads (`process.env.NAME`), including each default that can be read from the code (a literal after `||` or `??`, as an argument, or the flag forms `!== 'false'` and `=== 'true'`). **Set by the image** against the `ENV` lines of `service/Dockerfile`: a row needs a variable the Dockerfile sets, a default in code formatting must be its value, and a variable the Dockerfile sets always uses that value, whatever the code falls back to. A default written in code formatting that the checker cannot verify is an error, so state it as a literal in the code or write `-`;
 - **WordPress settings** against the `WPCC_*` constants the plugin defines or checks, including their defaults;
 - **Endpoints** against the routes in `service/server.js` and the plugin's REST route.
 

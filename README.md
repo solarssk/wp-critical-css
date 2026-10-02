@@ -68,14 +68,14 @@ flowchart LR
     W -- "inline + defer" --> V(("🧑 Visitor"))
 ```
 
-Two independent triggers feed the same queue - editing a post regenerates just that page immediately, and the daily sweep catches everything else via the sitemap. Full request sequence and design decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Two independent triggers feed the same queue - editing a post regenerates just that page shortly after (through WP-Cron), and the daily sweep catches everything else via the sitemap. Full request sequence and design decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Features
 
 | | Feature | What it does |
 |---|---------|---------------|
 | 🖼️ | **Real browser extraction** | Headless Chrome renders each URL and extracts above-the-fold CSS separately for mobile and desktop viewports - not a static CSS analyzer. |
-| ⚡ | **Regenerate on save** | A `save_post` hook queues regeneration the moment a post or page is published or updated. |
+| ⚡ | **Regenerate on save** | A `save_post` hook queues regeneration (through WP-Cron) when a post or page is published or updated. |
 | 🗺️ | **Sitemap sweep** | A daily cron job inside the container walks the sitemap, so pages nobody edited that day still stay covered. |
 | 💉 | **Inline + defer** | Critical CSS is inlined in `<style id="wpcc-critical-css">`; the theme's regular stylesheets defer via the standard `media="print"` swap. |
 | 🏠 | **Homepage handled separately** | The homepage isn't a single post, so its critical CSS is stored as site options instead of postmeta. |

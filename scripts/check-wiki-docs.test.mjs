@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { REQUIRED_PAGES, checkWiki, headingAnchors, slugify, tableRows } from './check-wiki-docs.mjs';
+import { REQUIRED_PAGES, checkWiki, headingAnchors, parseDockerfileEnv, slugify, tableRows } from './check-wiki-docs.mjs';
 
 const REPO = 'https://github.com/solarssk/wp-critical-css';
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'check-wiki-docs.mjs');
@@ -28,12 +28,15 @@ Use \`SHARED_SECRET\` and \`WPCC_SHARED_SECRET\`, \`UV_THREADPOOL_SIZE\`, \`PORT
 | \`SHARED_SECRET\` | yes | - | Secret. |
 | \`SWEEP_CRON\` | no | \`0 3 * * *\` | When. |
 | \`MAX_QUEUE_LENGTH\` | no | \`500\` | Ceiling. |
+| \`SWEEP_ENABLED\` | no | \`true\` | Switch. |
 
 ## Set by the image
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
+| \`NODE_ENV\` | no | \`production\` | Mode. |
 | \`UV_THREADPOOL_SIZE\` | no | \`16\` | Pool. |
+| \`PUPPETEER_CHROME_VERSION\` | no | the pinned build | Chrome. |
 
 ## WordPress settings
 
@@ -53,6 +56,7 @@ Use \`SHARED_SECRET\` and \`WPCC_SHARED_SECRET\`, \`UV_THREADPOOL_SIZE\`, \`PORT
 
 const PHP_FILE = 'wordpress-plugin/wp-critical-css/includes/receiver.php';
 const SERVER = 'service/server.js';
+const DOCKERFILE = 'service/Dockerfile';
 
 function sidebar() {
 	return REQUIRED_PAGES.map((page) => `- [${page}](${page})`).join('\n') + '\n';
@@ -76,8 +80,17 @@ function validRepository() {
 		"const SWEEP_CRON = process.env.SWEEP_CRON || '0 3 * * *';",
 		"const MAX = parsePositiveInt(process.env.MAX_QUEUE_LENGTH, 500, 'MAX_QUEUE_LENGTH');",
 		'const POOL = Number(process.env.UV_THREADPOOL_SIZE) || 4;',
+		"const SWEEP_ENABLED = process.env.SWEEP_ENABLED !== 'false';",
 		"app.get('/health', () => {});",
 		"app.post('/generate', () => {});",
+	].join('\n'));
+	files.set(DOCKERFILE, [
+		'FROM node:24',
+		'# ENV COMMENTED_OUT=1',
+		'ENV NODE_ENV=production',
+		'ENV UV_THREADPOOL_SIZE=16',
+		'ENV PUPPETEER_CHROME_VERSION=154.0.1 \\',
+		'\tPUPPETEER_CACHE_DIR="/home/pptruser/.cache/puppeteer"',
 	].join('\n'));
 	files.set('service/server.test.js', 'process.env.ONLY_IN_A_TEST = "1";\n');
 	files.set('service/scripts/ci-only.mjs', 'process.env.ONLY_IN_A_CI_SCRIPT = "1";\n');
@@ -166,6 +179,29 @@ describe('checkWiki', () => {
 		['a default written with ??', (files) => edit(files, SERVER, 'process.env.PORT || 3939', 'process.env.PORT ?? 4000'), 'defaults to 4000'],
 		['a quoted default that changed in code', (files) => edit(files, SERVER, "|| '0 3 * * *'", "|| '0 4 * * *'"), 'defaults to 0 4 * * *'],
 		['a default passed as an argument that changed in code', (files) => edit(files, SERVER, 'MAX_QUEUE_LENGTH, 500', 'MAX_QUEUE_LENGTH, 600'), 'defaults to 600'],
+		['a flag whose default flipped in code', (files) => edit(files, SERVER, "process.env.SWEEP_ENABLED !== 'false'", "process.env.SWEEP_ENABLED === 'true'"), 'SWEEP_ENABLED: the code defaults to false'],
+		['a comparison of an environment variable that is not a flag', (files) => edit(files, SERVER, 'const PORT', "const MODE = process.env.PORT === 'yes';\nconst PORT"), 'does not understand'],
+		['a documented default the code does not state in a readable form', (files) => edit(files, SERVER, 'process.env.PORT || 3939', 'process.env.PORT || DEFAULT_PORT'), 'PORT: docs/wiki/Configuration.md ("Service settings") lists a default, but there is none'],
+		['a default in the image that changed', (files) => edit(files, DOCKERFILE, 'UV_THREADPOOL_SIZE=16', 'UV_THREADPOOL_SIZE=32'), 'service/Dockerfile sets it to 32'],
+		['a default of the image quoted wrongly in the docs', (files) => edit(files, 'docs/wiki/Configuration.md', '| the pinned build |', '| `1.2.3` |'), 'service/Dockerfile sets it to 154.0.1'],
+		['a variable of the image table that the Dockerfile no longer sets', (files) => edit(files, DOCKERFILE, 'ENV NODE_ENV=production\n', ''), 'NODE_ENV is documented in docs/wiki/Configuration.md ("Set by the image") as set by the image'],
+		['a missing Dockerfile', (files) => files.delete(DOCKERFILE), 'service/Dockerfile is missing'],
+		['an image value that overrides a code default', (files) => edit(files, DOCKERFILE, 'ENV NODE_ENV=production', 'ENV NODE_ENV=production\nENV PORT=4000'), 'PORT: service/Dockerfile sets it to 4000'],
+		['a missing image section', (files) => edit(files, 'docs/wiki/Configuration.md', '## Set by the image', '## Image'), 'no "## Set by the image" section'],
+		['a variable listed twice', (files) => edit(files, 'docs/wiki/Configuration.md', '| `SHARED_SECRET` | yes | - | Secret. |', '| `SHARED_SECRET` | yes | - | Secret. |\n| `PORT` | no | `3939` | Again. |'), 'lists `PORT` twice'],
+		['two different defaults for one variable in the code', (files) => files.set('service/extra.js', 'const x = process.env.PORT || 4000;\n'), 'PORT has two different defaults'],
+		['a negated flag', (files) => edit(files, SERVER, "process.env.SWEEP_ENABLED !== 'false'", "!(process.env.SWEEP_ENABLED === 'true')"), 'does not understand'],
+		['a literal that is only the start of an expression', (files) => edit(files, SERVER, 'process.env.PORT || 3939', 'process.env.PORT || 3939 + 1'), 'PORT: docs/wiki/Configuration.md ("Service settings") lists a default, but there is none'],
+		['the environment imported from node:process', (files) => edit(files, SERVER, 'const PORT', "import { env } from 'node:process';\nconst PORT"), 'does not understand'],
+		['a read on a line that starts with a hash', (files) => edit(files, SERVER, 'const PORT', '#hidden = process.env.HASHED;\nconst PORT'), 'HASHED is read by the code'],
+		['an equality comparison of an environment variable', (files) => edit(files, SERVER, 'const PORT', "const A = process.env.PORT == 'yes';\nconst PORT"), 'does not understand'],
+		['an inequality comparison of an environment variable', (files) => edit(files, SERVER, 'const PORT', "const A = process.env.PORT != 'false';\nconst PORT"), 'does not understand'],
+		['a variable read with a bracket', (files) => edit(files, SERVER, 'const PORT', "const A = process.env['BRACKET_VAR'];\nconst PORT"), 'BRACKET_VAR is read by the code'],
+		['a default row that says nothing', (files) => edit(files, 'docs/wiki/Configuration.md', '| `PORT` | no | `3939` |', '| `PORT` | no | - |'), 'PORT: the code defaults to 3939'],
+		['a default that is not in code formatting', (files) => edit(files, 'docs/wiki/Configuration.md', '| `PORT` | no | `3939` |', '| `PORT` | no | 3939 |'), 'PORT: the code defaults to 3939'],
+		['a default that only contains the right digits', (files) => edit(files, 'docs/wiki/Configuration.md', '| `PORT` | no | `3939` |', '| `PORT` | no | `13939` |'), 'PORT: the code defaults to 3939'],
+		['an image default quoted without code formatting', (files) => edit(files, 'docs/wiki/Configuration.md', '| `UV_THREADPOOL_SIZE` | no | `16` |', '| `UV_THREADPOOL_SIZE` | no | 16 |'), 'service/Dockerfile sets it to 16'],
+		['a Dockerfile with more than one stage', (files) => edit(files, DOCKERFILE, 'FROM node:24', 'FROM node:24 AS build\nFROM node:24'), 'more than one stage'],
 		['a service setting row without a code name', (files) => edit(files, 'docs/wiki/Configuration.md', '| `PORT` |', '| PORT |'), 'one `code` name'],
 		['environment variables read by destructuring', (files) => edit(files, SERVER, 'const PORT', 'const { HIDDEN } = process.env;\nconst PORT'), 'server.js:2 uses a form this check does not understand'],
 		['environment variables read with optional chaining', (files) => edit(files, SERVER, 'const PORT', 'const x = process.env?.HIDDEN;\nconst PORT'), 'does not understand'],
@@ -196,6 +232,16 @@ describe('checkWiki', () => {
 			assert.ok(problems.some((problem) => problem.includes(expected)), `expected a problem containing "${expected}", got:\n${problems.join('\n')}`);
 		});
 	}
+
+	it('accepts underscored and double-quoted defaults, and words in a Default cell with no default in code', () => {
+		const problems = check((files) => {
+			edit(files, SERVER, 'process.env.PORT || 3939', 'process.env.PORT || 3_939');
+			edit(files, SERVER, "|| '0 3 * * *'", '|| "0 3 * * *"');
+			edit(files, 'docs/wiki/Configuration.md', '| `SHARED_SECRET` | yes | - |', '| `SHARED_SECRET` | yes | none, required |');
+			edit(files, 'docs/wiki/Configuration.md', '| `PORT` | no | `3939` |', '| `PORT` | no | `3939` |');
+		});
+		assert.deepEqual(problems, []);
+	});
 
 	it('ignores links and headings inside code', () => {
 		assert.deepEqual(check(home('```md\n# Not a title\n[x](Nope)\n```\n\nUse `[y](Nowhere)` like this.\n')), []);
@@ -265,6 +311,45 @@ describe('running the script', () => {
 			assert.equal(result.status, 1, `viaSymlink=${viaSymlink}: ${result.stdout}${result.stderr}`);
 			assert.match(result.stderr, /required page docs\/wiki\/Troubleshooting.md is missing/);
 		}
+	});
+});
+
+describe('parseDockerfileEnv', () => {
+	it('reads single, multiple, continued, quoted and legacy ENV instructions, and skips comments', () => {
+		const text = [
+			'# ENV COMMENTED=1',
+			'FROM node:24',
+			'ENV ONE=1',
+			'env TWO=2 THREE="three words"',
+			"ENV FOUR='4' \\",
+			'\t# a comment inside the continuation',
+			'\tFIVE=5',
+			'ENV LEGACY a legacy value',
+			'RUN echo "ENV NOT_AN_INSTRUCTION=1"',
+			'',
+		].join('\n');
+		assert.deepEqual(Object.fromEntries(parseDockerfileEnv(text)), { ONE: '1', TWO: '2', THREE: 'three words', FOUR: '4', FIVE: '5', LEGACY: 'a legacy value' });
+	});
+
+	it('reads an instruction that is not closed and an empty file', () => {
+		assert.deepEqual(Object.fromEntries(parseDockerfileEnv('ENV QUOTED="open')), { QUOTED: 'open' });
+		assert.equal(parseDockerfileEnv('').size, 0);
+	});
+
+	it('reads the quoted legacy form, only treats a space before the first = as the legacy form, and lets a later ENV win', () => {
+		const text = 'ENV QUOTED "two words"\nENV EQ a=b c\nENV TWICE=1\nENV TWICE=2\n';
+		assert.deepEqual(Object.fromEntries(parseDockerfileEnv(text)), { QUOTED: 'two words', EQ: 'a=b c', TWICE: '2' });
+	});
+
+	it('reads an instruction that ends with a backslash', () => {
+		assert.deepEqual(Object.fromEntries(parseDockerfileEnv('ENV LAST=1 \\')), { LAST: '1' });
+	});
+
+	it('reads the real Dockerfile', () => {
+		const real = readFileSync(join(dirname(SCRIPT), '../service/Dockerfile'), 'utf8');
+		const variables = parseDockerfileEnv(real);
+		assert.equal(variables.get('NODE_ENV'), 'production');
+		assert.ok(variables.size > 1);
 	});
 });
 

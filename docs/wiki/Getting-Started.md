@@ -42,15 +42,17 @@ Pick one:
   ```
 
   Then add the service to your WordPress `docker-compose.yml` from [`docker-compose.example.yml`](https://github.com/solarssk/wp-critical-css/blob/main/docker-compose.example.yml). It already carries the hardening that is expected: read-only filesystem, all capabilities dropped, resource limits.
-- **Let Compose or Portainer build from the repository** - the example file shows the `build:` alternative.
-- **Build locally:** `docker build -t wp-critical-css ./service`.
+- **Let Compose or Portainer build from the repository** - the example file shows the `build:` alternative. Its `context:` has no version, so it builds the default branch (`main`), which you should not deploy: add a release tag to the address, for example `https://github.com/<your-username>/wp-critical-css.git#vX.Y.Z`.
+- **Build locally:** `docker build -t wp-critical-css ./service`, and use `image: wp-critical-css` in your compose file.
+
+Then start it with `docker compose up -d` (service name `critical-css-service`).
 
 Do not publish port 3939 to the internet. WordPress reaches the service over the Docker network.
 
 ## 4. Check that the service is up
 
 ```bash
-docker exec critical-css-service wget -qO- http://localhost:3939/health
+docker exec critical-css-service sh -c 'wget -qO- http://localhost:${PORT:-3939}/health'
 ```
 
 It answers `{"status":"ok","queueLength":0,"queueFull":false,"processing":false}`. Run it inside the container because the example compose file does not publish the port, and the image has `wget` but no `curl`. (If you published the port for a quick test, `curl` from the host works too.)
@@ -64,7 +66,7 @@ Download the zip from a release and upload it in wp-admin: [Install the Plugin](
 You do not have to wait for the nightly sweep. Start one now:
 
 ```bash
-docker exec critical-css-service wget -qO- --post-data='' --header='X-WPCC-Secret: <your SHARED_SECRET>' http://localhost:3939/sweep
+docker exec critical-css-service sh -c 'wget -qO- --post-data= --header="X-WPCC-Secret: $SHARED_SECRET" http://localhost:${PORT:-3939}/sweep'
 ```
 
 Watch it with `docker logs -f critical-css-service`. The sweep adds one URL every `SWEEP_DELAY_MS` (5 seconds by default) and the service renders one page at a time, so a large site takes a while. That is by design: it keeps CPU and memory modest.

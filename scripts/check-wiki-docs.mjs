@@ -9,11 +9,12 @@
 //      files in this repository), no secret-looking values, nothing `git diff --check` or the
 //      publishing step would choke on.
 //   2. The reference tables match the code: the environment variables the service reads, the
-//      WPCC_* constants the plugin reads, the HTTP endpoints, their defaults, the requirements in
-//      the plugin header, and the variables of the egress example. A setting that is added,
-//      removed or re-defaulted in code without a matching table row fails here. The readers below
-//      only understand the patterns this code base uses; a line that touches `process.env` or an
-//      Express route in a way they do not understand fails too, rather than being silently skipped.
+//      variables the Dockerfile sets, the WPCC_* constants the plugin reads, the HTTP endpoints,
+//      their defaults, the requirements in the plugin header, and the variables of the egress
+//      example. A setting that is added, removed or re-defaulted in code without a matching table
+//      row fails here, and so does a default the docs state that cannot be checked. The readers
+//      below only understand the patterns this code base uses; a line that touches `process.env`
+//      or an Express route in a way they do not understand fails too, rather than being skipped.
 //
 // Usage: node scripts/check-wiki-docs.mjs
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
@@ -45,6 +46,7 @@ const SERVICE_DIR = 'service';
 const SERVER_FILE = 'service/server.js';
 const PLUGIN_DIR = 'wordpress-plugin/wp-critical-css';
 const PLUGIN_HEADER_FILE = 'wordpress-plugin/wp-critical-css/wp-critical-css.php';
+const DOCKERFILE = 'service/Dockerfile';
 const ENV_EXAMPLE_FILE = '.env.example';
 const EGRESS_COMPOSE_FILE = 'docker-compose.egress.example.yml';
 
@@ -226,14 +228,25 @@ function readPages(wikiRoot) {
 	return pages;
 }
 
-function isCommentLine(line) {
+/** A whole-line comment in JavaScript or PHP: a line comment, a block comment that does not leave code
+ * on its line, or a line inside a doc block (starting with a star). A private field (hash and a name)
+ * is not a comment in JavaScript. */
+function isJsComment(line) {
 	const trimmed = line.trimStart();
-	return trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') || trimmed.startsWith('#');
+	if (trimmed.startsWith('//')) return true;
+	if (trimmed.startsWith('/*')) return !trimmed.includes('*/') || trimmed.endsWith('*/');
+	return trimmed === '*' || trimmed.startsWith('* ') || trimmed.startsWith('*/');
+}
+
+/** As above, plus PHP's `#` comments (but not a `#[Attribute]`). */
+function isPhpComment(line) {
+	const trimmed = line.trimStart();
+	return isJsComment(line) || (trimmed.startsWith('#') && !trimmed.startsWith('#['));
 }
 
 /** Source text without its whole-line comments: a name that only a comment mentions is not read. */
-function codeOf(text) {
-	return text.split('\n').filter((line) => !isCommentLine(line)).join('\n');
+function codeOf(text, isComment) {
+	return text.split('\n').filter((line) => !isComment(line)).join('\n');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -384,12 +397,21 @@ function checkWikiSource(root, wikiRoot) {
 
 const NAME = '[A-Z][A-Z0-9_]*';
 const ENV_READ = new RegExp(String.raw`process\.env\.(${NAME})|process\.env\[\s*['"](${NAME})['"]\s*\]`, 'g');
-const ENV_DEFAULT_OR = new RegExp(String.raw`process\.env\.(${NAME})\s*(?:\|\||\?\?)\s*('[^']*'|"[^"]*"|\d[\d_]*)`, 'g');
-const ENV_DEFAULT_ARG = new RegExp(String.raw`process\.env\.(${NAME})\s*,\s*(\d[\d_]*)`, 'g');
+// A default only counts when the literal is the whole expression: something may follow it only after
+// a `)`, `;`, `,`, `]`, `}` or a comment, otherwise `|| 5000 + extra` would be read as 5000.
+const AFTER_LITERAL = String.raw`(?=[ \t]*(?:[);,\]}:?\n]|//|$))`;
+const ENV_DEFAULT_OR = new RegExp(String.raw`process\.env\.(${NAME})\s*(?:\|\||\?\?)\s*('[^']*'|"[^"]*"|\d[\d_]*)${AFTER_LITERAL}`, 'g');
+const ENV_DEFAULT_ARG = new RegExp(String.raw`process\.env\.(${NAME})\s*,\s*(\d[\d_]*)${AFTER_LITERAL}`, 'g');
+// A flag: `!== 'false'` is on unless set to false (default true), `=== 'true'` is off unless set to true.
+const ENV_FLAG = new RegExp(String.raw`process\.env\.(${NAME})\s*(!==\s*'false'|===\s*'true')`, 'g');
+const ENV_COMPARISON = new RegExp(String.raw`process\.env\.${NAME}\s*[!=]==?`, 'g');
+const NEGATED_ENV = new RegExp(String.raw`!\s*\(\s*process\.env\.${NAME}`);
+// Ways to reach the environment that the readers cannot follow: an import of `process`, an alias.
+const INDIRECT_ENV = /node:process|from ['"]process['"]|require\(['"](?:node:)?process['"]\)|=\s*process\s*[;,)]/;
 const ROUTE = /\bapp\.(get|post|put|patch|delete)\(\s*'([^']+)'/g;
 const ROUTE_LIKE = /\b(?:app|router)\.(?:get|post|put|patch|delete|all|route)\(|\bRouter\(/;
 const PHP_CONSTANT = /WPCC_[A-Z0-9_]+/g;
-const PHP_DEFAULT = /\bdefine\(\s*['"](WPCC_[A-Z0-9_]+)['"]\s*,\s*('[^']*'|"[^"]*"|\d+)/g;
+const PHP_DEFAULT = /\bdefine\(\s*['"](WPCC_[A-Z0-9_]+)['"]\s*,\s*('[^']*'|"[^"]*"|\d+)(?=\s*\))/g;
 const REST_ROUTE = /register_rest_route\(\s*'([^']+)'\s*,\s*'([^']+)'/g;
 const REST_METHOD = /'methods'\s*=>\s*(?:'([A-Z]+)'|WP_REST_Server::(READABLE|CREATABLE|EDITABLE|DELETABLE))/;
 const REST_VERBS = { READABLE: 'GET', CREATABLE: 'POST', EDITABLE: 'PUT', DELETABLE: 'DELETE' };
@@ -400,19 +422,46 @@ function unquote(literal) {
 	return quoted ? literal.slice(1, -1) : literal.replaceAll('_', '');
 }
 
-function collectDefaults(text, patterns) {
-	const defaults = new Map();
-	for (const pattern of patterns) {
-		for (const match of text.matchAll(pattern)) defaults.set(match[1], unquote(match[2]));
+/** Records `name -> value`. An empty default is no default, and a name that the code gives two
+ * different defaults is reported, instead of the last one silently winning. */
+function addDefault(into, { name, value, where }, problems) {
+	if (value === '') return;
+	if (into.has(name) && into.get(name) !== value) {
+		problems.push(`${name} has two different defaults in the code (${into.get(name)}, and ${value} in ${where}). State one.`);
 	}
-	return defaults;
+	into.set(name, value);
+}
+
+function collectDefaults(text, { patterns, into, where, problems }) {
+	for (const pattern of patterns) {
+		for (const match of text.matchAll(pattern)) addDefault(into, { name: match[1], value: unquote(match[2]), where }, problems);
+	}
+}
+
+function collectFlagDefaults(code, { into, where, problems }) {
+	for (const match of code.matchAll(ENV_FLAG)) {
+		addDefault(into, { name: match[1], value: match[2].startsWith('!') ? 'true' : 'false', where }, problems);
+	}
+}
+
+function isTouchedEnvLine(line) {
+	return line.includes('process.env') || INDIRECT_ENV.test(line);
+}
+
+/** Whether every `process.env` on the line is a plain read, and every comparison of one is a flag. */
+function isUnderstoodEnvLine(line) {
+	if (INDIRECT_ENV.test(line) || NEGATED_ENV.test(line)) return false;
+	const reads = [...line.matchAll(ENV_READ)].length;
+	const flags = [...line.matchAll(ENV_FLAG)].length;
+	const comparisons = [...line.matchAll(ENV_COMPARISON)].length;
+	return line.split('process.env').length - 1 === reads && comparisons === flags;
 }
 
 /** The code lines that touch something (`isTouched`) in a form the readers cannot interpret
  * (`isUnderstood` is false): reported, instead of silently skipped. */
 function unrecognisedLines(file, text, isTouched, isUnderstood) {
 	return text.split('\n').flatMap((line, index) => {
-		if (isCommentLine(line) || !isTouched(line) || isUnderstood(line)) return [];
+		if (isJsComment(line) || !isTouched(line) || isUnderstood(line)) return [];
 		return [`${file}:${index + 1} uses a form this check does not understand (${line.trim().slice(0, 80)}). Write it the way the rest of the code does, or extend the patterns in scripts/check-wiki-docs.mjs, so the setting is not missed.`];
 	});
 }
@@ -428,15 +477,12 @@ function readServiceEnv(root, problems) {
 	const defaults = new Map();
 	for (const file of files) {
 		const text = readFileSync(file, 'utf8');
-		const code = codeOf(text);
+		const code = codeOf(text, isJsComment);
+		const where = file.slice(root.length + 1);
 		for (const match of code.matchAll(ENV_READ)) names.add(match[1] ?? match[2]);
-		for (const [name, value] of collectDefaults(code, [ENV_DEFAULT_OR, ENV_DEFAULT_ARG])) defaults.set(name, value);
-		problems.push(...unrecognisedLines(
-			file.slice(root.length + 1),
-			text,
-			(line) => line.includes('process.env'),
-			(line) => line.split('process.env').length - 1 === [...line.matchAll(ENV_READ)].length,
-		));
+		collectDefaults(code, { patterns: [ENV_DEFAULT_OR, ENV_DEFAULT_ARG], into: defaults, where, problems });
+		collectFlagDefaults(code, { into: defaults, where, problems });
+		problems.push(...unrecognisedLines(where, text, isTouchedEnvLine, isUnderstoodEnvLine));
 	}
 	return { names, defaults };
 }
@@ -444,7 +490,7 @@ function readServiceEnv(root, problems) {
 function readRoutes(root, problems) {
 	const text = readText(root, SERVER_FILE, problems);
 	problems.push(...unrecognisedLines(SERVER_FILE, text, (line) => ROUTE_LIKE.test(line), (line) => new RegExp(ROUTE.source).test(line)));
-	return new Set([...codeOf(text).matchAll(ROUTE)].map((match) => `${match[1].toUpperCase()} ${match[2]}`));
+	return new Set([...codeOf(text, isJsComment).matchAll(ROUTE)].map((match) => `${match[1].toUpperCase()} ${match[2]}`));
 }
 
 function readRestRoutes(text) {
@@ -464,12 +510,85 @@ function readPlugin(root, problems) {
 	const defaults = new Map();
 	const routes = new Set();
 	for (const file of files) {
-		const code = codeOf(readFileSync(file, 'utf8'));
+		const code = codeOf(readFileSync(file, 'utf8'), isPhpComment);
 		for (const match of code.matchAll(PHP_CONSTANT)) names.add(match[0]);
-		for (const [name, value] of collectDefaults(code, [PHP_DEFAULT])) defaults.set(name, value);
+		collectDefaults(code, { patterns: [PHP_DEFAULT], into: defaults, where: file.slice(root.length + 1), problems });
 		for (const route of readRestRoutes(code)) routes.add(route);
 	}
 	return { names, defaults, routes };
+}
+
+/** The Dockerfile's instructions with backslash continuations joined and comments dropped. */
+function dockerInstructions(text) {
+	const instructions = [];
+	let pending = '';
+	for (const line of text.split('\n')) {
+		const trimmed = line.trim();
+		if (trimmed.startsWith('#')) continue;
+		if (trimmed.endsWith('\\')) {
+			pending += `${trimmed.slice(0, -1)} `;
+		} else if (pending !== '' || trimmed !== '') {
+			instructions.push(pending + trimmed);
+			pending = '';
+		}
+	}
+	if (pending !== '') instructions.push(pending.trim());
+	return instructions;
+}
+
+/** A value at the start of `text`, quoted or not, and what follows it. */
+function takeValue(text) {
+	const quote = text[0];
+	if (quote === '"' || quote === "'") {
+		const close = text.indexOf(quote, 1);
+		return close === -1 ? [text.slice(1), ''] : [text.slice(1, close), text.slice(close + 1)];
+	}
+	const end = text.search(/\s/);
+	return end === -1 ? [text, ''] : [text.slice(0, end), text.slice(end)];
+}
+
+/** The `NAME=value` pairs of one ENV instruction (or the legacy `ENV NAME value`). */
+function parseEnvPairs(rest) {
+	const pairs = new Map();
+	let remaining = rest.trim();
+	const firstEquals = remaining.indexOf('=');
+	const firstSpace = remaining.search(/\s/);
+	if (firstEquals === -1 || (firstSpace !== -1 && firstSpace < firstEquals)) {
+		if (firstSpace !== -1) {
+			// Legacy form: the value is the rest of the line, quoted or not.
+			const value = remaining.slice(firstSpace).trim();
+			pairs.set(remaining.slice(0, firstSpace), value.startsWith('"') || value.startsWith("'") ? takeValue(value)[0] : value);
+		}
+		return pairs;
+	}
+	while (remaining !== '') {
+		const separator = remaining.indexOf('=');
+		if (separator <= 0) break;
+		const [value, after] = takeValue(remaining.slice(separator + 1));
+		pairs.set(remaining.slice(0, separator), value);
+		remaining = after.trimStart();
+	}
+	return pairs;
+}
+
+/** The environment variables a Dockerfile sets, as `name -> value`. */
+export function parseDockerfileEnv(text) {
+	const variables = new Map();
+	for (const instruction of dockerInstructions(text)) {
+		if (instruction.slice(0, 3).toUpperCase() !== 'ENV' || !/\s/.test(instruction[3] ?? '')) continue;
+		for (const [name, value] of parseEnvPairs(instruction.slice(4))) variables.set(name, value);
+	}
+	return variables;
+}
+
+/** The Dockerfile's ENV values. Only a single-stage Dockerfile is understood: with more stages it is
+ * unclear which ENV reaches the image, so that fails loudly instead of guessing. */
+function readImageEnvironment(root, problems) {
+	const text = readText(root, DOCKERFILE, problems);
+	if (dockerInstructions(text).filter((instruction) => /^FROM\s/i.test(instruction)).length > 1) {
+		problems.push(`${DOCKERFILE} has more than one stage; scripts/check-wiki-docs.mjs reads the ENV of every stage as if it reached the image. Teach it which stage is the final one.`);
+	}
+	return parseDockerfileEnv(text);
 }
 
 function readEnvExampleKeys(root, problems) {
@@ -497,31 +616,66 @@ function documentedRows(page, pageText, headings, problems) {
 	for (const heading of headings) {
 		for (const cells of tableRows(pageText, heading) ?? []) {
 			const name = codeValue(cells[0]);
-			if (name === null) problems.push(`docs/wiki/${page}.md ("${heading}"): the first column of each row must be one \`code\` name.`);
-			else documented.set(name, { cells, heading });
+			if (name === null) {
+				problems.push(`docs/wiki/${page}.md ("${heading}"): the first column of each row must be one \`code\` name.`);
+				continue;
+			}
+			if (documented.has(name)) problems.push(`docs/wiki/${page}.md lists \`${name}\` twice ("${documented.get(name).heading}" and "${heading}"). Keep one row.`);
+			documented.set(name, { cells, heading });
 		}
 	}
 	return documented;
 }
 
+/** The problem with a row's Default column, if any. `expected` is the default the source states
+ * (undefined when it states none that can be read): a stated default must be the row's (unless
+ * `descriptive`: a row of the image table may describe its value in a few words instead of quoting it), and
+ * a default the row claims in code formatting must be one that can be checked. */
+function defaultProblem({ kind, name, page, where, cells, expected, describe, descriptive = false }) {
+	const cell = cells[2] ?? '';
+	if (expected === undefined) {
+		return cell.includes('`')
+			? `${kind} ${name}: docs/wiki/${page}.md ("${where}") lists a default, but there is none this check can read in the source. Use a literal default (after ||, ?? or as the argument; \`!== 'false'\` and \`=== 'true'\` for flags), or write - in the Default column.`
+			: null;
+	}
+	return mentionsCode(cell, expected) || (descriptive && /\s/.test(cell.trim()) && !cell.includes('`'))
+		? null
+		: `${kind} ${name}: ${describe} ${expected}, but docs/wiki/${page}.md ("${where}") lists a different default. Write the default in the Default column as \`${expected}\`.`;
+}
+
+/** The problem with one documented row: a row of the image table needs a variable the Dockerfile sets
+ * and its value; a row of the main table needs a name the code still reads and its default (the image's
+ * value wins, because a variable the image sets always arrives with it, whatever the code falls back to). */
+function rowProblem({ kind, name, page, heading, where, cells, codeNames, codeDefaults, imageEnvironment }) {
+	const common = { kind, name, page, where, cells };
+	if (where !== heading) {
+		return imageEnvironment.has(name)
+			? defaultProblem({ ...common, expected: imageEnvironment.get(name), describe: `${DOCKERFILE} sets it to`, descriptive: true })
+			: `${kind} ${name} is documented in docs/wiki/${page}.md ("${where}") as set by the image, but ${DOCKERFILE} does not set it.`;
+	}
+	if (!codeNames.has(name)) return `${kind} ${name} is documented in docs/wiki/${page}.md ("${heading}") but the code no longer reads it.`;
+	const fromImage = imageEnvironment.has(name);
+	const expected = fromImage ? imageEnvironment.get(name) : codeDefaults.get(name);
+	return defaultProblem({ ...common, expected, describe: fromImage ? `${DOCKERFILE} sets it to` : 'the code defaults to' });
+}
+
 /** Compares a reference table with what the code defines, in both directions: every name the code
  * reads needs a row (in this table, or in `extraHeadings` for what the image sets), every row of
- * this table needs a name the code still reads, and a default the code states has to be the row's. */
-function checkReferenceTable({ page, pageText, heading, extraHeadings = [], codeNames, codeDefaults, kind }) {
-	if (tableRows(pageText, heading) === null) return [`docs/wiki/${page}.md has no "## ${heading}" section.`];
+ * this table needs a name the code still reads, a row of the image table needs a variable the
+ * Dockerfile still sets, and each default has to be the one the source states. */
+function checkReferenceTable({ page, pageText, heading, extraHeadings = [], codeNames, codeDefaults, imageEnvironment = new Map(), kind }) {
+	for (const section of [heading, ...extraHeadings]) {
+		if (tableRows(pageText, section) === null) return [`docs/wiki/${page}.md has no "## ${section}" section.`];
+	}
 	const problems = [];
 	const documented = documentedRows(page, pageText, [heading, ...extraHeadings], problems);
 	for (const name of codeNames) {
 		if (!documented.has(name)) problems.push(`${kind} ${name} is read by the code but has no row in docs/wiki/${page}.md ("${heading}").`);
 	}
 	for (const [name, { cells, heading: where }] of documented) {
-		if (where === heading && !codeNames.has(name)) {
-			problems.push(`${kind} ${name} is documented in docs/wiki/${page}.md ("${heading}") but the code no longer reads it.`);
-		} else if (codeDefaults.has(name) && !mentionsCode(cells[2] ?? '', codeDefaults.get(name))) {
-			problems.push(`${kind} ${name}: the code defaults to ${codeDefaults.get(name)}, but docs/wiki/${page}.md ("${where}") lists a different default. Write the default in the Default column as \`${codeDefaults.get(name)}\`.`);
-		}
+		problems.push(rowProblem({ kind, name, page, heading, where, cells, codeNames, codeDefaults, imageEnvironment }));
 	}
-	return problems;
+	return problems.filter(Boolean);
 }
 
 function checkEndpoints(pageText, codeEndpoints) {
@@ -569,7 +723,7 @@ function checkAgainstCode(root, pages) {
 	const plugin = readPlugin(root, problems);
 	const endpoints = new Set([...readRoutes(root, problems), ...plugin.routes]);
 	problems.push(
-		...checkReferenceTable({ page: 'Configuration', pageText: configuration, heading: 'Service settings', extraHeadings: ['Set by the image'], codeNames: service.names, codeDefaults: service.defaults, kind: 'Setting' }),
+		...checkReferenceTable({ page: 'Configuration', pageText: configuration, heading: 'Service settings', extraHeadings: ['Set by the image'], codeNames: service.names, codeDefaults: service.defaults, imageEnvironment: readImageEnvironment(root, problems), kind: 'Setting' }),
 		...checkReferenceTable({ page: 'Configuration', pageText: configuration, heading: 'WordPress settings', codeNames: plugin.names, codeDefaults: plugin.defaults, kind: 'Constant' }),
 		...checkEndpoints(configuration, endpoints),
 		...checkEnvExample(readEnvExampleKeys(root, problems), service.names),

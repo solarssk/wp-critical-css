@@ -119,6 +119,7 @@ each.
 
 ## Rollback
 
-Deactivate (or delete) the plugin from `Plugins` in wp-admin and stop the
-container. Nothing else depends on this pipeline - stylesheets simply go
+Deactivate (or delete) the plugin from `Plugins` in wp-admin and remove the
+container (`docker compose down`; a merely stopped one comes back after a reboot
+with `restart: always`). Nothing else depends on this pipeline - stylesheets simply go
 back to loading render-blocking, exactly as before it existed.

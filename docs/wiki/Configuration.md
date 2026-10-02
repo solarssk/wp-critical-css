@@ -2,7 +2,7 @@
 
 Everything you can set, with its default. The tables below are checked against the code on every pull request, so a setting that is added, removed or re-defaulted without updating this page fails CI.
 
-The service is configured with environment variables (`.env` next to your `docker-compose.yml`, copied from [`.env.example`](https://github.com/solarssk/wp-critical-css/blob/main/.env.example)). The plugin is configured with constants in `wp-config.php`.
+The service is configured with environment variables: the `.env` next to your `docker-compose.yml`, copied from [`.env.example`](https://github.com/solarssk/wp-critical-css/blob/main/.env.example). Docker reads it when the container is created, so apply a change with `docker compose up -d`; a plain `docker restart` does not re-read it. The plugin is configured with constants in `wp-config.php`.
 
 ## Service settings
 
@@ -47,5 +47,5 @@ Define these in `wp-config.php`, above the line that says to stop editing. Only 
 |---|---|---|---|
 | `GET` | `/health` | service | Liveness and queue state: `status`, `queueLength`, `queueFull`, `processing`. No secret needed, it carries nothing sensitive. |
 | `POST` | `/generate` | service | Queue one URL for rendering. Body `{"url": "..."}`, header `X-WPCC-Secret`. Answers `202` (`queued` or `already queued`), `400` (URL missing or not on `ALLOWED_HOSTNAME`), `403` (wrong secret) or `503` (queue full, retry after 30 seconds). |
-| `POST` | `/sweep` | service | Start a sitemap sweep now. Header `X-WPCC-Secret`. Answers `202` immediately and works in the background. |
+| `POST` | `/sweep` | service | Start a sitemap sweep now. Header `X-WPCC-Secret`. Answers `202` immediately and works in the background; `403` for a wrong secret. |
 | `POST` | `/wp-json/wpcc/v1/critical-css` | WordPress plugin | Where the service delivers CSS. Authenticated by the shared secret, size-capped and rate-limited. Anyone on the internet can reach it like any WordPress REST route, so see [Security Overview](Security-Overview). |
