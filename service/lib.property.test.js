@@ -1,5 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 import { BlockList } from 'node:net';
 import fc from 'fast-check';
 import mediaQuery from 'css-mediaquery';
@@ -106,10 +107,12 @@ const RANGES = [
 	['10.0.0.0', 8],
 	['100.64.0.0', 10],
 	['127.0.0.0', 8],
+	['168.63.129.16', 32],
 	['169.254.0.0', 16],
 	['172.16.0.0', 12],
 	['192.0.0.0', 24],
 	['192.0.2.0', 24],
+	['192.88.99.0', 24],
 	['192.168.0.0', 16],
 	['198.18.0.0', 15],
 	['198.51.100.0', 24],
@@ -118,7 +121,7 @@ const RANGES = [
 	['240.0.0.0', 4],
 ];
 // Uniform draws rarely land on a CIDR edge, so mix in some of the octets where the blocked ranges start and end (not all of them, e.g. 17-19, 51 and 113 are absent): the boundary test below covers every edge deterministically.
-const octet = fc.oneof(fc.integer({ min: 0, max: 255 }), fc.constantFrom(0, 1, 2, 15, 16, 31, 32, 63, 64, 99, 100, 127, 128, 168, 169, 171, 172, 191, 192, 197, 198, 199, 203, 223, 224, 239, 240, 254, 255));
+const octet = fc.oneof(fc.integer({ min: 0, max: 255 }), fc.constantFrom(0, 1, 2, 15, 16, 31, 32, 63, 64, 88, 99, 100, 127, 128, 129, 168, 169, 171, 172, 191, 192, 197, 198, 199, 203, 223, 224, 239, 240, 254, 255));
 const ipv4Oracle = new BlockList();
 for (const [base, prefix] of RANGES) {
 	ipv4Oracle.addSubnet(base, prefix, 'ipv4');
@@ -127,6 +130,27 @@ for (const [base, prefix] of RANGES) {
 const toInt = (ip) => ip.split('.').reduce((acc, part) => acc * 256 + Number(part), 0);
 const toQuad = (n) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
 const inRange = (ip, [base, prefix]) => toInt(ip) >= toInt(base) && toInt(ip) < toInt(base) + 2 ** (32 - prefix);
+
+// The oracle above is a hand-kept copy, so a range added to lib.js and forgotten here would leave every property green: pin the two to each other.
+const rangesIn = (cidrs) => cidrs.map(([base, prefix]) => [base, Number(prefix)]);
+describe('the oracle RANGES', () => {
+	test('is exactly the table in lib.js', () => {
+		const source = readFileSync(new URL('./lib.js', import.meta.url), 'utf8');
+		const body = /const BLOCKED_IPV4_CIDRS = \[([\s\S]*?)\n\];/.exec(source)?.[1];
+		assert.ok(body, 'could not find BLOCKED_IPV4_CIDRS in lib.js');
+		const rows = rangesIn([...body.matchAll(/\['(\d+\.\d+\.\d+\.\d+)', (\d+)\]/g)].map(([, base, prefix]) => [base, prefix]));
+		assert.deepEqual(rows, RANGES);
+	});
+
+	// docker-compose.egress.example.yml (the optional egress-filtering recipe) mirrors the table for the network layer; it is not on every branch, so this only runs where it exists.
+	const recipe = new URL('../docker-compose.egress.example.yml', import.meta.url);
+	test('is exactly the V4_BLOCK list of the egress recipe, where that exists', { skip: !existsSync(recipe) }, () => {
+		const block = /V4_BLOCK='([^']+)'/.exec(readFileSync(recipe, 'utf8'))?.[1];
+		assert.ok(block, 'could not find V4_BLOCK in the egress recipe');
+		const rows = rangesIn(block.split(/\s+/).map((cidr) => cidr.split('/')));
+		assert.deepEqual(rows, RANGES);
+	});
+});
 
 describe('isPrivateOrReservedIpv4 (property)', () => {
 	test('agrees with node:net BlockList on every canonical dotted quad', () => {

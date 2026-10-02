@@ -111,6 +111,15 @@ describe('isPrivateOrReservedIpv4', () => {
 		['rejects the cloud metadata address', '169.254.169.254', true],
 		['rejects the wider link-local block, not just the metadata address', '169.254.1.1', true],
 		['rejects carrier-grade NAT (100.64/10)', '100.64.0.1', true],
+		['rejects the Azure WireServer address (168.63.129.16)', '168.63.129.16', true],
+		['accepts the address just below the Azure WireServer address', '168.63.129.15', false],
+		['accepts the address just above the Azure WireServer address', '168.63.129.17', false],
+		['accepts a lookalike that only shares the Azure WireServer address as a string prefix', '168.63.129.160', false],
+		['rejects the first address of the deprecated 6to4 relay anycast block (192.88.99.0/24)', '192.88.99.0', true],
+		['rejects the 6to4 relay anycast address itself (192.88.99.1)', '192.88.99.1', true],
+		['rejects the last address of the deprecated 6to4 relay anycast block', '192.88.99.255', true],
+		['accepts the address just below the deprecated 6to4 relay anycast block', '192.88.98.255', false],
+		['accepts the address just above the deprecated 6to4 relay anycast block', '192.88.100.0', false],
 		['accepts a real public address', '93.184.216.34', false], // example.com's old IP, kept as a plain public-address fixture
 		['accepts another real public address', '8.8.8.8', false],
 		['rejects garbage instead of throwing (fail closed)', 'not-an-ip', true],
@@ -161,6 +170,8 @@ describe('isPrivateOrReservedIpv6', () => {
 		// Asymmetric on purpose: loopback, metadata and 8.8.8.8 read the same with the last two octets swapped, and 8.8.8.8 is all digits.
 		['IETF protocol assignments (192.0.0.5)', 'rejects', 'c000:5'],
 		['public with hex letters (93.184.216.34)', 'accepts', '5db8:d822'],
+		['Azure WireServer (168.63.129.16)', 'rejects', 'a83f:8110'],
+		['deprecated 6to4 relay anycast (192.88.99.1)', 'rejects', 'c058:6301'],
 	];
 	const embeddedIpv4Cases = EMBEDDED_IPV4_MECHANISMS.flatMap(([mechName, prefix]) => [
 		...EMBEDDED_IPV4_ADDRESSES.map(([addrName, verb, hex]) => [
