@@ -415,7 +415,7 @@ export function isBlockedLiteralAddress(hostname) {
 
 /**
  * The literal-IP check plus a DNS lookup against the exact same
- * private/reserved-address policy, factored out so server.js's Chromium
+ * private/reserved-address policy, factored out so ssrf-chromium.js's Chromium
  * request-interception guard and safeFetch() below share ONE address
  * classifier instead of two hand-rolled ones that could quietly drift
  * apart. Takes a bare hostname (not a full URL) - callers decide what to
