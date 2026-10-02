@@ -6,8 +6,10 @@
   `wp-content` volume reachable from the compose project you'll add this
   service to.
 - A sitemap plugin that emits a sitemap index with `post-sitemap*.xml` /
-  `page-sitemap.xml` sub-sitemaps (Yoast, Rank Math, and WordPress core's
-  own sitemaps all do this by default).
+  `page-sitemap*.xml` sub-sitemaps (Yoast and Rank Math do this by default).
+  WordPress core's own sitemaps name them differently
+  (`wp-sitemap-posts-post-1.xml`), which the sweep's filter does not match, so
+  the sweep finds no URLs with them; saving a post still regenerates it.
 
 ## 1. Configure the generator
 
@@ -61,7 +63,7 @@ docker run --env-file .env -p 3939:3939 wp-critical-css
 curl -s http://localhost:3939/health
 ```
 
-Should return `{"status":"ok","queueLength":0,"processing":false}`.
+Should return `{"status":"ok","queueLength":0,"queueFull":false,"processing":false}`.
 
 ## 5. Install the plugin
 

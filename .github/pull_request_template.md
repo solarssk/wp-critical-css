@@ -34,9 +34,14 @@ Mention follow-up milestones/issues when relevant.
 
 <!--
 Choose exactly one option. Update the docs when the PR changes behavior, setup, configuration, or a
-security control: README.md, docs/ (ARCHITECTURE, DEPLOYMENT, SECURITY-CONTROLS), the plugin's
-readme.txt, and CHANGELOG.md for anything a deployer would notice. "No doc update needed" requires a
-specific reason (e.g. "CI-only change, nothing user-visible"), not just "n/a".
+security control: README.md, docs/ (ARCHITECTURE, DEPLOYMENT, SECURITY-CONTROLS), the Wiki's source in
+docs/wiki/ (never edit the Wiki itself), the plugin's readme.txt, and CHANGELOG.md for anything a
+deployer would notice. "No doc update needed" requires a specific reason (e.g. "CI-only change,
+nothing user-visible"), not just "n/a".
+
+The `wiki-docs` CI job checks this section against the diff: "Docs updated" needs a documentation file
+in the change, "No doc update needed" needs a real reason and is refused when docs/wiki/ changed. It
+reads this description when the job runs, so after fixing it re-run the job - no new commit needed.
 -->
 
 - [ ] Docs updated

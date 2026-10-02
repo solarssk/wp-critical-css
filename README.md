@@ -98,6 +98,7 @@ Two independent triggers feed the same queue - editing a post regenerates just t
 
 | Doc | Covers |
 |-----|--------|
+| 📖 [Wiki](https://github.com/solarssk/wp-critical-css/wiki) | Operator guides: getting started, every setting, how it works, troubleshooting, upgrading (source: [`docs/wiki/`](docs/wiki/)) |
 | 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System flow, request sequence, data flow, design decisions |
 | 🚀 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Full setup, verification, releases, rollback |
 | 🛡️ [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) | Threat model, CI/CD security controls, conscious exclusions |
@@ -120,6 +121,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough. In short:
 | [`service/`](service/) | The generator - `server.js`, `lib.js`, `ssrf-chromium.js`, `package.json`, `Dockerfile` |
 | [`wordpress-plugin/wp-critical-css/`](wordpress-plugin/wp-critical-css/) | The installable plugin - `wp-critical-css.php` plus `includes/wpcc-trigger.php`, `wpcc-receiver.php`, `wpcc-inject.php`, `wpcc-shared.php` |
 | [`wordpress-plugin/wp-critical-css-tests/`](wordpress-plugin/wp-critical-css-tests/) | PHPUnit + PHPCS tooling for the plugin (dev-only, not shipped) |
+| [`docs/wiki/`](docs/wiki/) | The only source of the GitHub Wiki - published by `publish-wiki.yml`, checked against the code by the `wiki-docs` CI job (`scripts/check-wiki-docs.mjs`) |
 | [`.env.example`](.env.example) | Configuration template, including the shared secret format |
 | [`docker-compose.example.yml`](docker-compose.example.yml) | The service block to add to an existing WordPress `docker-compose.yml` |
 | [`.github/workflows/`](.github/workflows/) | CI, CodeQL/Semgrep SAST, the scan-then-publish container pipeline, the plugin-zip pipeline, and the release automation that ties them together |

@@ -87,9 +87,11 @@ each.
   while on first run (tune `SWEEP_DELAY_MS`, default 5s between URLs).
 - **Sitemap sweep is filtered to `post`/`page` sub-sitemaps only.**
   `url_to_postid()` can only resolve single posts/pages - taxonomy archive
-  URLs (tags, categories, the homepage) always 404 at the receiver, so
-  including them would waste a full Puppeteer render (up to 60s per
-  viewport) on a request that's guaranteed to fail. See the filter in
+  URLs (tags, categories) always 404 at the receiver, so including them
+  would waste a full Puppeteer render (up to 60s per viewport) on a request
+  that's guaranteed to fail. (The homepage is the one URL the receiver
+  does resolve itself, by comparing it with `home_url()`; it stores that CSS as
+  site options.) See the filter in
   `fetchSitemapUrls()` (`service/server.js`) - adjust the pattern if your
   sitemap generator names sub-sitemaps differently.
 - **Only `post` and `page` post types trigger the webhook** by default -
