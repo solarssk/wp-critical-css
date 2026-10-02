@@ -195,10 +195,9 @@ jobs:
           cache-to: type=gha,mode=max
 
       # A build that succeeds doesn't prove the image works - Puppeteer
-      # needs more than "Chrome is present somewhere in the filesystem"
-      # (its postinstall step registers the exact cache path its own
-      # runtime later reads from), so this actually launches Chrome and
-      # renders a real page, not just checks the HTTP server answers.
+      # needs more than "Chrome is present somewhere in the filesystem", so
+      # this actually launches Chrome and renders a real page, not just
+      # checks the HTTP server answers.
       - name: Smoke test - real Puppeteer render
         run: |
           docker run --rm wp-critical-css:ci node --input-type=module -e "
@@ -206,6 +205,25 @@ jobs:
           const { css } = await generate({ src: 'https://example.com', inline: false, dimensions: [{ width: 412, height: 915 }], penthouse: { timeout: 30000 } });
           if (!css || css.toString().length === 0) { throw new Error('generated empty CSS'); }
           console.log('Puppeteer render OK,', css.toString().length, 'bytes of CSS');
+          "
+
+      # The render above would also pass on the WRONG Chrome (the base image's
+      # own, or an older one if the pin never took effect), so assert that what
+      # puppeteer actually launches is the build pinned in the Dockerfile. The
+      # expected version is read from the checked-out Dockerfile, not from the
+      # image's own environment, so the check cannot agree with itself by
+      # construction.
+      - name: Smoke test - the pinned Chrome is the one that launches
+        run: |
+          EXPECTED="$(sed -n 's/^ENV PUPPETEER_CHROME_VERSION=\([0-9][0-9.]*\)[[:space:]]*$/\1/p' service/Dockerfile)"
+          test -n "$EXPECTED" || { echo "::error::no 'ENV PUPPETEER_CHROME_VERSION=' line in service/Dockerfile"; exit 1; }
+          docker run --rm -e EXPECTED_CHROME="$EXPECTED" wp-critical-css:ci node --input-type=module -e "
+          import puppeteer from 'puppeteer';
+          const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+          const version = await browser.version();
+          await browser.close();
+          if (!version.endsWith('/' + process.env.EXPECTED_CHROME)) { throw new Error('launched ' + version + ' but the Dockerfile pins ' + process.env.EXPECTED_CHROME); }
+          console.log('Launched', version);
           "
 
       # Page JavaScript must stay OFF while rendering (penthouse's default; a
