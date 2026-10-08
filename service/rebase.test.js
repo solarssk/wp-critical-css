@@ -1,13 +1,13 @@
 import { after, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fc from 'fast-check';
 import postcss from 'postcss';
-import { rebaseStylesheet, stylesheetPath, virtualPathOf } from './rebase.js';
+import { RebaseTooLargeError, rebaseStylesheet, stylesheetPath, virtualPathOf } from './rebase.js';
 import { MalformedDataUriError, RefusedStylesheetUrl, documentBaseUrl, parseDocument, resolveStylesheetUrl, wrapInMedia } from './stylesheets.js';
 
 // Same switches as lib.property.test.js: a fixed seed so a required CI check can never turn red on a fresh random draw.
@@ -27,6 +27,8 @@ const SLOW = { timeout: 60_000 };
 
 // Code points that are invisible are written numerically, never as the literal character.
 const BOM = String.fromCodePoint(0xfeff);
+
+const bytes = (css) => Buffer.byteLength(css);
 
 const FIXTURES = fileURLToPath(new URL('./fixtures/parity/', import.meta.url));
 
@@ -166,6 +168,168 @@ describe('rebaseStylesheet: every url() form, in every place a sheet can come fr
 	}
 });
 
+describe('rebaseStylesheet: a sheet that rebasing could make too large is refused before anything is rewritten', () => {
+	/** The bound the size guard works out for a sheet: what it reports when it refuses (a `maxBytes` of -1 refuses everything). */
+	async function boundOf(css, place) {
+		const error = await rebaseStylesheet(css, { ...place, maxBytes: -1 }).then(
+			() => assert.fail('expected the size guard to refuse the sheet'),
+			(reason) => reason,
+		);
+		assert.ok(error instanceof RebaseTooLargeError, String(error));
+		return error.bound;
+	}
+
+	test('the refusal is its own error, with the numbers; with no maxBytes there is no limit', QUICK, async () => {
+		const place = { stylepath: 'http://cdn.test/css/g.css', virtualPath: '/index.html' };
+		const css = '.a{background:url(a)}.b{background:url(b)}'; // 42 bytes; 82 once rebased; 92 at the worst
+		assert.equal(await rebaseStylesheet(css, place), '.a{background:url(http://cdn.test/css/a)}.b{background:url(http://cdn.test/css/b)}');
+		assert.equal(await rebaseStylesheet(css, { ...place, maxBytes: 92 }), await rebaseStylesheet(css, place));
+		const error = await rebaseStylesheet(css, { ...place, maxBytes: 91 }).catch((reason) => reason);
+		assert.ok(error instanceof RebaseTooLargeError);
+		assert.equal(error.name, 'RebaseTooLargeError');
+		assert.equal(error.bound, 92);
+		assert.equal(error.maxBytes, 91);
+		assert.equal(error.message, 'wpcc: rebasing the stylesheet could make it up to 92 bytes, over the 91 it may be');
+		assert.ok(error instanceof Error);
+	});
+
+	test('a sheet with nothing to rewrite is its own size, wherever it lives: a declaration without a url() is never grown, a $ in it or not; URL( in capitals is not a url()', QUICK, async () => {
+		for (const css of ['', '.a{color:red}', '.a{content:"é"}', '/* Url(x) */.a{background:URL(x)}', '.a{content:"$&$\'$`"}a[href$=".pdf"]{color:red}']) {
+			for (const [scenario, options] of Object.entries(SCENARIOS)) {
+				assert.equal(await boundOf(css, options), bytes(css), `${scenario}: ${css}`);
+			}
+		}
+	});
+
+	test('html passed in directly: an inline sheet is handed back as written and is not looked at; a fetched one is guarded all the same', QUICK, async () => {
+		const css = 'a{b:url(x)}'.repeat(10);
+		assert.equal(await rebaseStylesheet(css, { stylepath: '.css', virtualPath: '', maxBytes: 0 }), css);
+		assert.equal(await boundOf(css, { stylepath: 'https://cdn.test/s.css', virtualPath: '' }), bytes(css) + 10 * 'https://cdn.test/s.css'.length);
+	});
+
+	test('each url( and each AlphaImageLoader( counts once, wherever it stands in the declaration', QUICK, async () => {
+		const options = { stylepath: 'https://c.test/s.css', virtualPath: '/p/index.html' }; // a rewrite may add its 20 bytes
+		const rows = [
+			['one', 'a{b:url(x)}', 1],
+			['two in one declaration', 'a{b:url(x) url(y)}', 2],
+			['one in each of two declarations', 'a{b:url(x)}c{d:url(y)}', 2],
+			['inside an at-rule', '@media print{a{b:url(x)}}', 1],
+			['in a string', 'a{content:"url(x)"}', 1],
+			['one inside the other', 'a{b:url(url(x))}', 2],
+			['the legacy filter', "a{filter:progid:DXImageTransform.Microsoft.AlphaImageLoader(src='x')}", 1],
+			['both kinds', "a{b:url(x);filter:AlphaImageLoader(src='y')}", 2],
+			['in a comment: not a declaration, not rewritten', '/* url(x) */a{color:red}', 0],
+			['in capitals neither', 'a{b:URL(x);filter:ALPHAIMAGELOADER(src=y)}', 0],
+		];
+		for (const [name, css, count] of rows) {
+			assert.equal(await boundOf(css, options), bytes(css) + count * 20, name);
+		}
+	});
+
+	test('another host: a rewrite may add the whole URL of the stylesheet, file name and query included', QUICK, async () => {
+		const stylepath = `https://cdn.test/dir/${'f'.repeat(300)}.css?${'q'.repeat(300)}`;
+		const css = 'a{b:url(#x)}'; // a #fragment or ?query reference becomes that URL plus itself
+		assert.equal(await boundOf(css, { stylepath, virtualPath: '/p/index.html' }), bytes(css) + stylepath.length);
+	});
+
+	test('the page host: the stylesheet file plus a ../ for each directory level of the page; a path that ends in a slash gets its temp.css and temp.html', QUICK, async () => {
+		const css = 'a{b:url(x)}';
+		assert.equal(await boundOf(css, { stylepath: '/c/s.css', virtualPath: '/a/b/index.html' }), bytes(css) + '/c/s.css'.length + 3 * 3);
+		assert.equal(await boundOf(css, { stylepath: '/c/', virtualPath: '/a/' }), bytes(css) + '/c/temp.css'.length + 3 * 2); // /a/temp.html has two slashes
+	});
+
+	test('postcss-url writes a reference with String#replace and uses the result as a template, so every $ in a declaration may double it', QUICK, async () => {
+		const place = { stylepath: 'https://c.test/s.css', virtualPath: '/p/index.html' }; // a rewrite may add 20 bytes
+		const css = 'a{b:url($&)}'; // 12 bytes; the declaration is 7: ((7 + 20) * 2 - 7) more
+		assert.equal(await boundOf(css, place), 12 + (7 + 20) * 2 - 7);
+		const three = 'a{b:url($&$$)}'; // three $: the declaration is 9, times 8
+		assert.equal(await boundOf(three, place), 14 + (9 + 20) * 8 - 9);
+		const accented = 'a{b:url($\u00e9)}'; // the declaration is counted in bytes: 8, not 7 characters
+		assert.equal(await boundOf(accented, place), bytes(accented) + (8 + 20) * 2 - 8);
+		// only the declaration that has a url() and a $ pays for it
+		const mixed = 'a{b:url(x)}c{d:url($&)}e{content:"$$$$"}';
+		assert.equal(await boundOf(mixed, place), bytes(mixed) + 20 + ((7 + 20) * 2 - 7));
+		assert.equal(await rebaseStylesheet(css, place), 'a{b:url(https://c.test/url($&))}', 'and it does happen: the fixtures pin the expansion of one $&');
+	});
+
+	test('what a handful of bytes can ask for: url($\') twenty times is 152 MB, and thirty kilobytes of $& in one url() is 450 MB; both are refused outright', QUICK, async () => {
+		const place = { stylepath: '/css/s.css', virtualPath: '/p/index.html' };
+		const twenty = `a{b:${Array.from({ length: 20 }, () => "url($')").join(' ')}}`; // 164 bytes
+		const manyAmpersands = `a{b:url(${'$&'.repeat(3000)})}`; // 6 KB here: 18 MB of result; the bound is far beyond every float
+		for (const css of [twenty, manyAmpersands]) {
+			const error = await rebaseStylesheet(css, { ...place, maxBytes: 16 * 1024 * 1024 }).catch((reason) => reason);
+			assert.ok(error instanceof RebaseTooLargeError, css.slice(0, 40));
+			assert.ok(error.bound > 150 * 1024 * 1024, String(error.bound));
+		}
+		assert.ok((await rebaseStylesheet(manyAmpersands, place)).length > 18_000_000, 'without a limit it really is that large');
+	});
+
+	test('it is never smaller than what rebasing produced: every recorded form, in every place; only the percent-encoding of a reference goes beyond it', QUICK, async () => {
+		const beyond = [];
+		for (const [name, css, expected] of REBASE_ROWS) {
+			for (const [scenario, options] of Object.entries(SCENARIOS)) {
+				const real = bytes(expected[scenario]);
+				const bound = bytes(css) === 0 ? 0 : await boundOf(css, options).catch(() => undefined);
+				if (bound === undefined) {
+					assert.equal(real, 0, `${name} (${scenario}): a sheet that does not parse is not refused, it is empty`);
+					continue;
+				}
+				assert.ok(real <= bound + 2 * bytes(css), `${name} (${scenario}): ${real} bytes, bound ${bound}`);
+				if (real > bound) {
+					beyond.push(`${name} (${scenario})`);
+				}
+			}
+		}
+		assert.deepEqual(beyond, ['a non-ASCII path (cdn)']);
+	});
+
+	test('... nor on the shapes a hostile page can pick: a long query or file name, a deep page, a long page slug, the legacy filter', QUICK, async () => {
+		const long = 'x'.repeat(2000);
+		const page = '/p/index.html';
+		const shapes = [
+			['#fragment urls, a long query', 'a{b:url(#x)}', { stylepath: `https://cdn.test/d/s.css?${long}`, virtualPath: page }],
+			['?query urls, a long query', 'a{b:url(?x)}', { stylepath: `https://cdn.test/d/s.css?${long}`, virtualPath: page }],
+			['#fragment urls, a long file name', 'a{b:url(#x)}', { stylepath: `https://cdn.test/d/${long}.css`, virtualPath: page }],
+			['a page 20 levels deep, the sheet at the root', 'a{b:url(x)}', { stylepath: '/s.css', virtualPath: `${'/d'.repeat(20)}/index.html` }],
+			['?query urls on the page host, a long file name', 'a{b:url(?q)}', { stylepath: `/${long}.css`, virtualPath: page }],
+			['?query urls of an inline sheet, a long slug', 'a{b:url(?q)}', { stylepath: `/${long}.css`, virtualPath: `/${long}` }],
+			['the legacy filter, a long directory', "a{filter:AlphaImageLoader(src='x')}", { stylepath: `https://cdn.test/${long}/s.css`, virtualPath: page }],
+			['plain relative urls, a long directory', 'a{b:url(x)}', { stylepath: `https://cdn.test/${long}/s.css`, virtualPath: page }],
+		];
+		for (const [name, unit, options] of shapes) {
+			const css = unit.repeat(50);
+			const real = bytes(await rebaseStylesheet(css, options));
+			assert.ok(real > 2 * bytes(css), `${name}: the sheet really does grow (${real} bytes)`);
+			assert.ok(real <= (await boundOf(css, options)), `${name}: ${real} bytes`);
+		}
+	});
+
+	test('the numbers that matter, scaled down: urls inside every cap behind a 4,000-character path are over the 16 MiB budget by far', QUICK, async () => {
+		const unit = 'a{b:url(x)}';
+		const css = unit.repeat(Math.floor((256 * 1024) / unit.length)); // 256 KiB; the same shape at 5 MiB is 4.5 GB
+		const place = { stylepath: `https://cdn.test/${'d'.repeat(4000)}/s.css`, virtualPath: '/index.html' };
+		const error = await rebaseStylesheet(css, { ...place, maxBytes: 16 * 1024 * 1024 }).catch((reason) => reason);
+		assert.ok(error instanceof RebaseTooLargeError);
+		assert.ok(error.bound > 90 * 1024 * 1024, String(error.bound));
+	});
+
+	test('what it leaves out: the percent-encoding of the reference itself, which adds at most twice the sheet on top', QUICK, async () => {
+		const css = '.a{b:url(éééé)}';
+		const options = { stylepath: 'http://cdn.test/css/g.css', virtualPath: '/index.html' };
+		const real = bytes(await rebaseStylesheet(css, options));
+		assert.equal(await boundOf(css, options), 44);
+		assert.equal(real, 55);
+		assert.ok(real <= 44 + 2 * bytes(css));
+	});
+
+	test('a sheet postcss cannot parse is an empty sheet, not a refusal: the guard only looks at what parsed', QUICK, async () => {
+		const errors = [];
+		assert.equal(await rebaseStylesheet('a{b:url(x)}.x{', { stylepath: 'https://cdn.test/s.css', virtualPath: '/p/index.html', maxBytes: 0, onError: (error) => errors.push(error) }), '');
+		assert.equal(errors.length, 1);
+		assert.ok(!(errors[0] instanceof RebaseTooLargeError));
+	});
+});
+
 describe('rebaseStylesheet: a sheet postcss cannot process comes back empty', () => {
 	const broken = [
 		['an unclosed block', '.a{color:red'],
@@ -265,40 +429,48 @@ describe('rebaseStylesheet: where the stylesheet is decides how', () => {
 	});
 });
 
-describe('rebaseStylesheet: source map comments', () => {
-	test('a sourceMappingURL comment stays in the sheet exactly as written when there is no map to find', QUICK, async () => {
+describe('rebaseStylesheet: source maps are never followed', () => {
+	// The one deliberate difference to critical's output (map: false, see rebaseStylesheet): the sourceMappingURL comment is
+	// dropped. The expectations here are critical's output for the same sheets without that comment, which is what the
+	// parity fixture content-comments-kept-sourcemap-comment-dropped records.
+	test('a sourceMappingURL comment is dropped and everything else in the sheet stays as written', QUICK, async () => {
 		const css = '/*! license */\n.a{background:url(img/a.png)}\n/*# sourceMappingURL=theme.css.map */\n';
-		assert.equal(await rebaseStylesheet(css, SCENARIOS.inline), css);
-		assert.equal(await rebaseStylesheet(css, SCENARIOS.page), css.replace('url(img/a.png)', 'url(../../wp-content/themes/t/css/img/a.png)'));
-		assert.equal(await rebaseStylesheet(css, SCENARIOS.cdn), css.replace('url(img/a.png)', 'url(https://cdn.test/assets/css/img/a.png)'));
+		const without = '/*! license */\n.a{background:url(img/a.png)}\n';
+		assert.equal(await rebaseStylesheet(css, SCENARIOS.inline), without);
+		assert.equal(await rebaseStylesheet(css, SCENARIOS.page), without.replace('url(img/a.png)', 'url(../../wp-content/themes/t/css/img/a.png)'));
+		assert.equal(await rebaseStylesheet(css, SCENARIOS.cdn), without.replace('url(img/a.png)', 'url(https://cdn.test/assets/css/img/a.png)'));
 	});
 
-	test('an inline source map that postcss cannot use empties the sheet, as it did for critical', QUICK, async () => {
+	test('the comment goes wherever it stands; a source URL comment and the legacy @ spelling are ordinary comments and stay', QUICK, async () => {
+		assert.equal(await rebaseStylesheet('.a{color:red}\n/*# sourceMappingURL=x.map */\n.b{color:blue}\n', SCENARIOS.inline), '.a{color:red}\n.b{color:blue}\n');
+		assert.equal(await rebaseStylesheet('/*# sourceMappingURL=x.map */.a{color:red}', SCENARIOS.inline), '.a{color:red}');
+		const kept = '.a{color:red}\n/*# sourceURL=x.css */\n/*@ sourceMappingURL=x.map */\n';
+		assert.equal(await rebaseStylesheet(kept, SCENARIOS.inline), kept);
+	});
+
+	test('an inline source map that postcss cannot use no longer fails the sheet (it did with the defaults: the control)', QUICK, async () => {
 		const unusable = ['.a{color:red}\n/*# sourceMappingURL=data:application/json;base64,e30= */', '.a{color:red}\n/*# sourceMappingURL=data:application/json;foo,bar */'];
-		const counts = await Promise.all(
-			unusable.map(async (css) => {
-				const errors = [];
-				assert.equal(await rebaseStylesheet(css, { ...SCENARIOS.page, onError: (error) => errors.push(error) }), '');
-				return errors.length;
-			}),
-		);
-		assert.deepEqual(counts, [1, 1]);
+		for (const css of unusable) {
+			await assert.rejects(async () => postcss().process(css, { from: '/wp-content/themes/t/css/theme.css' }), /version|Unsupported source map encoding/, 'with the defaults postcss decodes the inline map and gives up on this one');
+			const errors = [];
+			assert.equal(await rebaseStylesheet(css, { ...SCENARIOS.page, onError: (error) => errors.push(error) }), '.a{color:red}');
+			assert.deepEqual(errors, []);
+		}
 	});
 
 	describe('a source map file named by the comment', () => {
 		const directory = mkdtemp(path.join(os.tmpdir(), 'wpcc-rebase-'));
 		after(async () => rm(await directory, { recursive: true, force: true }));
-		const sourceMap = JSON.stringify({ version: 3, file: 'theme.css', sources: ['theme.scss'], names: [], mappings: 'AAAA' });
 
-		test('is not read from outside the directory of the stylesheet (postcss 8.5.28 and later; unsafeMap is the control that proves the file is readable)', QUICK, async () => {
+		// postcss follows the comment to `<directory of the stylesheet>/theme.css.map` on the LOCAL disk; making that name a directory
+		// turns "was it read?" into something observable: reading it fails (EISDIR), and a failed read fails the sheet.
+		test('is not looked up on the local disk at all, not even next to the stylesheet (the control proves that postcss would)', QUICK, async () => {
 			const dir = await directory;
-			await mkdir(path.join(dir, 'sheets'));
-			await writeFile(path.join(dir, 'outside.map'), sourceMap);
-			const css = '.a{color:red}\n/*# sourceMappingURL=../outside.map */';
+			await mkdir(path.join(dir, 'sheets', 'theme.css.map'), { recursive: true });
+			const css = '.a{color:red}\n/*# sourceMappingURL=theme.css.map */\n';
 			const stylepath = path.join(dir, 'sheets', 'theme.css');
-			const control = await postcss().process(css, { from: stylepath, unsafeMap: true });
-			assert.ok(control.map, 'with unsafeMap the control run read the file outside the directory');
-			assert.equal(await rebaseStylesheet(css, { stylepath, virtualPath: '/index.html' }), css);
+			await assert.rejects(async () => postcss().process(css, { from: stylepath }), { code: 'EISDIR' }, 'with the defaults postcss tries to read the file named by the comment');
+			assert.equal(await rebaseStylesheet(css, { stylepath, virtualPath: '/index.html' }), '.a{color:red}\n');
 		});
 	});
 });
@@ -526,6 +698,57 @@ describe('rebaseStylesheet (property)', () => {
 			CFG,
 		);
 	});
+});
+
+describe('the size guard (property)', () => {
+	const segment = fc.stringMatching(/^[a-z0-9]{1,5}$/);
+	const directory = (maxLength) => fc.array(segment, { maxLength }).map((parts) => (parts.length === 0 ? '/' : `/${parts.join('/')}/`));
+	const query = fc.oneof(fc.constant(''), segment.map((value) => `?${value}`));
+	// Where the sheet lives and where the page is: the page's host (a path, possibly ending in a slash), another host, or an inline sheet; the page may be deep, or absent.
+	const place = fc.record({
+		stylepath: fc.oneof(
+			fc.tuple(directory(4), segment).map(([dir, file]) => `${dir}${file}.css`),
+			directory(4),
+			fc.tuple(fc.constantFrom('https://cdn.test', 'http://cdn.test:8080'), directory(4), segment, query).map(([origin, dir, file, search]) => `${origin}${dir}${file}.css${search}`),
+		),
+		virtualPath: fc.oneof(directory(8).map((dir) => `${dir}index.html`), fc.constant('')),
+	});
+	// References whose rewriting needs no percent-encoding ...
+	const plainReference = fc.oneof(
+		segment.map((name) => `${name}.png`),
+		fc.array(fc.oneof(segment, fc.constantFrom('..', '.')), { minLength: 1, maxLength: 5 }).map((parts) => `${parts.join('/')}.png`),
+		fc.constantFrom('#x', '?x', '%23x', '/abs/x.png', '//h.test/x.png', 'https://h.test/x.png', 'data:image/png;base64,AAAA', 'mailto:a@b.example', 'x.png?v=1#f', '.', '..', './', '../'),
+	);
+	// ... with the sequences that postcss-url's replacement template expands ...
+	const templateReference = fc.array(fc.constantFrom('x', 'a/', '..', '/', '.', '$&', '$$', '$1', '$'), { minLength: 1, maxLength: 8 }).map((parts) => parts.join(''));
+	// ... and the characters that are encoded: spaces, non-ASCII letters, a backslash, a percent sign ...
+	const encodedReference = fc.string({ unit: fc.constantFrom(...'ab.-_/éż %#?~\\:@&=+;,!*'), minLength: 1, maxLength: 12 });
+	// A sheet with up to six declarations, each with one of the three ways to write a reference; the quotes around the reference are balanced.
+	const sheetOf = (reference) =>
+		fc
+			.array(fc.constantFrom((value) => `.a{background:url(${value})}`, (value) => `.a{filter:AlphaImageLoader(src='${value}')}`, (value) => `.a{background:url("${value}") no-repeat,url('${value}')}`), { minLength: 1, maxLength: 6 })
+			.chain((writers) => reference.map((value) => writers.map((write) => write(value)).join('')));
+	const real = async (css, where) => bytes(await rebaseStylesheet(css, where));
+	const bound = async (css, where) => (bytes(css) === 0 ? 0 : (await rebaseStylesheet(css, { ...where, maxBytes: -1 }).catch((reason) => reason)).bound);
+
+	for (const [name, reference, slack] of [
+		['references that need no percent-encoding: the result is never larger than the bound', plainReference, () => 0],
+		['references the replacement template expands ($&, $$, $1): the result is never larger than the bound', templateReference, () => 0],
+		['references that are percent-encoded: the result is at most the bound plus twice the sheet', encodedReference, (css) => 2 * bytes(css)],
+	]) {
+		test(name, QUICK, async () => {
+			await fc.assert(
+				fc.asyncProperty(place, sheetOf(reference), async (where, css) => {
+					// A sheet postcss cannot parse comes back empty and was never looked at: its bound is undefined, its size 0.
+					const guarded = await bound(css, where);
+					if (guarded !== undefined) {
+						assert.ok(await real(css, where) <= guarded + slack(css), `${css} in ${JSON.stringify(where)}`);
+					}
+				}),
+				CFG,
+			);
+		});
+	}
 });
 
 describe('stylesheetPath and virtualPathOf (property)', () => {

@@ -5,8 +5,8 @@ These fixtures freeze the behaviour of the part of `critical` that this project 
 of the page that is handed to penthouse), recorded while `critical` was still installed. They let the
 replacement be tested byte for byte in plain unit tests: no `critical`, no Chrome, no network.
 
-* 307 cases: **255 parity cases** (directly under this directory: the new layer must produce what `critical`
-  produced) and **52 deliberate-deviation cases** (under `_deviations/`: it must differ on purpose, see "Deviations").
+* 307 cases: **254 parity cases** (directly under this directory: the new layer must produce what `critical`
+  produced) and **53 deliberate-deviation cases** (under `_deviations/`: it must differ on purpose, see "Deviations").
   Every expectation is decided (see "Decisions"); a case the new layer treats differently from `critical` is always a deviation.
 * One pure-function table, `_units/stylesheet-path.json` (18 rows).
 * Every case was recorded twice in a row and the two recordings were identical (the recorder aborts otherwise).
@@ -32,13 +32,13 @@ replacement be tested byte for byte in plain unit tests: no `critical`, no Chrom
 service/fixtures/parity/
   README.md
   .gitattributes               "* -text" (git must never convert these files) and linguist-generated (see "Line endings and git")
-  <case-name>/                 255 parity cases
+  <case-name>/                 254 parity cases
     case.json                  input description + what critical produced ("expect") + what the new layer must do ("thin", deviations only)
     page.html                  the page (any file name; referenced by a route, or by "html")
     *.css, ...                 stylesheets and other bodies the routes serve
     expected.css               EXACT bytes of critical's document.css (only when expect.kind is "css")
     expected-layout.html       EXACT bytes of the layout copy (only when "layout" is true)
-  _deviations/<case-name>/     52 cases where the new layer must deliberately differ
+  _deviations/<case-name>/     53 cases where the new layer must deliberately differ
     (same files as above, plus)
     critical.txt               what critical did, incl. every request it made, and what the new layer must do
     expected-thin.css          what the new layer must produce, when it differs from expected.css (see thin)
@@ -256,7 +256,8 @@ The decisions the rows rely on (the project's decisions for the replacement laye
   must stay on the allowed host;
 * at most 5 redirects per request and at most 100 stylesheets per page;
 * GET only (no HEAD probes), `<base href>` handled as the HTML standard says, the local filesystem is never consulted;
-* the css is injected into the layout copy literally.
+* the css is injected into the layout copy literally;
+* no source map is ever read or written (postcss runs with `map: false`), which also drops a `sourceMappingURL` comment from the css.
 
 | case | what critical does | new layer | source |
 |---|---|---|---|
@@ -280,6 +281,7 @@ The decisions the rows rely on (the project's decisions for the replacement laye
 | `href-whitespace-only-fetches-the-page-itself` | `href="   "` resolves to the page itself, the page html is fetched as a stylesheet and parses to an empty sheet | `differs` | decision (an href that is blank after trimming is skipped and never fetched) |
 | `data-uri-base64-uppercase-token` | `;BASE64` is not recognised, the base64 text is used as css and parses to an empty sheet | `differs` | decision (the base64 token is case-insensitive) |
 | `data-uri-uppercase-scheme` | `DATA:` is not recognised, it is treated as a file path and the job fails | `differs` | decision (the URL scheme is case-insensitive: `DATA:` is decoded exactly like `data:`) |
+| `content-comments-kept-sourcemap-comment-dropped` | keeps a `/*# sourceMappingURL=... */` comment, together with the other comments | `differs` (every other comment stays, the `sourceMappingURL` one is gone) | decision (postcss runs with `map: false`, so it never decodes an inline map or looks for a map file on the local disk; it removes the comment as a side effect) |
 
 ## Decisions
 
