@@ -1,0 +1,8 @@
+/*
+Theme Name: Twenty Fixture
+Version: 1.0.3
+*/
+body{font-family:Inter,sans-serif;background:url(assets/img/bg.png)}
+.site-header{display:flex;background:url(../img/header.svg) no-repeat}
+@media (min-width:782px){.site-header{padding:2rem}}
+@font-face{font-family:Local;src:url(assets/fonts/local.woff2) format("woff2")}

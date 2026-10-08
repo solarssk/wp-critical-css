@@ -1,0 +1,37 @@
+.wp-block-group{box-sizing:border-box}
+.wp-block-image img{height:auto;max-width:100%}
+.wp-block-cover{background-image:url(../../../wp-includes/css/dist/images/cover.png)}
+
+
+:root{--wp--preset--color--primary: #1d4ed8;--wp--style--global--content-size: 650px;}
+body{margin: 0;--wp--style--block-gap: 24px;}
+.has-primary-color{color: var(--wp--preset--color--primary) !important;}
+
+/*
+Theme Name: Twenty Fixture
+Version: 1.0.3
+*/
+body{font-family:Inter,sans-serif;background:url(../../../wp-content/themes/twentytest/assets/img/bg.png)}
+.site-header{display:flex;background:url(../../../wp-content/themes/img/header.svg) no-repeat}
+@media (min-width:782px){.site-header{padding:2rem}}
+@font-face{font-family:Local;src:url(../../../wp-content/themes/twentytest/assets/fonts/local.woff2) format("woff2")}
+
+.slider-arrow{background:url(../../../wp-content/plugins/slider/assets/img/arrow.svg)}
+.slider-dot{background:url(../../../wp-content/plugins/slider/img/dot.png)}
+
+@font-face{font-family:Inter;font-weight:400;src:url(http://127.0.0.1:18982/fonts/inter.woff2) format("woff2"),url(http://127.0.0.1:18982/fonts/inter.woff) format("woff")}
+
+@media (max-width: 600px) { .site-header{display:block}
+.menu{background:url(../../../wp-content/themes/twentytest/img/menu.png)}
+ }
+.lazy-block{opacity:1;background:url(../../../wp-content/plugins/lazy/spinner.gif)}
+
+.deferred-block{margin:0}
+
+
+.site-title a{text-decoration:none}
+.hero{background:url(/wp-content/uploads/2024/05/hero.jpg) center/cover}
+
+.late-block{padding:1px;background:url(../../../wp-content/plugins/late/img/late.png)}
+
+.late-inline{margin:0}

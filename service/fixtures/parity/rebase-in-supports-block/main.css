@@ -1,0 +1,2 @@
+/* rebase: rebase-in-supports-block */
+@supports (display:grid){.rb1{background:url(../img/grid.png)}}

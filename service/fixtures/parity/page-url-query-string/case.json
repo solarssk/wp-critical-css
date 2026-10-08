@@ -1,0 +1,27 @@
+{
+	"description": "Page URL with a query string (/blog/?p=12&preview=true): not part of the virtual path.",
+	"pageUrl": "{{site}}/blog/?p=12&preview=true",
+	"routes": {
+		"/blog/?p=12&preview=true": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/index.html",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

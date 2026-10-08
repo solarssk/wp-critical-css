@@ -1,0 +1,18 @@
+{
+	"description": "html: entry point, inline <style> with relative, root-relative and absolute urls: nothing is rebased.",
+	"html": "page.html",
+	"routes": {},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "",
+		"stylesheets": [
+			{
+				"inline": ".a{background:url(img/a.png)}.b{background:url(../img/b.png)}.c{background:url(/img/c.png)}.d{background:url({{cdn}}/d.png)}"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,31 @@
+{
+	"description": "An old-school <style><!-- ... --></style> wrapper: the comment markers are kept as text and fed to the css parser.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/real.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "real.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": "<!-- .wrapped{color:red} -->"
+			},
+			"{{site}}/wp-content/themes/twentytest/real.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

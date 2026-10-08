@@ -1,0 +1,35 @@
+{
+	"description": "The classic /blog -> /blog/ 301; the page uses a relative href, so the base changes with the redirect.",
+	"pageUrl": "{{site}}/blog",
+	"routes": {
+		"/blog": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /blog/",
+			"headers": {
+				"location": "/blog/"
+			}
+		},
+		"/blog/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/blog/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/index.html",
+		"stylesheets": [
+			"style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

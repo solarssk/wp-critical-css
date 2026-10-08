@@ -1,0 +1,4 @@
+/* fixture sheet: head405redir */
+.head405redir-a{background:url(img/b.png)}
+.head405redir-b{background:url(../img/a.png)}
+.head405redir-c{background:url(/img/c.png)}

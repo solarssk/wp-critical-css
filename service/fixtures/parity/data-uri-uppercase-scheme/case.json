@@ -1,0 +1,21 @@
+{
+	"description": "href=\"DATA:text/css,...\" (upper-case scheme) is not recognised as a data: URI by critical, which treats it as a file path and fails the job.",
+	"proposal": true,
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/real.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "real.css"
+		}
+	},
+	"expect": {
+		"kind": "error",
+		"message": "Error: File not found: DATA:text/css,.up%7Bcolor%3Ared%7D\n       Current working directory: <cwd>\n       Searched in: {{site}}/, <cwd>"
+	}
+}

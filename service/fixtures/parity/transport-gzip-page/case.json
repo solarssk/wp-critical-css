@@ -1,0 +1,28 @@
+{
+	"description": "The HTML page itself is served gzip-compressed.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html",
+			"encoding": "gzip"
+		},
+		"/wp-content/themes/twentytest/x.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "x.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/x.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

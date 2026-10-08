@@ -1,0 +1,41 @@
+{
+	"description": "media=\"print\" with an onload attribute containing the substring \"media\" is kept unwrapped (loadCSS pattern), in three onload spellings.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/lc1.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "lc1.css"
+		},
+		"/wp-content/themes/twentytest/lc2.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "lc2.css"
+		},
+		"/wp-content/themes/twentytest/lc3.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "lc3.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/lc1.css",
+			"{{site}}/wp-content/themes/twentytest/lc2.css",
+			"{{site}}/wp-content/themes/twentytest/lc3.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

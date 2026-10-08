@@ -1,0 +1,27 @@
+{
+	"description": "media=\"PRINT\" is not the exact string \"print\": kept, and wrapped in @media PRINT { }.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/upprint.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "upprint.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/upprint.css"
+		],
+		"stylesheetsMedia": [
+			"PRINT"
+		]
+	}
+}

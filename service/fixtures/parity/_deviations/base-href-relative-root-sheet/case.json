@@ -1,0 +1,32 @@
+{
+	"description": "A relative <base href=\"/foo/\"> together with a ROOT-RELATIVE stylesheet href (which a base path does not affect).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"thin": {
+		"kind": "differs",
+		"note": "Spec <base href> handling replaces critical's regex-and-guess approach: a root-relative href is resolved against the base URL (origin /), so the sheet is found and the job succeeds. critical throws a TypeError (\"path\" argument) as soon as it has to resolve a non-absolute href while a relative <base href> is present.",
+		"derive": {
+			"routes": {
+				"/": {
+					"file": "page.thin.html"
+				}
+			}
+		},
+		"cssFile": "expected-thin.css"
+	},
+	"expect": {
+		"kind": "error",
+		"message": "The \"path\" argument must be of type string. Received undefined"
+	}
+}

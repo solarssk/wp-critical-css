@@ -1,0 +1,18 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 157 bytes, 3 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/after.css -> 200
+
+New layer: thin.kind = skip
+  A failed stylesheet on another host (CDN / third party) is skipped with one logSafe'd warning and the job succeeds. (In these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port: "same host" must compare host:port, as the url() rebasing does, or be injectable.)
+  Expected new-layer css: expected.css (critical dropped the same sheet).

@@ -1,0 +1,48 @@
+{
+	"description": "HEAD says 200 but GET answers 500 with a css-looking body (a flaky origin): critical USES THE ERROR BODY as the stylesheet.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/flaky.css": {
+			"status": 500,
+			"type": "text/css; charset=UTF-8",
+			"body": "/* 500 error body that looks like css */\n.error-body{content:\"500\"}\n",
+			"head": {
+				"status": 200
+			}
+		},
+		"/wp-content/themes/twentytest/before.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "before.css"
+		},
+		"/wp-content/themes/twentytest/after.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "after.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "A failed stylesheet on the page's own host fails the whole job (decision: shipping critical css that silently lacks the owner's own rules is worse than shipping none). The error body is never used as css. (In these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port: \"same host\" must compare host:port, as the url() rebasing does, or be injectable.)"
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/before.css",
+			"{{site}}/wp-content/themes/twentytest/flaky.css",
+			"{{site}}/wp-content/themes/twentytest/after.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

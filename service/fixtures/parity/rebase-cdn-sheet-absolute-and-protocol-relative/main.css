@@ -1,0 +1,5 @@
+/* rebase: rebase-cdn-sheet-absolute-and-protocol-relative */
+.rb1{background:url(https://assets.example.invalid/a.png)}
+.rb2{background:url(//assets.example.invalid/b.png)}
+.rb3{background:url({{site}}/c.png)}
+.rb4{background:url({{cdn}}/d.png)}

@@ -1,0 +1,17 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 97 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/foo/ -> 200
+  HEAD {{site}}/ -> 200
+  HEAD {{site}}/css/a.css -> 200
+  HEAD {{site}}/foo/css/a.css -> 404
+  HEAD {{site}}/css/a.css -> 200
+  HEAD {{site}}/css/a.css -> 200
+  GET {{site}}/css/a.css -> 200
+
+New layer: thin.kind = fail
+  Spec <base href> handling: css/a.css resolves to /foo/css/a.css, which answers 404 on the page's own host, so the job fails like any other same-host stylesheet failure. critical falls back to probing the page directory (HEAD /foo/css/a.css 404, then GET /css/a.css) and includes the sheet from there: that guessing is what the new layer drops. See base-href-absolute-base-dir-not-found for the case where the sheet does exist under the base.

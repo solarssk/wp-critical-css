@@ -1,0 +1,2 @@
+/* rebase: rebase-attribute-selector-values */
+a[href^="url(../x)"]{background:url(../img/a.png)}

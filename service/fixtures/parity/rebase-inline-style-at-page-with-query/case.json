@@ -1,0 +1,24 @@
+{
+	"description": "Inline <style> on a page whose URL has a query string and no trailing slash.",
+	"pageUrl": "{{site}}/shop/item.php?id=7",
+	"routes": {
+		"/shop/item.php?id=7": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/shop/item.php",
+		"stylesheets": [
+			{
+				"inline": ".rb1{background:url(img/a.png)}.rb2{background:url(../img/b.png)}"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

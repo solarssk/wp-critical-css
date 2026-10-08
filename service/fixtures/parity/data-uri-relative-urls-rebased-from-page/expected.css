@@ -1,0 +1,3 @@
+.d1{background:url(img/a.png)}
+.d2{background:url(../img/b.png)}
+.d3{background:url(/img/c.png)}

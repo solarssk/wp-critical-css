@@ -1,0 +1,22 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 157 bytes, 3 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{alias}}/assets/css/gone.css -> 404
+  HEAD {{site}}/ -> 200
+  HEAD {{alias}}/assets/css/gone.css -> 404
+  HEAD {{alias}}/assets/css/gone.css -> 404
+  HEAD {{alias}}/assets/css/gone.css -> 404
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/after.css -> 200
+
+New layer: thin.kind = skip
+  A failed stylesheet on another host (CDN / third party) is skipped with one logSafe'd warning and the job succeeds. {{alias}} is localhost:18981 and the page is on 127.0.0.1:18981: the same port under another HOSTNAME, so it is another host under a hostname comparison as well as under host:port. A comparison on the port alone would call it the same host and fail the job.
+  Expected new-layer css: expected.css (critical dropped the same sheet).

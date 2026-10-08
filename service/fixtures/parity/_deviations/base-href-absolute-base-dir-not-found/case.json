@@ -1,0 +1,34 @@
+{
+	"description": "Absolute <base href=\"{{site}}/foo/\"> + relative sheet href; the base directory URL itself answers 404 (only the sheet exists), and critical only accepts a base candidate that answers a HEAD.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/foo/css/a.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "a.css"
+		}
+	},
+	"thin": {
+		"kind": "differs",
+		"note": "The new layer resolves the href against the base URL arithmetically and never needs the base directory URL to answer; critical fails the job with FileNotFoundError unless that directory URL returns 2xx.",
+		"derive": {
+			"routes": {
+				"/foo/": {
+					"status": 200,
+					"type": "text/html; charset=UTF-8",
+					"file": "dir.html"
+				}
+			}
+		},
+		"cssFile": "expected-thin.css"
+	},
+	"expect": {
+		"kind": "error",
+		"message": "Error: File not found: css/a.css\n       Current working directory: <cwd>\n       Searched in: {{site}}/, <cwd>"
+	}
+}

@@ -1,0 +1,34 @@
+{
+	"description": "The second stylesheet starts with a UTF-8 byte order mark (it ends up in the middle of the joined css).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/plain.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "plain.css"
+		},
+		"/wp-content/themes/twentytest/bom.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "bom.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/plain.css",
+			"{{site}}/wp-content/themes/twentytest/bom.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

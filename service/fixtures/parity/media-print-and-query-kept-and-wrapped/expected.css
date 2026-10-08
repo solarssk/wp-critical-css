@@ -1,0 +1,3 @@
+@media print and (min-width: 100px) { /* fixture sheet: printq */
+.printq{display:block;margin:0 auto;color:#1d4ed8}
+ }

@@ -1,0 +1,3 @@
+/* rebase: rebase-cdn-sheet-multiple-urls-in-declaration */
+@font-face{font-family:"Fixture";src:url(../fonts/f.woff2) format("woff2"),url(../fonts/f.woff) format("woff")}
+.rb1{background:url(a.png) no-repeat,url(../b.png) repeat-x}

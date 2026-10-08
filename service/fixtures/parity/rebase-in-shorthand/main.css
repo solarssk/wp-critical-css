@@ -1,0 +1,4 @@
+/* rebase: rebase-in-shorthand */
+.rb1{background:#fff url(../img/a.png) no-repeat 0 0 / cover}
+.rb2{list-style:square url(img/b.png) inside}
+.rb3{cursor:url(../img/c.cur),auto}

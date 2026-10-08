@@ -1,0 +1,4 @@
+/* rebase: rebase-parent-relative */
+.rb1{background:url(../img/a.png)}
+.rb2{background:url(../../uploads/b.png)}
+.rb3{background:url(../../../../../c.png)}

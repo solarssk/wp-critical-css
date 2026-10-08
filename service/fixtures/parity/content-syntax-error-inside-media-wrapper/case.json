@@ -1,0 +1,27 @@
+{
+	"description": "An unclosed block in a media-conditional sheet: the wrapper's closing brace only closes the inner rule, the @media block stays open, so it is still a parse error and the sheet is emptied.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/wrapped.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "wrapped.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/wrapped.css"
+		],
+		"stylesheetsMedia": [
+			"(min-width: 600px)"
+		]
+	}
+}

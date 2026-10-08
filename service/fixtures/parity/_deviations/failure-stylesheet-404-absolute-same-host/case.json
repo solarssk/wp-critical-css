@@ -1,0 +1,45 @@
+{
+	"description": "An absolute same-host stylesheet answers 404: critical silently DROPS it and succeeds with the other sheets.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/gone.css": {
+			"status": 404,
+			"type": "text/html; charset=UTF-8",
+			"body": "<!DOCTYPE html>\n<html><head><title>Not Found</title><style>.not-found-page{color:#900}</style></head><body class=\"not-found-page\"><h1>Not Found</h1></body></html>\n"
+		},
+		"/wp-content/themes/twentytest/before.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "before.css"
+		},
+		"/wp-content/themes/twentytest/after.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "after.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "A failed stylesheet on the page's own host fails the whole job (decision: shipping critical css that silently lacks the owner's own rules is worse than shipping none). (In these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port: \"same host\" must compare host:port, as the url() rebasing does, or be injectable.)"
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/before.css",
+			"{{site}}/wp-content/themes/twentytest/gone.css",
+			"{{site}}/wp-content/themes/twentytest/after.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

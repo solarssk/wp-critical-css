@@ -1,0 +1,35 @@
+{
+	"description": "The page redirects (302) to a nested URL; the stylesheet is root-relative and its url()s are rebased against the FINAL page path.",
+	"pageUrl": "{{site}}/start",
+	"routes": {
+		"/start": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /blog/landing/",
+			"headers": {
+				"location": "/blog/landing/"
+			}
+		},
+		"/blog/landing/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/landing/index.html",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

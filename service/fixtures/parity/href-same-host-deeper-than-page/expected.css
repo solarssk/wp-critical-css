@@ -1,0 +1,4 @@
+/* fixture sheet: deep */
+.deep-a{background:url(a/b/c/d/img/b.png)}
+.deep-b{background:url(a/b/c/img/a.png)}
+.deep-c{background:url(/img/c.png)}

@@ -1,0 +1,27 @@
+{
+	"description": "Versioned stylesheet on a CDN origin.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{cdn}}/lib/lib.min.css?v=2.1.0": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "lib.min.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{cdn}}/lib/lib.min.css?v=2.1.0"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

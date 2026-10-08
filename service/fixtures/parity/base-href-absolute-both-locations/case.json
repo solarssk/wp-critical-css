@@ -1,0 +1,37 @@
+{
+	"description": "The same relative href exists under the base AND under the page directory with different content: which one is used.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/foo/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "dir.html"
+		},
+		"/foo/css/a.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "under-base.css"
+		},
+		"/css/a.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "under-page.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"css/a.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

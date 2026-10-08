@@ -1,0 +1,27 @@
+{
+	"description": "Same-host sheet: the AlphaImageLoader(src=...) filter is rebased when src is quoted (and in a quoted -ms-filter string), not when it is unquoted.",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/css/main.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "main.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/css/main.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

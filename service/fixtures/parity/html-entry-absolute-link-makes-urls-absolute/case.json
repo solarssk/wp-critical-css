@@ -1,0 +1,29 @@
+{
+	"description": "html: entry point with absolute stylesheet links: with no page host every relative url() in them becomes absolute, also for the {{site}} one.",
+	"html": "page.html",
+	"routes": {
+		"{{cdn}}/assets/css/main.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "cdn.css"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "",
+		"stylesheets": [
+			"{{cdn}}/assets/css/main.css",
+			"{{site}}/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

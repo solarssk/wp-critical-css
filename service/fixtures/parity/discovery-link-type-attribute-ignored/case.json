@@ -1,0 +1,34 @@
+{
+	"description": "The type attribute is not looked at: type=\"text/less\" and type=\"text/x-scss\" links are still discovered.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/less.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "less.css"
+		},
+		"/wp-content/themes/twentytest/scss.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "scss.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/less.css",
+			"{{site}}/wp-content/themes/twentytest/scss.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

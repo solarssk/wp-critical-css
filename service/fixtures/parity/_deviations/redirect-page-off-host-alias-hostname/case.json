@@ -1,0 +1,39 @@
+{
+	"description": "The page URL on 127.0.0.1 redirects to the same port under the hostname localhost, which is then processed.",
+	"pageUrl": "{{site}}/start",
+	"routes": {
+		"/start": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to {{alias}}/landing/",
+			"headers": {
+				"location": "{{alias}}/landing/"
+			}
+		},
+		"{{alias}}/landing/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{alias}}/assets/css/other.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "other.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "Page redirects must stay on the allowed host: localhost:18981 is not 127.0.0.1:18981. Unlike redirect-page-off-host (same hostname, other port) this redirect changes the HOSTNAME, so it must fail under a hostname-only comparison (what ALLOWED_HOSTNAME is) as well as under host:port."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/landing/index.html",
+		"stylesheets": [
+			"{{alias}}/assets/css/other.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

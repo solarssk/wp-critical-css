@@ -1,0 +1,25 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 157 bytes, 3 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{cdn}}/mirror/hop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/nowhere.css -> 404
+  HEAD {{site}}/ -> 200
+  HEAD {{cdn}}/mirror/hop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/nowhere.css -> 404
+  HEAD {{cdn}}/mirror/hop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/nowhere.css -> 404
+  HEAD {{cdn}}/mirror/hop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/nowhere.css -> 404
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/after.css -> 200
+
+New layer: thin.kind = fail  (PROPOSAL: a reading of an unwritten decision, to be confirmed before a test asserts it)
+  Proposal: the host that failed is the one that counts, i.e. the host of the LAST URL requested after redirects (the page host here), so the failure fails the job. If the host written in the page counted instead (the CDN), this would be skipped. Confirm before asserting. (In these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port: "same host" must compare host:port, as the url() rebasing does, or be injectable.)

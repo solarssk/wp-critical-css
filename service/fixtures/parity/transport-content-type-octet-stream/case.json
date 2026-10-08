@@ -1,0 +1,27 @@
+{
+	"description": "A stylesheet served as application/octet-stream is used as css.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/oc.css": {
+			"status": 200,
+			"type": "application/octet-stream",
+			"file": "oc.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/oc.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

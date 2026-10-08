@@ -1,0 +1,35 @@
+{
+	"description": "A CDN stylesheet URL redirects back to the site: the final URL is same-host, so its url()s are rebased document-relative.",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{cdn}}/mirror/style.css": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to {{site}}/wp-content/themes/twentytest/css/style.css",
+			"headers": {
+				"location": "{{site}}/wp-content/themes/twentytest/css/style.css"
+			}
+		},
+		"/wp-content/themes/twentytest/css/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"{{cdn}}/mirror/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

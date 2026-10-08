@@ -1,0 +1,4 @@
+/* fixture sheet: pu */
+.pu-a{background:url(img/b.png)}
+.pu-b{background:url(../img/a.png)}
+.pu-c{background:url(/img/c.png)}

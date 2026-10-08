@@ -1,0 +1,18 @@
+{
+	"description": "A page with no stylesheet and no style element: critical returns empty css.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [],
+		"stylesheetsMedia": []
+	}
+}

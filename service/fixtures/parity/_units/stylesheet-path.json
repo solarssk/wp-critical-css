@@ -1,0 +1,114 @@
+{
+	"description": "critical getStylesheetPath() for a remote stylesheet: pathname when the stylesheet is on the page host (hostname + port, scheme ignored), the complete stylesheet URL otherwise. \"page\" and \"stylesheet\" are absolute URLs (the stylesheet URL is the FINAL one, after redirects); \"expected\" is critical's return value.",
+	"function": "getStylesheetPath",
+	"rows": [
+		{
+			"page": "http://h.test/p/",
+			"stylesheet": "http://h.test/css/a.css",
+			"expected": "/css/a.css",
+			"note": "same host, same scheme"
+		},
+		{
+			"page": "http://h.test/p/",
+			"stylesheet": "https://h.test/css/a.css",
+			"expected": "/css/a.css",
+			"note": "scheme ignored: https sheet on an http page"
+		},
+		{
+			"page": "https://h.test/p/",
+			"stylesheet": "http://h.test/css/a.css",
+			"expected": "/css/a.css",
+			"note": "scheme ignored: http sheet on an https page (a leftover http:// URL on a migrated site)"
+		},
+		{
+			"page": "https://h.test/p/",
+			"stylesheet": "https://h.test:443/css/a.css",
+			"expected": "/css/a.css",
+			"note": "explicit default port of the scheme"
+		},
+		{
+			"page": "http://h.test:80/p/",
+			"stylesheet": "http://h.test/css/a.css",
+			"expected": "/css/a.css",
+			"note": "explicit default port on the page"
+		},
+		{
+			"page": "https://h.test/p/",
+			"stylesheet": "https://H.TEST/css/a.css",
+			"expected": "/css/a.css",
+			"note": "host case folded by the URL parser"
+		},
+		{
+			"page": "http://h.test:8080/p/",
+			"stylesheet": "https://h.test:8080/css/a.css",
+			"expected": "/css/a.css",
+			"note": "same non-default port, different scheme"
+		},
+		{
+			"page": "http://bücher.test/p/",
+			"stylesheet": "http://xn--bcher-kva.test/css/a.css",
+			"expected": "/css/a.css",
+			"note": "unicode host vs its punycode spelling"
+		},
+		{
+			"page": "http://[::1]:8080/p/",
+			"stylesheet": "http://[0:0:0:0:0:0:0:1]:8080/css/a.css",
+			"expected": "/css/a.css",
+			"note": "two spellings of the same IPv6 address"
+		},
+		{
+			"page": "https://h.test/p/",
+			"stylesheet": "https://h.test/css/a.css?v=1#f",
+			"expected": "/css/a.css",
+			"note": "query and hash are not part of the pathname"
+		},
+		{
+			"page": "https://h.test/p/",
+			"stylesheet": "https://www.h.test/css/a.css",
+			"expected": "https://www.h.test/css/a.css",
+			"note": "www. is another host"
+		},
+		{
+			"page": "https://h.test/p/",
+			"stylesheet": "https://h.test:8443/css/a.css",
+			"expected": "https://h.test:8443/css/a.css",
+			"note": "another port"
+		},
+		{
+			"page": "http://h.test/p/",
+			"stylesheet": "http://h.test:443/css/a.css",
+			"expected": "http://h.test:443/css/a.css",
+			"note": "443 is not the default port of http"
+		},
+		{
+			"page": "https://h.test/p/",
+			"stylesheet": "https://h.test:80/css/a.css",
+			"expected": "https://h.test:80/css/a.css",
+			"note": "80 is not the default port of https"
+		},
+		{
+			"page": "http://h.test/p/",
+			"stylesheet": "http://h.test./css/a.css",
+			"expected": "http://h.test./css/a.css",
+			"note": "trailing dot: another host name"
+		},
+		{
+			"page": "https://h.test/p/",
+			"stylesheet": "https://cdn.h.test/css/a.css?v=1#f",
+			"expected": "https://cdn.h.test/css/a.css?v=1#f",
+			"note": "another host keeps query and hash in the full URL"
+		},
+		{
+			"page": "https://h.test/p/",
+			"stylesheet": "https://other.test/css/a.css",
+			"expected": "https://other.test/css/a.css",
+			"note": "unrelated host"
+		},
+		{
+			"page": "http://127.0.0.1:18981/p/",
+			"stylesheet": "http://localhost:18981/css/a.css",
+			"expected": "http://localhost:18981/css/a.css",
+			"note": "same port, other hostname (see the alias cases)"
+		}
+	]
+}

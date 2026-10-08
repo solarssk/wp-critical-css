@@ -1,0 +1,28 @@
+{
+	"description": "data:,... (no media type) and data:text/css;charset=utf-8,... both decode.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".no-type{color:red}"
+			},
+			{
+				"inline": ".with-charset{color:blue}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

@@ -1,0 +1,24 @@
+{
+	"description": "An inline <style media=\"(min-width: 2000px)\"> is wrapped in @media.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".inline-wide{color:green}"
+			}
+		],
+		"stylesheetsMedia": [
+			"(min-width: 2000px)"
+		]
+	}
+}

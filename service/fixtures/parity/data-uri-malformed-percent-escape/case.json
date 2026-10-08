@@ -1,0 +1,32 @@
+{
+	"description": "A data: payload with an invalid percent escape (%ZZ): critical decodes it leniently (the escape stays literal) instead of throwing.",
+	"proposal": true,
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/real.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "real.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": "%ZZ{color:red}"
+			},
+			"{{site}}/wp-content/themes/twentytest/real.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

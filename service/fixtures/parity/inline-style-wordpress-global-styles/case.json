@@ -1,0 +1,24 @@
+{
+	"description": "A block-theme style block as WordPress prints it (custom properties, nested at-rules, url() with a data: URI).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": "\n:root{--wp--preset--color--black: #000000;--wp--preset--color--white: #ffffff;--wp--preset--font-size--medium: 20px;--wp--style--global--content-size: 650px;}\nbody{margin: 0;padding-top: var(--wp--preset--spacing--40);}\n.has-black-color{color: var(--wp--preset--color--black) !important;}\n@media (min-width: 782px){.is-layout-flex{gap: 2em;}}\n.wp-duotone-filter{background-image: url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/>\");}\n"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

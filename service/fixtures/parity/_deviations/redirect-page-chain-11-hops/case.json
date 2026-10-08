@@ -1,0 +1,119 @@
+{
+	"description": "Eleven redirects. got stops after 10 per request, but critical's HEAD probe takes the first 10 and then restarts the GET from the last URL it saw, so the chain still resolves.",
+	"pageUrl": "{{site}}/hop0",
+	"routes": {
+		"/hop0": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop1",
+			"headers": {
+				"location": "/hop1"
+			}
+		},
+		"/hop1": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop2",
+			"headers": {
+				"location": "/hop2"
+			}
+		},
+		"/hop2": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop3",
+			"headers": {
+				"location": "/hop3"
+			}
+		},
+		"/hop3": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop4",
+			"headers": {
+				"location": "/hop4"
+			}
+		},
+		"/hop4": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop5",
+			"headers": {
+				"location": "/hop5"
+			}
+		},
+		"/hop5": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop6",
+			"headers": {
+				"location": "/hop6"
+			}
+		},
+		"/hop6": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop7",
+			"headers": {
+				"location": "/hop7"
+			}
+		},
+		"/hop7": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop8",
+			"headers": {
+				"location": "/hop8"
+			}
+		},
+		"/hop8": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop9",
+			"headers": {
+				"location": "/hop9"
+			}
+		},
+		"/hop9": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop10",
+			"headers": {
+				"location": "/hop10"
+			}
+		},
+		"/hop10": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /final/",
+			"headers": {
+				"location": "/final/"
+			}
+		},
+		"/final/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "The new layer follows at most 5 redirects. Surprise worth knowing: critical effectively allows about 20 (HEAD probe + GET restart)."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/hop10",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

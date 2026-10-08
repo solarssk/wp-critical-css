@@ -1,0 +1,39 @@
+{
+	"description": "The page URL on the site redirects to a page on ANOTHER origin, which is then processed.",
+	"pageUrl": "{{site}}/start",
+	"routes": {
+		"/start": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to {{cdn}}/landing/",
+			"headers": {
+				"location": "{{cdn}}/landing/"
+			}
+		},
+		"{{cdn}}/landing/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{cdn}}/assets/css/other.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "other.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "Page redirects must stay on the allowed host (ALLOWED_HOSTNAME): a redirect to another host fails the job. NOTE: in these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port, so a hostname-only policy would FOLLOW this redirect; the test must treat host:port as the identity for this case, or inject the policy. redirect-page-off-host-alias-hostname is the same rule with a different hostname."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/landing/index.html",
+		"stylesheets": [
+			"{{cdn}}/assets/css/other.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

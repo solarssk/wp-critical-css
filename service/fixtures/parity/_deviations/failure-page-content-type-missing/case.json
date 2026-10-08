@@ -1,0 +1,32 @@
+{
+	"description": "The page answers 200 with no Content-Type header: critical never looks at the page content-type and processes it as HTML.",
+	"proposal": true,
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": null,
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/x.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "x.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "Proposal: the page content-type must be html or xhtml, so no Content-Type header fails the job (same reading as failure-page-content-type-json); the stylesheet rules are different, there text/plain and a missing type are tolerated. The decision list covers neither: confirm before asserting this one."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/x.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

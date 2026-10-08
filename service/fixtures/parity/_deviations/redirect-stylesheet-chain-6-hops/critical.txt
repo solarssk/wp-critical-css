@@ -1,0 +1,25 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 81 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/css/hop0.css -> 301
+  HEAD {{site}}/css/hop1.css -> 302
+  HEAD {{site}}/css/hop2.css -> 301
+  HEAD {{site}}/css/hop3.css -> 302
+  HEAD {{site}}/css/hop4.css -> 301
+  HEAD {{site}}/css/hop5.css -> 302
+  HEAD {{site}}/css/final.css -> 200
+  HEAD {{site}}/css/hop0.css -> 301
+  HEAD {{site}}/css/hop1.css -> 302
+  HEAD {{site}}/css/hop2.css -> 301
+  HEAD {{site}}/css/hop3.css -> 302
+  HEAD {{site}}/css/hop4.css -> 301
+  HEAD {{site}}/css/hop5.css -> 302
+  HEAD {{site}}/css/final.css -> 200
+  GET {{site}}/css/final.css -> 200
+
+New layer: thin.kind = fail
+  The new layer follows at most 5 redirects: the sixth fails that stylesheet, and a failed same-host stylesheet fails the job. critical follows it. redirect-stylesheet-chain-5-hops is the case that must still work.

@@ -1,0 +1,50 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 158 bytes, 3 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{cdn}}/assets/css/loop2.css -> 302
+  HEAD {{cdn}}/assets/css/loop.css -> 302
+  GET {{cdn}}/assets/css/loop.css -> 302
+  GET {{cdn}}/assets/css/loop2.css -> 302
+  GET {{cdn}}/assets/css/loop.css -> 302
+  GET {{cdn}}/assets/css/loop2.css -> 302
+  GET {{cdn}}/assets/css/loop.css -> 302
+  GET {{cdn}}/assets/css/loop2.css -> 302
+  GET {{cdn}}/assets/css/loop.css -> 302
+  GET {{cdn}}/assets/css/loop2.css -> 302
+  GET {{cdn}}/assets/css/loop.css -> 302
+  GET {{cdn}}/assets/css/loop2.css -> 302
+  GET {{cdn}}/assets/css/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/after.css -> 200
+
+New layer: thin.kind = skip
+  A failed stylesheet on another host (CDN / third party) is skipped with one logSafe'd warning and the job succeeds. critical does not drop this sheet: after its redirect budget it takes the body of the last 302 response as the stylesheet, the css parser rejects it and the sheet becomes an EMPTY element in the join. expected-thin.css (critical's output when the sheet is simply missing) is therefore one newline shorter than expected.css. (In these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port: "same host" must compare host:port, as the url() rebasing does, or be injectable.)
+  Expected new-layer css: expected-thin.css (157 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

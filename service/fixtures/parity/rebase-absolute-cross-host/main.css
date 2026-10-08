@@ -1,0 +1,3 @@
+/* rebase: rebase-absolute-cross-host */
+.rb1{background:url({{cdn}}/x.png)}
+.rb2{background:url(https://assets.example.invalid/y.png)}

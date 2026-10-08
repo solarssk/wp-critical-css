@@ -1,0 +1,8 @@
+/* fixture sheet: before */
+.before{display:block;margin:0 auto;color:#1d4ed8}
+
+/* 500 error body that looks like css */
+.error-body{content:"500"}
+
+/* fixture sheet: after */
+.after{display:block;margin:0 auto;color:#1d4ed8}

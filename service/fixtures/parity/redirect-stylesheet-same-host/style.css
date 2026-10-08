@@ -1,0 +1,4 @@
+/* fixture sheet: sredir */
+.sredir-a{background:url(img/b.png)}
+.sredir-b{background:url(../img/a.png)}
+.sredir-c{background:url(/img/c.png)}

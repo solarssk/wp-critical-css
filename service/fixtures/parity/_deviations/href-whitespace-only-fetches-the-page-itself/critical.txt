@@ -1,0 +1,18 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 76 bytes, 2 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/ -> 200
+  HEAD {{site}}/ -> 200
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/real.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/real.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/real.css -> 200
+
+New layer: thin.kind = differs  (PROPOSAL: a reading of an unwritten decision, to be confirmed before a test asserts it)
+  Proposal (not part of the decision list, confirm): a href that is blank after trimming is skipped and never fetched; fetching the page as a stylesheet would be rejected anyway (text/html). expected-thin.css = critical's output for the same page without the blank link.
+  Expected new-layer css: expected-thin.css (75 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

@@ -1,0 +1,37 @@
+{
+	"description": "Link markup inside <script> strings and <textarea> is text, not discovered.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/real.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "real.css"
+		},
+		"/wp-content/themes/twentytest/instring.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "instring.css"
+		},
+		"/wp-content/themes/twentytest/intextarea.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "intextarea.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/real.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

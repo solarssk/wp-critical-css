@@ -1,0 +1,27 @@
+{
+	"description": "A ~48 KB stylesheet that is one single line (minified), with relative urls to rebase.",
+	"pageUrl": "{{site}}/blog/",
+	"routes": {
+		"/blog/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/long.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "long.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/long.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

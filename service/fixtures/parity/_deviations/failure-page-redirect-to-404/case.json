@@ -1,0 +1,39 @@
+{
+	"description": "The page redirects (302) to a URL that answers 404 with an HTML body: critical processes that body.",
+	"pageUrl": "{{site}}/start",
+	"routes": {
+		"/start": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /missing/",
+			"headers": {
+				"location": "/missing/"
+			}
+		},
+		"/missing/": {
+			"status": 404,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/x.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "x.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "A non-2xx page response is a hard failure (decision); critical processes the error body as if it were the page."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/missing/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/x.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,4 @@
+/* fixture sheet: offalias */
+.offalias-a{background:url(../assets/css/img/b.png)}
+.offalias-b{background:url(../assets/img/a.png)}
+.offalias-c{background:url(/img/c.png)}

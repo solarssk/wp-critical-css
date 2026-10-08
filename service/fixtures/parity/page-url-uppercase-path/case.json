@@ -1,0 +1,27 @@
+{
+	"description": "Upper-case path /Blog/Post/ (paths are case sensitive).",
+	"pageUrl": "{{site}}/Blog/Post/",
+	"routes": {
+		"/Blog/Post/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/Blog/Post/index.html",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

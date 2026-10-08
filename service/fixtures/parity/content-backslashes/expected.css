@@ -1,0 +1,4 @@
+.icon::before{content:"\f101";font-family:"Fixture Icons"}
+.a\:b\/c{color:red}
+.n\31 23{color:blue}
+.q::after{content:"say \"hi\" \\ done"}

@@ -1,0 +1,27 @@
+{
+	"description": "CDN sheet: several url()s in one declaration (font src list, layered backgrounds).",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{cdn}}/assets/css/main.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "main.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"{{cdn}}/assets/css/main.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

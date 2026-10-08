@@ -1,0 +1,13 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 133 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/x.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/x.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/x.css -> 200
+
+New layer: thin.kind = fail  (PROPOSAL: a reading of an unwritten decision, to be confirmed before a test asserts it)
+  Proposal: the page content-type must be html or xhtml, so no Content-Type header fails the job (same reading as failure-page-content-type-json); the stylesheet rules are different, there text/plain and a missing type are tolerated. The decision list covers neither: confirm before asserting this one.

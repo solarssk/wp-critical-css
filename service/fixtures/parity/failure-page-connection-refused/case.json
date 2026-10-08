@@ -1,0 +1,12 @@
+{
+	"description": "The page URL points at a port nothing listens on: the connection is refused and the job fails.",
+	"pageUrl": "{{cdn}}/",
+	"down": [
+		"cdn"
+	],
+	"routes": {},
+	"expect": {
+		"kind": "error",
+		"message": "connect ECONNREFUSED {{cdn_host}}"
+	}
+}

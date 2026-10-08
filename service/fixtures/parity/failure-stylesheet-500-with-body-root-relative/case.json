@@ -1,0 +1,30 @@
+{
+	"description": "A root-relative stylesheet answers 500 with a css-looking body: critical throws FileNotFoundError (the body is never used).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/broken.css": {
+			"status": 500,
+			"type": "text/css; charset=UTF-8",
+			"body": "/* 500 error body that looks like css */\n.error-body{content:\"500\"}\n"
+		},
+		"/wp-content/themes/twentytest/before.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "before.css"
+		},
+		"/wp-content/themes/twentytest/after.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "after.css"
+		}
+	},
+	"expect": {
+		"kind": "error",
+		"message": "Error: File not found: /wp-content/themes/twentytest/broken.css\n       Current working directory: <cwd>\n       Searched in: {{site}}/, <cwd>"
+	}
+}

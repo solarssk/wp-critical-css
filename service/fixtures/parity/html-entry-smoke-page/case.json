@@ -1,0 +1,20 @@
+{
+	"description": "The html: entry point with the exact page of the offline container smoke test (one inline <style>, nothing to fetch).",
+	"html": "page.html",
+	"layout": true,
+	"routes": {},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "",
+		"stylesheets": [
+			{
+				"inline": ".hero{color:red}.far{color:blue}"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		],
+		"layoutFile": "expected-layout.html"
+	}
+}

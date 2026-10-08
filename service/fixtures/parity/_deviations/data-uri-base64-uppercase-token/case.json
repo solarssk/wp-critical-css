@@ -1,0 +1,44 @@
+{
+	"description": "data:text/css;BASE64,... (upper-case token): critical does not treat it as base64 and uses the base64 text as css, which parses to an empty sheet.",
+	"proposal": true,
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/real.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "real.css"
+		}
+	},
+	"thin": {
+		"kind": "differs",
+		"note": "Proposal: the media type parameter base64 is case-insensitive (as in the URL standard), so the payload is decoded as base64 and the rule is included; expected-thin.css is critical's output for the same page with a lower-case ;base64. Confirm before asserting.",
+		"derive": {
+			"routes": {
+				"/": {
+					"file": "page.thin.html"
+				}
+			}
+		},
+		"cssFile": "expected-thin.css"
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": "LnVwcGVyLXRva2Vue2NvbG9yOiMwYTB9Cg=="
+			},
+			"{{site}}/wp-content/themes/twentytest/real.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

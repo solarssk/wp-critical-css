@@ -1,0 +1,3 @@
+/* rebase: rebase-quoted-parentheses-in-path */
+.rb1{background:url("../img/a(1).png")}
+.rb2{background:url('../img/b(2).png')}

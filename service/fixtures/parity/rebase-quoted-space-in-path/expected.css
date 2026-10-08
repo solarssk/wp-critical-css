@@ -1,0 +1,3 @@
+/* rebase: rebase-quoted-space-in-path */
+.rb1{background:url("../../wp-content/themes/twentytest/img/my%20image.png")}
+.rb2{background:url('../../wp-content/themes/twentytest/img/my%20image%202.png')}

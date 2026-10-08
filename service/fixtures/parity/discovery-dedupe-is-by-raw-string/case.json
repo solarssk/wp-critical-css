@@ -1,0 +1,29 @@
+{
+	"description": "Duplicates are detected on the raw attribute string, not on the resolved URL: \"/x.css\" and \"{{site}}/x.css\" are fetched and included twice.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/raw.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "raw.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/raw.css",
+			"{{site}}/wp-content/themes/twentytest/raw.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

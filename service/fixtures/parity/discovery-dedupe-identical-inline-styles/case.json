@@ -1,0 +1,28 @@
+{
+	"description": "Two identical inline <style> blocks are included once; a different one is kept.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".same{color:red}"
+			},
+			{
+				"inline": ".other{color:blue}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

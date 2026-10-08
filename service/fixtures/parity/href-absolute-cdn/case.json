@@ -1,0 +1,27 @@
+{
+	"description": "Absolute href on another origin (a CDN).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{cdn}}/assets/css/cdn.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "cdn.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{cdn}}/assets/css/cdn.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

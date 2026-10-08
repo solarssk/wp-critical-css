@@ -1,0 +1,27 @@
+{
+	"description": "The stylesheet lives in a much deeper directory than the page (/page.html vs /a/b/c/d/deep.css).",
+	"pageUrl": "{{site}}/page.html",
+	"routes": {
+		"/page.html": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/a/b/c/d/deep.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "deep.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/page.html",
+		"stylesheets": [
+			"{{site}}/a/b/c/d/deep.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

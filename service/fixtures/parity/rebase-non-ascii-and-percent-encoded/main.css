@@ -1,0 +1,4 @@
+/* rebase: rebase-non-ascii-and-percent-encoded */
+.rb1{background:url(../img/café.png)}
+.rb2{background:url(../img/caf%C3%A9.png)}
+.rb3{background:url("../img/日本.png")}

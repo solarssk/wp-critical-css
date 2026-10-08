@@ -1,0 +1,34 @@
+{
+	"description": "Two sheets from the same directory, both with relative urls (joined with one newline).",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/css/one.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "one.css"
+		},
+		"/wp-content/themes/twentytest/css/two.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "two.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/css/one.css",
+			"{{site}}/wp-content/themes/twentytest/css/two.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

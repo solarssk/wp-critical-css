@@ -1,0 +1,27 @@
+{
+	"description": "media=\"only screen and (min-width: 40em)\" is wrapped verbatim.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/osm.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "osm.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/osm.css"
+		],
+		"stylesheetsMedia": [
+			"only screen and (min-width: 40em)"
+		]
+	}
+}
