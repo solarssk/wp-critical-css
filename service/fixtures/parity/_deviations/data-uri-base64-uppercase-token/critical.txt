@@ -9,6 +9,6 @@ Requests critical made, in order (method url -> status the fixture server answer
   HEAD {{site}}/wp-content/themes/twentytest/real.css -> 200
   GET {{site}}/wp-content/themes/twentytest/real.css -> 200
 
-New layer: thin.kind = differs  (PROPOSAL: a reading of an unwritten decision, to be confirmed before a test asserts it)
-  Proposal: the media type parameter base64 is case-insensitive (as in the URL standard), so the payload is decoded as base64 and the rule is included; expected-thin.css is critical's output for the same page with a lower-case ;base64. Confirm before asserting.
+New layer: thin.kind = differs
+  The media type parameter base64 is case-insensitive (as in the URL standard), so the payload is decoded as base64 and the rule is included; expected-thin.css is critical's output for the same page with a lower-case ;base64.
   Expected new-layer css: expected-thin.css (101 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

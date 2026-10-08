@@ -1,6 +1,5 @@
 {
 	"description": "Same-host sheet: DATA: and Data: urls (the scheme test is case-sensitive) are rewritten into bogus paths, while data: is left alone.",
-	"proposal": true,
 	"pageUrl": "{{site}}/blog/hello-world/",
 	"routes": {
 		"/blog/hello-world/": {

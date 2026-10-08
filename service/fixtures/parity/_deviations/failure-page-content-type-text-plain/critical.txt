@@ -9,5 +9,5 @@ Requests critical made, in order (method url -> status the fixture server answer
   HEAD {{site}}/wp-content/themes/twentytest/x.css -> 200
   GET {{site}}/wp-content/themes/twentytest/x.css -> 200
 
-New layer: thin.kind = fail  (PROPOSAL: a reading of an unwritten decision, to be confirmed before a test asserts it)
-  Proposal: the page content-type must be html or xhtml, so text/plain fails the job (same reading as failure-page-content-type-json); the stylesheet rules are different, there text/plain and a missing type are tolerated. The decision list covers neither: confirm before asserting this one.
+New layer: thin.kind = fail
+  The page content-type must be html or xhtml, so text/plain fails the job (a MISSING content-type fails too: WordPress always sends one). The stylesheet rules are different: there text/plain, application/octet-stream and a missing type are tolerated.

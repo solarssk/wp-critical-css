@@ -6,5 +6,5 @@ Requests critical made, in order (method url -> status the fixture server answer
   HEAD {{site}}/ -> 200
   GET {{site}}/ -> 200
 
-New layer: thin.kind = fail  (PROPOSAL: a reading of an unwritten decision, to be confirmed before a test asserts it)
-  Proposal: the page content-type must be html or xhtml, so anything else (JSON here) fails the job. The decision list covers the status code and the stylesheet content-types but not the page content-type: confirm before asserting this one.
+New layer: thin.kind = fail
+  The page content-type must be html or xhtml, so anything else (JSON here) fails the job.

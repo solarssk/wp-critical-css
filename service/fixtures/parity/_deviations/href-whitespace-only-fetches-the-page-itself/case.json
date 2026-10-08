@@ -1,6 +1,5 @@
 {
 	"description": "href=\"   \" (blanks only) is non-empty: critical resolves it to the page itself, fetches the page HTML as a stylesheet, and the css parser turns that into an empty sheet (an extra empty join element).",
-	"proposal": true,
 	"pageUrl": "{{site}}/",
 	"routes": {
 		"/": {
@@ -16,7 +15,7 @@
 	},
 	"thin": {
 		"kind": "differs",
-		"note": "Proposal (not part of the decision list, confirm): a href that is blank after trimming is skipped and never fetched; fetching the page as a stylesheet would be rejected anyway (text/html). expected-thin.css = critical's output for the same page without the blank link.",
+		"note": "A href that is blank after trimming is skipped and never fetched (fetching the page as a stylesheet would be rejected anyway: text/html). expected-thin.css = critical's output for the same page without the blank link.",
 		"derive": {
 			"routes": {
 				"/": {

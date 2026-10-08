@@ -1,6 +1,5 @@
 {
 	"description": "data:text/css;BASE64,... (upper-case token): critical does not treat it as base64 and uses the base64 text as css, which parses to an empty sheet.",
-	"proposal": true,
 	"pageUrl": "{{site}}/",
 	"routes": {
 		"/": {
@@ -16,7 +15,7 @@
 	},
 	"thin": {
 		"kind": "differs",
-		"note": "Proposal: the media type parameter base64 is case-insensitive (as in the URL standard), so the payload is decoded as base64 and the rule is included; expected-thin.css is critical's output for the same page with a lower-case ;base64. Confirm before asserting.",
+		"note": "The media type parameter base64 is case-insensitive (as in the URL standard), so the payload is decoded as base64 and the rule is included; expected-thin.css is critical's output for the same page with a lower-case ;base64.",
 		"derive": {
 			"routes": {
 				"/": {

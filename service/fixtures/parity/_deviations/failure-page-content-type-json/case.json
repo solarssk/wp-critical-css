@@ -1,6 +1,5 @@
 {
 	"description": "The page URL answers 200 with application/json (an API endpoint): critical parses it as HTML and finds nothing.",
-	"proposal": true,
 	"pageUrl": "{{site}}/",
 	"routes": {
 		"/": {
@@ -11,7 +10,7 @@
 	},
 	"thin": {
 		"kind": "fail",
-		"note": "Proposal: the page content-type must be html or xhtml, so anything else (JSON here) fails the job. The decision list covers the status code and the stylesheet content-types but not the page content-type: confirm before asserting this one."
+		"note": "The page content-type must be html or xhtml, so anything else (JSON here) fails the job."
 	},
 	"expect": {
 		"kind": "css",

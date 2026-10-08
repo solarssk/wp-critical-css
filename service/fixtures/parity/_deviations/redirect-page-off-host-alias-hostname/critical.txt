@@ -11,4 +11,4 @@ Requests critical made, in order (method url -> status the fixture server answer
   GET {{alias}}/assets/css/other.css -> 200
 
 New layer: thin.kind = fail
-  Page redirects must stay on the allowed host: localhost:18981 is not 127.0.0.1:18981. Unlike redirect-page-off-host (same hostname, other port) this redirect changes the HOSTNAME, so it must fail under a hostname-only comparison (what ALLOWED_HOSTNAME is) as well as under host:port.
+  Page redirects must stay on the allowed host: localhost:18981 is not 127.0.0.1:18981. Unlike redirect-page-off-host (same hostname, other port) this redirect changes the HOSTNAME, so it must fail under a hostname comparison (what isAllowedUrl(url, ALLOWED_HOSTNAME) is) as well as under host:port.

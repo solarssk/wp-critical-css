@@ -1,6 +1,5 @@
 {
 	"description": "A stylesheet href with a scheme other than http(s) (ftp://) is dropped silently; the sheets around it are kept.",
-	"proposal": true,
 	"pageUrl": "{{site}}/",
 	"routes": {
 		"/": {
@@ -18,6 +17,10 @@
 			"type": "text/css; charset=UTF-8",
 			"file": "after.css"
 		}
+	},
+	"thin": {
+		"kind": "skip",
+		"note": "A scheme other than http or https is refused before any request, which counts as a failure on another host: the sheet is skipped with one logSafe'd warning and the job succeeds with the sheets around it. The css is expected.css (critical dropped the same sheet silently)."
 	},
 	"expect": {
 		"kind": "css",

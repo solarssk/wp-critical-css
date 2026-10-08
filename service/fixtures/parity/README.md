@@ -5,9 +5,9 @@ These fixtures freeze the behaviour of the part of `critical` that this project 
 of the page that is handed to penthouse), recorded while `critical` was still installed. They let the
 replacement be tested byte for byte in plain unit tests: no `critical`, no Chrome, no network.
 
-* 307 cases: **257 parity cases** (directly under this directory) and **50 deliberate-deviation
-  cases** (under `_deviations/`), see "Deviations". 13 of them are **proposals** (an expectation nobody has decided
-  yet, see "Proposals") and are not to be asserted before the maintainer confirms them.
+* 307 cases: **255 parity cases** (directly under this directory: the new layer must produce what `critical`
+  produced) and **52 deliberate-deviation cases** (under `_deviations/`: it must differ on purpose, see "Deviations").
+  Every expectation is decided (see "Decisions"); a case the new layer treats differently from `critical` is always a deviation.
 * One pure-function table, `_units/stylesheet-path.json` (18 rows).
 * Every case was recorded twice in a row and the two recordings were identical (the recorder aborts otherwise).
   The whole tree was also rebuilt from the case inputs, twice, from an empty directory, with byte-identical
@@ -31,14 +31,14 @@ replacement be tested byte for byte in plain unit tests: no `critical`, no Chrom
 ```
 service/fixtures/parity/
   README.md
-  .gitattributes               "* -text": git must never convert these files (see "Line endings and git")
-  <case-name>/                 257 parity cases
-    case.json                  input description + what critical produced ("expect")
+  .gitattributes               "* -text" (git must never convert these files) and linguist-generated (see "Line endings and git")
+  <case-name>/                 255 parity cases
+    case.json                  input description + what critical produced ("expect") + what the new layer must do ("thin", deviations only)
     page.html                  the page (any file name; referenced by a route, or by "html")
     *.css, ...                 stylesheets and other bodies the routes serve
     expected.css               EXACT bytes of critical's document.css (only when expect.kind is "css")
     expected-layout.html       EXACT bytes of the layout copy (only when "layout" is true)
-  _deviations/<case-name>/     50 cases where the new layer must deliberately differ
+  _deviations/<case-name>/     52 cases where the new layer must deliberately differ
     (same files as above, plus)
     critical.txt               what critical did, incl. every request it made, and what the new layer must do
     expected-thin.css          what the new layer must produce, when it differs from expected.css (see thin)
@@ -76,19 +76,28 @@ Rules a test must follow:
    **back** into placeholders (full origins first, then the bare `host:port` forms). Substitute them forward before
    comparing with the new layer's output, or compare after reversing the new layer's.
 
-### Which origins are "the same host"
+### Two notions of "the same host" (keep both, name them apart)
 
-In every fixture the identity of a host is **hostname + port with the scheme ignored** (what the URL parser reports as
-`host` after it dropped a default port): that is what `critical` compares when it rebases `url()`s, and what the failure
-policy and the page-redirect pin have to compare here. The three origins differ like this:
+1. **Stylesheet same-host rule**: **hostname + port with the scheme ignored** and default ports dropped (what the URL parser
+   reports as `host`). `critical` compares it when it rebases `url()`s (`getStylesheetPath()`, the `_units` table), and the
+   stylesheet failure policy uses the same notion: the host of the LAST URL requested for a stylesheet (after its redirects)
+   against the host of the FINAL page URL; same host -> the job fails, another host -> the sheet is skipped with one warning.
+2. **Allowed page host**: production's `isAllowedUrl(url, ALLOWED_HOSTNAME)` from `lib.js`, a **hostname** comparison, pins the
+   page's own redirects. The page-loading code takes it as an injectable predicate (`isPageHostAllowed(url)`). The two loopback
+   origins `{{site}}` and `{{cdn}}` share the hostname `127.0.0.1`, which a hostname comparison cannot tell apart, so a fixture
+   test injects a `host:port` predicate for `redirect-page-off-host` (production's hostname predicate would follow that redirect);
+   `redirect-page-off-host-alias-hostname` fails under both, so it can also run with the production predicate
+   (`isAllowedUrl(url, '127.0.0.1')`).
+
+The three origins differ like this:
 
 | pair | `host` (hostname:port) | hostname only | port only |
 |---|---|---|---|
 | `{{site}}` vs `{{cdn}}` | different | **same** | different |
 | `{{site}}` vs `{{alias}}` | different | different | **same** |
 
-Everything that treats `{{cdn}}` as another host (the rebasing of CDN sheets, the `*-cdn` cases, `redirect-page-off-host`)
-therefore needs a `host:port` comparison or an injected policy. Production's `ALLOWED_HOSTNAME` is a hostname: the cases
+Everything that treats `{{cdn}}` as another host (the rebasing of CDN sheets, the `*-cdn` cases) therefore needs the
+`host:port` comparison of the stylesheet rule, and `redirect-page-off-host` needs the injected `host:port` page predicate. The cases
 that are "another host" under a hostname comparison as well are the three that use `{{alias}}`:
 `rebase-sheet-on-alias-hostname`, `failure-stylesheet-404-alias-hostname` and `redirect-page-off-host-alias-hostname`
 (they also catch a comparison on the port alone). The scheme and default-port rules cannot be shown with plain-http
@@ -99,7 +108,6 @@ servers; they are in `_units/stylesheet-path.json`.
 ```jsonc
 {
   "description": "one sentence: the behaviour this case isolates",
-  "proposal": true,                               // optional: the expectation is a proposal, see "Proposals"
   "pageUrl": "{{site}}/blog/hello-world/",        // the URL given to getDocument ... or instead:
   "html": "page.html",                            // ... a file holding the html given to the `html:` entry point
   "layout": true,                                 // optional: also capture the layout copy (expected-layout.html)
@@ -110,7 +118,7 @@ servers; they are in `_units/stylesheet-path.json`.
     "/old.css": { "status": 302, "type": "text/plain", "body": "Redirecting", "headers": { "location": "/new.css" } }
   },
   "thin": { "kind": "fail|skip|differs|same", "note": "...", "derive": { "routes": {} }, "cssFile": "expected-thin.css",
-            "layout": "literal", "layoutFile": "expected-thin-layout.html" },   // _deviations/ only
+            "layout": "literal", "layoutFile": "expected-thin-layout.html" },   // _deviations/ only, see "Reading the new layer's expectation"
   "expect": { ... }                               // written by the recorder
 }
 ```
@@ -160,7 +168,7 @@ single `"\n"`. A sheet's own trailing newline therefore gives a blank line betwe
 sheet gives an extra empty element (`"\n\n"`). `content-join-separator-and-trailing-newlines` shows it. On Windows
 critical would join with CRLF; the new layer must always use `"\n"`.
 
-### How a test uses a case
+### Test recipe
 
 ```js
 const dir = path.join(FIXTURES, name);               // or path.join(FIXTURES, '_deviations', name)
@@ -169,43 +177,68 @@ const sub = (s) => s.replaceAll('{{site}}', SITE).replaceAll('{{cdn}}', CDN).rep
   .replaceAll('{{site_host}}', SITE_HOST).replaceAll('{{cdn_host}}', CDN_HOST).replaceAll('{{alias_host}}', ALIAS_HOST);
 ```
 
-There are two layers to fake, and the fixtures need both:
+The page-loading code has a transport half and a policy half. Only the transport half is faked:
 
-1. **Transport (one request, no policy).** For an absolute URL: find the route whose substituted key equals it
-   (origin + path + query, exact) and answer `status` / `type` / `headers` / body bytes (`file` or `body`, tokens substituted);
-   an origin in `c.down` -> a network error; no route -> `404`, `text/plain`, `Not Found`. Ignore `head` and `encoding`.
-2. **Policy (what the code under test does with the answers).** Redirects (manual, at most 5, every hop checked), a
-   non-2xx status, the content-type rules, the UTF-8 decoding and the failure policy are *behaviour*, and the `fail` /
-   `skip` rows of the deviations table are about exactly these.
+1. **The seam: a one-hop `request(url)`.** The page-fetch module takes its network access as an injectable function (the way
+   `ssrf-chromium.js` and `ssrf-proxy.js` take `lookup` / `connect`). `request(url, { signal, headers })` performs exactly ONE HTTP
+   exchange and resolves to `{ status, headers, body }` (`headers` a `Headers` or a plain object, `body` an iterable of byte chunks);
+   it does not follow redirects and judges neither status, content-type nor size. A test replaces only this function with a fake that
+   replays `c.routes`: find the route whose substituted key equals the absolute URL (origin + path + query, exact) and answer `status`, the
+   `Content-Type` header from `type` (no header when `null`), the extra `headers` (lower-case names, e.g. `location`) and the body
+   bytes (`file` or `body`, tokens substituted; an `encoding` is not applied). An origin in `c.down` -> the rejection the real transport
+   gives for a refused connection. No route -> `404`, `text/plain`, `Not Found`. `head` and `encoding` are ignored: HEAD is never sent,
+   and decompression is a real-HTTP test.
+2. **The policy is the module's own code and is never faked.** The redirect loop (manual, at most 5 hops, every hop checked), the
+   refusal of schemes other than http(s), the status rule, the content-type rules, the size caps, the UTF-8 decoding, the page-host
+   pin (the injected `isPageHostAllowed(url)`) and the stylesheet failure rules all run for real on top of the fake `request`. These
+   are what the `fail` / `skip` rows of the deviations table test. Do not fake the whole fetcher instead: that fake would have to
+   re-implement these rules (about 25 lines) and the rows would then only test the fake.
 
-   Either give the code under test a one-hop `request(url)` seam and let the real policy wrapper run on top of the fake
-   transport (recommended: then the `fail` / `skip` rows test the production code), or fake the whole fetcher, in which case the fake has to
-   re-implement the rules (about 25 lines) and those rows only test the fake.
+   Decoding is part of that policy: the module must decode bodies with `Buffer.toString('utf8')`. `response.text()` and `TextDecoder`
+   strip a leading BOM, which `content-utf8-bom-*` pin, and invalid bytes must become U+FFFD (`transport-invalid-utf8-bytes`).
 
-   Decode bodies with `Buffer.toString('utf8')`. `response.text()` and `TextDecoder` strip a leading BOM, which
-   `content-utf8-bom-*` pin, and invalid bytes must become U+FFFD (`transport-invalid-utf8-bytes`).
+Then run the code under test on `sub(c.pageUrl)` (cases with `html`: on the substituted file content), with the page predicate
+described in "Two notions of the same host", and compare with the expectation read as below:
 
-Then run the code under test on `sub(c.pageUrl)` (cases with `html`: on the substituted file content) and:
+* the css must equal the bytes of the expected css file (raw, no substitution); where the module exposes them, the discovery result of
+  a **parity** case must equal `c.expect.stylesheets` / `stylesheetsMedia` (after substitution) and the page path `c.expect.virtualPath`;
+* `c.layout` -> the layout copy built from the page text and that css must equal the expected layout file;
+* a case in `_deviations/` -> run it on the case's own `routes` and `pageUrl`, **not on the derived variant:** `thin.derive` exists only
+  so the recorder could obtain `expected-thin.css` from `critical`; its route keys contain placeholders too. The recorded `expect`
+  of a deviation (`stylesheets`, `virtualPath`, and `expected.css` unless `thin` points at it) is what `critical` did and is not asserted.
 
-* parity case, `c.expect.kind === 'css'` -> the css must equal the bytes of `c.expect.cssFile` (raw, no substitution);
-  where the module exposes them, the discovery result must equal `c.expect.stylesheets` / `stylesheetsMedia` (after substitution)
-  and the page path `c.expect.virtualPath`;
-* parity case, `c.expect.kind === 'error'` -> the call must reject;
-* `c.layout` -> the layout copy built from the page text and that css must equal `c.expect.layoutFile` (parity) or `c.thin.layoutFile` (deviation);
-* a case in `_deviations/` -> see `thin` below. **Run it on the case's own `routes` and `pageUrl`, not on the derived variant:**
-  `thin.derive` exists only so the recorder could obtain `expected-thin.css` from `critical`; its route keys contain
-  placeholders too;
-* `c.proposal` -> skip it until the maintainer has confirmed the reading.
+### Reading the new layer's expectation
+
+A case is a deviation exactly when its directory is `_deviations/<name>/`, and exactly when its `case.json` has a `thin` object; there is
+no separate flag. Every case, parity or deviation, is read the same way:
+
+```js
+// -> { reject: true } | { reject: false, css, layout, warnings }; css and layout are raw bytes, never substituted
+function newLayerExpectation(dir, c) {
+	const raw = (file) => readFileSync(path.join(dir, file));
+	const t = c.thin;                                    // undefined for a parity case
+	if (t?.kind === 'fail' || (!t && c.expect.kind === 'error')) return { reject: true };
+	return {
+		reject: false,
+		css: raw(t?.cssFile ?? c.expect.cssFile),        // differs: thin.cssFile; skip: thin.cssFile when present, else expect.cssFile; same and parity: expect.cssFile
+		layout: t?.layoutFile ? raw(t.layoutFile) : c.expect.layoutFile ? raw(c.expect.layoutFile) : null,
+		warnings: t?.kind === 'skip' ? 1 : 0,            // a skipped stylesheet logs exactly one warning; nothing else does
+	};
+}
+```
 
 ## Deviations (`_deviations/`)
 
 Cases where the new layer must NOT reproduce what critical did. `expected.css` / `expect` still record
-critical's behaviour (never assert it for these), and `thin` says what the new layer must do:
+critical's behaviour (assert them only where `thin` says so: a `skip` without `thin.cssFile`, and `same`), and `thin` says what the
+new layer must do. Its keys are the same in every deviation: `kind` and `note` (why the new layer differs) always; `derive` and
+`cssFile` together (the css differs from `expected.css`; `cssFile` is always `expected-thin.css`); `layout: "literal"` and `layoutFile`
+together (the layout copy differs; `layoutFile` is always `expected-thin-layout.html`, only with `"layout": true`). The checker enforces this.
 
 | `thin.kind` | meaning |
 |---|---|
 | `fail` | the job must fail (reject). critical processed or dropped something that must now be a hard error. |
-| `skip` | the job must succeed, the failing off-host stylesheet is skipped with one `logSafe`'d warning. Expected css: `thin.cssFile` if present, else `expect.cssFile` (critical dropped the sheet as well). |
+| `skip` | the job must succeed, the failing stylesheet (on another host, or with a refused scheme) is skipped with one `logSafe`'d warning. Expected css: `thin.cssFile` if present, else `expect.cssFile` (critical dropped the sheet as well). |
 | `differs` | the job must succeed with css equal to `thin.cssFile` (`expected-thin.css`). |
 | `same` | the css behaves as `expect`; only the layout copy differs (`thin.layoutFile`). |
 
@@ -215,12 +248,12 @@ deletes the route), i.e. for a healthy server, for a missing sheet, or for a rew
 `expected-thin-layout.html` is the one exception: the recorder builds it from critical's own page text and css
 with the single intended difference (the css injected literally). `critical.txt` lists, in order, every request critical made.
 
-The decisions the rows rely on (they are the project's decisions for the replacement layer; "proposal" rows are readings of
-things nobody has decided yet):
+The decisions the rows rely on (the project's decisions for the replacement layer; the ones about a single odd input are in "Decisions"):
 
 * a stylesheet that fails to load on the page's own host (after redirects) fails the whole job, one on any other host is skipped
   with a warning; an error body is never used as css and a `text/html` / `application/xhtml+xml` stylesheet response is rejected (soft 404);
-* a non-2xx page response is a hard failure and page redirects must stay on the allowed host;
+* a non-2xx page response is a hard failure, so is a page that is not html or xhtml (a missing content-type too), and page redirects
+  must stay on the allowed host;
 * at most 5 redirects per request and at most 100 stylesheets per page;
 * GET only (no HEAD probes), `<base href>` handled as the HTML standard says, the local filesystem is never consulted;
 * the css is injected into the layout copy literally.
@@ -234,38 +267,41 @@ things nobody has decided yet):
 | `page-head-405-get-redirects` | the HEAD probe failed, so it never learns the redirect target: a relative href is resolved against the wrong directory and the job throws | `differs` (final URL taken from the GET) | decision (GET only) |
 | `failure-page-404-with-body`, `failure-page-404-empty-body`, `failure-page-403-bot-challenge-page`, `failure-page-503-maintenance-page`, `failure-page-302-without-location`, `failure-page-redirect-to-404` | processes the error page as the page (a bot-challenge or maintenance page's css is delivered) | `fail` | decision (non-2xx page is a hard failure) |
 | `redirect-page-chain-6-hops`, `redirect-page-chain-7-hops`, `redirect-page-chain-11-hops`, `redirect-page-chain-25-hops`, `redirect-page-loop`, `redirect-stylesheet-chain-6-hops` | follows up to about 20 hops (got stops at 10 per request, but critical's HEAD probe takes the first 10 and the GET restarts from the last URL it saw); a loop or 25 hops does not fail: the last 3xx response body is used and the css is empty | `fail` | decision (max 5 redirects; the 5-hop siblings `redirect-page-chain-5-hops` and `redirect-stylesheet-chain-5-hops` are parity cases) |
-| `redirect-page-off-host`, `redirect-page-off-host-alias-hostname` | follows a page redirect to another origin | `fail` | decision (page redirects stay on the allowed host); the first differs from the page only by PORT, the second only by HOSTNAME (see "Which origins are the same host") |
+| `redirect-page-off-host`, `redirect-page-off-host-alias-hostname` | follows a page redirect to another origin | `fail` | decision (page redirects stay on the allowed host); the first differs from the page only by PORT (it needs the injected `host:port` page predicate), the second only by HOSTNAME (see "Two notions of "the same host"") |
 | `content-101-stylesheets` | no limit | `fail` | decision (max 100 sheets; `content-100-stylesheets` is a parity case) |
 | `base-href-relative-path`, `base-href-relative-root-sheet` | `TypeError: The "path" argument must be of type string` as soon as a non-absolute href must be resolved while a relative `<base href>` exists | `differs` | decision (`<base href>` per the HTML standard) |
 | `base-href-absolute-base-dir-not-found` | only considers a base candidate whose directory URL answers a HEAD with 2xx; otherwise `FileNotFoundError` | `differs` | decision (`<base href>` per the HTML standard) |
 | `base-href-after-other-attribute` | recognises `<base>` only when `href` is its first attribute (regex), so ignores `<base target="_blank" href="/foo/">` | `differs` | decision (`<base href>` per the HTML standard) |
 | `base-href-absolute-only-under-page-dir` | the relative sheet is not under the base, so it falls back to probing the page directory (HEAD base 404, then GET page-dir) and includes the sheet from there | `fail` (the base URL is the only candidate; its 404 fails the job) | decision (`<base href>` per the HTML standard, no guessing) |
 | `layout-dollar-sequences-in-css` | injects the css into the layout copy as a replacement template: `$&`, `$1`, `$$`, `` $` ``, `$'` in the css are expanded and the layout copy no longer matches the css | `same` css, layout copy per `expected-thin-layout.html` (css injected literally) | decision (literal injection) |
-| `failure-page-content-type-json`, `failure-page-content-type-text-plain`, `failure-page-content-type-missing`, `failure-stylesheet-redirect-cdn-to-site-404` | processes the page whatever its content-type; silently drops the redirected sheet | `fail` | proposal |
-| `failure-stylesheet-redirect-site-to-cdn-404` | drops the sheet silently | `skip` (css = `expected.css`) | proposal |
-| `href-whitespace-only-fetches-the-page-itself`, `data-uri-base64-uppercase-token` | the first: `href="   "` resolves to the page itself, the page html is fetched as a stylesheet and parses to an empty sheet; the second: `;BASE64` is not recognised, the base64 text is used as css and parses to an empty sheet | `differs` | proposal |
+| `failure-page-content-type-json`, `failure-page-content-type-text-plain`, `failure-page-content-type-missing` | processes the page whatever its content-type | `fail` | decision (the page content-type must be html or xhtml; a missing one fails too) |
+| `failure-stylesheet-redirect-cdn-to-site-404` | silently drops the redirected sheet | `fail` | decision (the host of the last URL requested decides: here the page host) |
+| `failure-stylesheet-redirect-site-to-cdn-404`, `href-ftp-scheme-dropped` | drops the sheet silently | `skip` (css = `expected.css`) | decision (the first: the last URL requested is on the CDN; the second: a scheme other than http(s) is refused, which counts as a failure on another host) |
+| `href-whitespace-only-fetches-the-page-itself` | `href="   "` resolves to the page itself, the page html is fetched as a stylesheet and parses to an empty sheet | `differs` | decision (an href that is blank after trimming is skipped and never fetched) |
+| `data-uri-base64-uppercase-token` | `;BASE64` is not recognised, the base64 text is used as css and parses to an empty sheet | `differs` | decision (the base64 token is case-insensitive) |
+| `data-uri-uppercase-scheme` | `DATA:` is not recognised, it is treated as a file path and the job fails | `differs` | decision (the URL scheme is case-insensitive: `DATA:` is decoded exactly like `data:`) |
 
-## Proposals (not decided yet)
+## Decisions
 
-`"proposal": true` marks a case whose expectation is a reading of something the project has not decided. A parity
-proposal records what critical did and the table says what the new layer is expected to do; none of these should be asserted until
-the maintainer has confirmed the reading (change the reading, the case or the flag, not the test).
+Each of these was an open question when the fixtures were recorded and is now decided. The case carries the accepted behaviour: where
+the new layer differs from `critical` it is under `_deviations/` with a `thin` block (see the deviations table), otherwise it is a
+parity case. One line per decision:
 
-| case | what critical does | proposed new-layer behaviour |
+| case | what critical does | accepted behaviour (rule) |
 |---|---|---|
-| `failure-page-content-type-json`, `failure-page-content-type-text-plain`, `failure-page-content-type-missing` | processes the page whatever its content-type | the job fails: the page content-type must be html or xhtml (for stylesheets `text/plain` and a missing type are tolerated; for the page the decision list says nothing) |
-| `failure-stylesheet-redirect-site-to-cdn-404`, `failure-stylesheet-redirect-cdn-to-site-404` | drops the sheet silently in both | the host of the LAST URL requested decides: the first is skipped (it failed on the CDN), the second fails the job (it failed on the page host). If the host written in the page decided, both would flip. |
+| `failure-page-content-type-json`, `failure-page-content-type-text-plain`, `failure-page-content-type-missing` | processes the page whatever its content-type | the job fails: the page content-type must be html or xhtml, and a MISSING content-type fails too (WordPress always sends one); for stylesheets `text/html` and `application/xhtml+xml` are rejected while `text/plain`, `application/octet-stream` and a missing type are tolerated |
+| `failure-stylesheet-redirect-site-to-cdn-404`, `failure-stylesheet-redirect-cdn-to-site-404` | drops the sheet silently in both | the host (hostname + port, scheme ignored, default ports dropped) of the LAST URL requested for the stylesheet is compared with the host of the FINAL page URL: the first failed on the CDN and is skipped with one warning, the second failed on the page host and fails the job |
 | `href-whitespace-only-fetches-the-page-itself` | fetches the page html as a stylesheet | an href that is blank after trimming is skipped and never fetched |
-| `data-uri-base64-uppercase-token` | does not recognise `;BASE64` and uses the base64 text as css | the token is case-insensitive: the payload is decoded as base64 |
-| `data-uri-no-comma` | throws `malformed data: URI`: the job fails | the job fails (a malformed data: stylesheet in the owner's own page); skipping would be the other reading |
-| `data-uri-uppercase-scheme` | does not recognise `DATA:`, treats it as a file path and fails the job | the job fails; decoding it like `data:` would be the other reading |
-| `data-uri-malformed-percent-escape` | decodes leniently (`%ZZ` stays literal) | the same: decoding must never throw out of discovery |
-| `href-ftp-scheme-dropped` | drops an `ftp://` stylesheet silently | a scheme other than http(s) is refused, which counts as a failure on another host: skipped with a warning |
-| `rebase-dollar-sequences-in-url`, `rebase-uppercase-data-scheme-in-url` | corrupt the url (`$&` is expanded by `postcss-url`'s string replace) or rewrite `DATA:` / `Data:` into a bogus path (the scheme test is case-sensitive) | bug-compatible only while `postcss-url`'s rebase is kept; a replacement has to decide whether to keep or fix them |
+| `data-uri-base64-uppercase-token` | does not recognise `;BASE64` and uses the base64 text as css | the base64 token is case-insensitive: the payload is decoded |
+| `data-uri-no-comma` | throws `malformed data: URI`: the job fails | the job fails: a data: stylesheet without a comma in the owner's own page is malformed (parity case) |
+| `data-uri-uppercase-scheme` | does not recognise `DATA:`, treats it as a file path and fails the job | deliberate deviation: the URL scheme is case-insensitive, so a `DATA:` href is decoded exactly like `data:` (one rule, no special failure; `;BASE64` is case-insensitive too); `expected-thin.css` is critical's output for the lower-case twin with the same payload |
+| `data-uri-malformed-percent-escape` | decodes leniently (`%ZZ` stays literal) | the same: a malformed percent escape decodes leniently and never throws out of discovery (parity case) |
+| `href-ftp-scheme-dropped` | drops an `ftp://` stylesheet silently | a scheme other than http or https is refused, which counts as a failure on another host: the sheet is skipped with one warning and the job succeeds (a `skip` deviation: the warning is new behaviour) |
+| `rebase-dollar-sequences-in-url`, `rebase-uppercase-data-scheme-in-url` | corrupt the url (`$&` is expanded by `postcss-url`'s string replace) or rewrite `DATA:` / `Data:` into a bogus path (the scheme test is case-sensitive) | bug-compatible: `postcss-url` stays for the rebasing, so a `DATA:` inside a css `url()` (not a `<link href>`, see the row above) and `$&` keep the recorded output; replacing it (or fixing these two) is out of scope (parity cases) |
 
-Not pinned by any case, because `critical` cannot produce the new layer's output for the same page: the text of a
-`<style>` element that starts with `data:` is decoded as a data: URI by critical (the check is on the value, wherever it
-came from); the new layer should treat the text of a `<style>` as css, always.
+Also decided, with no recorded case because `critical` cannot produce the new layer's output for the same page: the text of a
+`<style>` element is ALWAYS css and is never reinterpreted as a data: URI (`critical` decodes a `<style>` whose text starts with `data:`,
+because its check is on the value wherever it came from). A unit test of the discovery module pins it.
 
 ## Layout copy (`"layout": true`)
 
@@ -359,6 +395,7 @@ output is identical; if it replaces them, these are the places to look.
   `page-not-utf8-latin1-bytes/page.html` (not valid UTF-8). Everything else is LF only.
 * `.gitattributes` in this directory sets `* -text`: git never converts anything below it (`git check-attr text` reports
   `unset`), so a checkout with `core.autocrlf=true` (Windows) cannot rewrite the LF files and break the byte comparisons.
+  It also sets `linguist-generated=true`: the files are recorded by a tool, so GitHub collapses their diffs by default.
 * `expected.css` for a case with no css is a zero-byte file.
 
 ## Editors, linters and scanners
@@ -373,21 +410,21 @@ invalidates its `expected.css`).
 
 These need unit or integration tests of their own, the recorded data cannot replace them: the size caps (html 10 MiB, 5 MiB
 per sheet, 16 MiB in total) including the decoded-byte cap on a compression bomb; the 30 s total and 15 s idle deadlines; the
-User-Agent; the nesting-depth guard (511 / 512 / 513 levels); per hop, the refusal of a private literal address, userinfo and
+User-Agent; the nesting-depth guard (511 / 512 / 513 levels); the rejection of an `application/xhtml+xml` stylesheet (only `text/html` is recorded); per hop, the refusal of a private literal address, userinfo and
 non-http(s) schemes; TLS verification; whether inline and `data:` sheets count towards the 100; the removal of the temp
 directory on every path; the local policy proxy; and the `<base href>` that critical's regex sees inside a comment or a script string
 (a parser does not).
 
 ## Adding a case
 
-1. Create `<name>/` with `case.json` (`description`, `pageUrl` or `html`, `routes`, optional `down` / `layout` / `proposal`; for `_deviations/` also
+1. Create `<name>/` with `case.json` (`description`, `pageUrl` or `html`, `routes`, optional `down` / `layout`; for `_deviations/` also
    `thin`) and the files its routes serve. Use the placeholders; keep a case to one behaviour; write the description as one sentence.
 2. Record it with `critical@8.0.0` (see below) so `expect`, `expected.css` (and `critical.txt`/`expected-thin.css`/`expected-layout.html`
    for deviations and layout cases) are written by the tool, never by hand.
 3. Review the result: it is what `critical` did, not necessarily what is right. If the new layer must differ, move
    the case to `_deviations/` and add `thin`. If the new layer's output is something `critical` cannot produce for the same
    page, say so in the README instead of writing the expectation by hand.
-4. Add the case to the README table it belongs to (the deviations and proposals tables are checked against the `case.json` files).
+4. Add the case to the README table it belongs to (the deviations and decisions tables are checked against the `case.json` files).
 
 The recorder was a ~500-line script, not kept in the repository because `critical` is being removed. To rebuild
 it in a scratch directory: `npm install critical@8.0.0`; chdir into an empty directory and point `TMPDIR` at

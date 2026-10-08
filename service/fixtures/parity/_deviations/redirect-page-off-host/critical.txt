@@ -11,4 +11,4 @@ Requests critical made, in order (method url -> status the fixture server answer
   GET {{cdn}}/assets/css/other.css -> 200
 
 New layer: thin.kind = fail
-  Page redirects must stay on the allowed host (ALLOWED_HOSTNAME): a redirect to another host fails the job. NOTE: in these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port, so a hostname-only policy would FOLLOW this redirect; the test must treat host:port as the identity for this case, or inject the policy. redirect-page-off-host-alias-hostname is the same rule with a different hostname.
+  Page redirects must stay on the allowed host: a redirect to another host fails the job. NOTE: in these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port, so the production predicate isAllowedUrl(url, ALLOWED_HOSTNAME), a hostname comparison, would FOLLOW this redirect; the test injects a host:port predicate (isPageHostAllowed) for this case. redirect-page-off-host-alias-hostname is the same rule with a different hostname.

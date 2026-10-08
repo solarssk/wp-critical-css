@@ -1,6 +1,5 @@
 {
 	"description": "A data: payload with an invalid percent escape (%ZZ): critical decodes it leniently (the escape stays literal) instead of throwing.",
-	"proposal": true,
 	"pageUrl": "{{site}}/",
 	"routes": {
 		"/": {

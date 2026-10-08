@@ -1,6 +1,5 @@
 {
 	"description": "Same-host sheet: $& and $1 inside a relative url path (a quirk: the new declaration is built with a replacement template, so the text is expanded instead of copied).",
-	"proposal": true,
 	"pageUrl": "{{site}}/blog/hello-world/",
 	"routes": {
 		"/blog/hello-world/": {

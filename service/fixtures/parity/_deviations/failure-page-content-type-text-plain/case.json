@@ -1,6 +1,5 @@
 {
 	"description": "The page answers 200 with text/plain: critical never looks at the page content-type and processes it as HTML.",
-	"proposal": true,
 	"pageUrl": "{{site}}/",
 	"routes": {
 		"/": {
@@ -16,7 +15,7 @@
 	},
 	"thin": {
 		"kind": "fail",
-		"note": "Proposal: the page content-type must be html or xhtml, so text/plain fails the job (same reading as failure-page-content-type-json); the stylesheet rules are different, there text/plain and a missing type are tolerated. The decision list covers neither: confirm before asserting this one."
+		"note": "The page content-type must be html or xhtml, so text/plain fails the job (a MISSING content-type fails too: WordPress always sends one). The stylesheet rules are different: there text/plain, application/octet-stream and a missing type are tolerated."
 	},
 	"expect": {
 		"kind": "css",

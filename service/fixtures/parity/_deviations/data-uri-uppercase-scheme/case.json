@@ -1,6 +1,5 @@
 {
 	"description": "href=\"DATA:text/css,...\" (upper-case scheme) is not recognised as a data: URI by critical, which treats it as a file path and fails the job.",
-	"proposal": true,
 	"pageUrl": "{{site}}/",
 	"routes": {
 		"/": {
@@ -13,6 +12,18 @@
 			"type": "text/css; charset=UTF-8",
 			"file": "real.css"
 		}
+	},
+	"thin": {
+		"kind": "differs",
+		"note": "The URL scheme is case-insensitive: DATA: is decoded exactly like data: (one rule, no special failure), so the job succeeds and the rule is included. expected-thin.css is critical's output for the same page with a lower-case data: scheme and the same payload.",
+		"derive": {
+			"routes": {
+				"/": {
+					"file": "page.thin.html"
+				}
+			}
+		},
+		"cssFile": "expected-thin.css"
 	},
 	"expect": {
 		"kind": "error",

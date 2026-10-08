@@ -1,6 +1,5 @@
 {
 	"description": "href=\"data:text/css\" has no comma, so no payload: critical throws \"malformed data: URI\" and the whole job fails.",
-	"proposal": true,
 	"pageUrl": "{{site}}/",
 	"routes": {
 		"/": {
