@@ -21,7 +21,7 @@
 # with, which can trail Chrome Stable's security fixes, and Chrome is the
 # one component here that executes untrusted pages' JavaScript with its
 # sandbox off - while Trivy, npm audit and Dependabot cannot see it.
-FROM ghcr.io/puppeteer/puppeteer:25.12.0@sha256:60ad89b1d8ca14877120250b9c96694dd19a4eda5890fdbad64f4740c6a27361
+FROM ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
 
 USER root
 WORKDIR /app
@@ -205,7 +205,7 @@ RUN apt-get update \
 # fails the build instead of being ignored: builds need egress to Chrome for
 # Testing's storage (every publish downloads it again), and a transient
 # failure is fixed by re-running.
-ENV PUPPETEER_CHROME_VERSION=154.0.8037.92
+ENV PUPPETEER_CHROME_VERSION=155.0.8059.39
 ENV PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer \
 	PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD=true
 
