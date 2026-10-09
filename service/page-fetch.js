@@ -44,16 +44,17 @@ const MiB = 1024 * 1024;
  * The limits of one fetch. `totalMs` and `idleMs` are per fetchText() call (the
  * redirect hops of one resource share the deadline); a caller that wants an
  * overall budget for a whole page passes a `signal`. `totalCssBytes` and
- * `maxSheets` are enforced by the caller (it sees all the sheets); they live
+ * `maxSheets` are enforced by the caller (it sees all the sheets), which also
+ * holds the sheets that are not fetched (inline, data:) to `cssBytes`; they live
  * here so every limit of the network boundary is in one reviewed place.
  *
  * The byte limits are what the documented 1 GiB container can hold while it
  * lays a page out (critical-css.js LOAD_LIMITS has the arithmetic). The
  * maintainer's own WordPress/Elementor site, the heaviest page measured for them,
- * is 527 KB of html and 22 stylesheets of 1.05 MiB in all, the largest 360 KB, so
- * 10 MiB of html, 2 MiB for one stylesheet and 8 MiB for all of them leave a
- * factor of 6 to 20. A body is counted DECODED, so a compression bomb is cut at
- * the same numbers.
+ * is 515 KiB of html and 23 stylesheets (13 of them inline) of 1.05 MiB in all,
+ * the largest, an inline one, 360 KiB, so 10 MiB of html, 2 MiB for one
+ * stylesheet and 8 MiB for all of them leave a factor of 6 to 20. A body is
+ * counted DECODED, so a compression bomb is cut at the same numbers.
  */
 export const LIMITS = Object.freeze({
 	htmlBytes: 10 * MiB,

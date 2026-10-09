@@ -12,7 +12,7 @@ import { Worker } from 'node:worker_threads';
 import fc from 'fast-check';
 import { PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE } from 'penthouse-esm';
 import postcss from 'postcss';
-import { DocumentLoadError, LOAD_DEADLINE_MS, LOAD_ERROR_CODES, LOAD_LIMITS, buildLayoutHtml, loadDocument, renderViewport } from './critical-css.js';
+import { DocumentLoadError, LOAD_DEADLINE_MS, LOAD_ERROR_CODES, LOAD_LIMITS, buildLayoutHtml, generateCriticalCss, loadDocument, renderViewport } from './critical-css.js';
 import { SERVED_WIDTH_RANGES, isAllowedUrl, stripInapplicableMediaQueries } from './lib.js';
 import { FETCH_ERROR_CODES, FetchRefusedError, LIMITS, createPageFetcher, createProxyRequest } from './page-fetch.js';
 import { MAX_REWRITE_WORK, RebaseTooLargeError, RebaseTooMuchWorkError } from './rebase.js';
@@ -640,9 +640,11 @@ describe('loadDocument: the css budget', () => {
 	});
 
 	test('inline css is part of the budget', QUICK, async () => {
-		const inline = loaderFor(siteWith([['/a.css', sized('a', 20)]], `<style>${sized('i', 90)}</style>`));
+		// each inline sheet is within the per-sheet cap (60); it is the sum that is over the budget (100)
+		const inline = loaderFor(siteWith([['/a.css', sized('a', 60)]], `<style>${sized('i', 50)}</style>`));
 		await failsWith(inline.load('http://a.test/', { limits }), 'CSS_TOO_LARGE', 'TOO_LARGE');
-		await failsWith(loadDocument({ html: markup(`<style>${sized('i', 101)}</style>`), limits }), 'CSS_TOO_LARGE');
+		await failsWith(loadDocument({ html: markup(`<style>${sized('i', 60)}</style><style>${sized('j', 41)}</style>`), limits }), 'CSS_TOO_LARGE');
+		assert.equal((await loadDocument({ html: markup(`<style>${sized('i', 60)}</style><style>${sized('j', 40)}</style>`), limits })).cssString.length, 101, 'exactly the budget is fine');
 	});
 
 	describe('what rebasing adds to a sheet', () => {
@@ -733,6 +735,87 @@ describe('loadDocument: the css budget', () => {
 		assert.equal(LOAD_DEADLINE_MS, 60_000);
 		assert.ok(Object.isFrozen(LOAD_ERROR_CODES));
 		assert.equal(new Set(LOAD_ERROR_CODES).size, LOAD_ERROR_CODES.length, 'no duplicate codes');
+	});
+});
+
+describe('loadDocument: one stylesheet is at most cssBytes, an inline one too', () => {
+	// A fetched sheet is stopped by the fetcher; a <style> and a decoded data: link are the page's own text and are stopped here,
+	// before anything is rebased, so "one stylesheet: 2 MiB" is true for every kind and the worst case of rebasing is bounded by it.
+	const MiB = 1024 * 1024;
+	const sized = (id, bytes) => `.${id}{}`.padEnd(bytes, ' ');
+	const cap = { cssBytes: 60, totalCssBytes: 1000 };
+	const percentEncoded = (css) => `<link rel="stylesheet" href="data:text/css,${encodeURIComponent(css)}">`;
+	const base64Encoded = (css) => `<link rel="stylesheet" href="data:text/css;base64,${Buffer.from(css).toString('base64')}">`;
+
+	test('the default is the documented 2 MiB: a <style> of exactly that loads, one byte more fails the job', { timeout: 30_000 }, async () => {
+		assert.equal(LIMITS.cssBytes, 2 * MiB);
+		const limits = { totalCssBytes: 8 * MiB };
+		const exact = await loadDocument({ html: markup(`<style>${sized('s', 2 * MiB)}</style>`), limits });
+		assert.equal(exact.cssString.length, 2 * MiB);
+		const error = await failsWith(loadDocument({ html: markup(`<style>${sized('s', (2 * MiB) + 1)}</style>`), limits }), 'CSS_TOO_LARGE');
+		assert.equal(error.message, `wpcc: an inline stylesheet (a <style> element or a data: link) is ${(2 * MiB) + 1} bytes, over the ${2 * MiB}-byte limit for one stylesheet`);
+		assert.equal(error.cause, undefined, 'nothing was fetched or rebased: the cap came first');
+	});
+
+	test('the cap is per sheet: sheets at the cap load side by side, the first one over it fails the job', QUICK, async () => {
+		const ok = await loadDocument({ html: markup(`<style>${sized('a', 60)}</style><style>${sized('b', 60)}</style>`), limits: cap });
+		assert.equal(ok.cssString, `${sized('a', 60)}\n${sized('b', 60)}`);
+		const error = await failsWith(loadDocument({ html: markup(`<style>${sized('a', 60)}</style><style>${sized('b', 61)}</style>`), limits: cap }), 'CSS_TOO_LARGE');
+		assert.match(error.message, /^wpcc: an inline stylesheet \(a <style> element or a data: link\) is 61 bytes, over the 60-byte limit for one stylesheet$/);
+	});
+
+	test('it is counted in bytes, not characters', QUICK, async () => {
+		const html = markup('<style>.a{content:"\u00e9\u00e9"}</style>'); // 16 characters, 18 bytes
+		assert.equal((await loadDocument({ html, limits: { ...cap, cssBytes: 18 } })).cssString.length, 16);
+		await failsWith(loadDocument({ html, limits: { ...cap, cssBytes: 17 } }), 'CSS_TOO_LARGE');
+	});
+
+	test('a data: link is an inline sheet: it is the DECODED size that counts, for percent-encoding and for base64 alike', QUICK, async () => {
+		const sixty = sized('d', 60);
+		for (const encode of [percentEncoded, base64Encoded]) {
+			assert.equal((await loadDocument({ html: markup(encode(sixty)), limits: cap })).cssString, sixty);
+			await failsWith(loadDocument({ html: markup(encode(`${sixty} `)), limits: cap }), 'CSS_TOO_LARGE');
+		}
+		// 80 characters of base64 are 60 bytes: the encoded text is over the cap, the sheet is not
+		assert.equal(/base64,(.*)">/.exec(base64Encoded(sixty))[1].length, 80);
+	});
+
+	test('it holds for a page with a URL as well, and a sheet that is fetched is not touched by it', QUICK, async () => {
+		const routes = {
+			'http://a.test/': htmlPage(markup(`${link('/fetched.css')}<style>${sized('i', 61)}</style>`)),
+			'http://a.test/fetched.css': cssSheet(sized('f', 60)),
+		};
+		await failsWith(loaderFor(routes).load('http://a.test/', { limits: cap }), 'CSS_TOO_LARGE');
+		routes['http://a.test/'] = htmlPage(markup(`${link('/fetched.css')}<style>${sized('i', 60)}</style>`));
+		assert.equal((await loaderFor(routes).load('http://a.test/', { limits: cap })).cssString, `${sized('f', 60)}\n${sized('i', 60)}`);
+	});
+
+	test('it comes BEFORE rebasing: a sheet over the cap that is also a memory or a work bomb is refused for its size, nothing is rewritten', QUICK, async () => {
+		const references = `a{b:${'url(x)'.repeat(20)}}`.padEnd(cap.cssBytes + 1, ' ');
+		const log = recordingLog();
+		const error = await failsWith(loadDocument({ html: markup(`<style>${references}</style>`), limits: { ...cap, rewriteWork: 1 }, log }), 'CSS_TOO_LARGE');
+		assert.match(error.message, /^wpcc: an inline stylesheet/);
+		assert.equal(error.cause, undefined, 'rebasing would have refused it with a RebaseTooMuchWorkError of its own');
+		const { load } = loaderFor({ 'http://a.test/': htmlPage(markup(`<style>${references}</style>`)) });
+		const viaPage = await failsWith(load('http://a.test/', { limits: { ...cap, rewriteWork: 1 } }), 'CSS_TOO_LARGE');
+		assert.equal(viaPage.cause, undefined);
+	});
+
+	test('it fails the job before the budget could: the cap is the sheet\'s, the budget is the page\'s', QUICK, async () => {
+		const error = await failsWith(loadDocument({ html: markup(`<style>${sized('s', 61)}</style>`), limits: { cssBytes: 60, totalCssBytes: 60 } }), 'CSS_TOO_LARGE');
+		assert.match(error.message, /^wpcc: an inline stylesheet/, 'one sheet over its own cap says so, whatever is left of the budget');
+	});
+
+	test('a load can lower the cap, never raise it above LIMITS.cssBytes', { timeout: 30_000 }, async () => {
+		const raised = { cssBytes: 3 * MiB, totalCssBytes: 16 * MiB };
+		const error = await failsWith(loadDocument({ html: markup(`<style>${sized('s', (2 * MiB) + 1)}</style>`), limits: raised }), 'CSS_TOO_LARGE');
+		assert.match(error.message, new RegExp(`over the ${2 * MiB}-byte limit for one stylesheet$`));
+		assert.equal((await loadDocument({ html: markup(`<style>${sized('s', 2 * MiB)}</style>`), limits: raised })).cssString.length, 2 * MiB);
+	});
+
+	test('0 is a cap like any other: nothing inline gets through, a page with no inline css is unaffected', QUICK, async () => {
+		await failsWith(loadDocument({ html: markup('<style>.a{}</style>'), limits: { cssBytes: 0 } }), 'CSS_TOO_LARGE');
+		assert.equal((await loadDocument({ html: markup(), limits: { cssBytes: 0 } })).cssString, '');
 	});
 });
 
@@ -1205,22 +1288,23 @@ describe('loadDocument over the real thing: fetcher, undici client and policy pr
 // part 3: renderViewport, with a fake penthouse (no Chrome)
 // ---------------------------------------------------------------------------
 
-describe('renderViewport', () => {
-	const MOBILE = { width: 412, height: 915 };
-	const DESKTOP = { width: 1300, height: 900 };
-	const docWith = (css = '.hero{color:red}', head = '') => loadDocument({ html: markup(`${head}<style>${css}</style>`) });
+const MOBILE = { width: 412, height: 915 };
+const DESKTOP = { width: 1300, height: 900 };
 
-	/** A fake penthouse: records its options and what the layout copy looked like WHILE it ran, then answers. */
-	function fakePenthouse(answer = '.hero{color:red}') {
-		const calls = [];
-		const impl = async (options) => {
-			const file = fileURLToPath(options.url);
-			calls.push({ options, file, directory: path.dirname(file), content: await readFile(file, 'utf8') });
-			return typeof answer === 'function' ? answer(options, calls.at(-1)) : answer;
-		};
-		impl.calls = calls;
-		return impl;
-	}
+/** A fake penthouse: records its options and what the layout copy looked like WHILE it ran, then answers. */
+function fakePenthouse(answer = '.hero{color:red}') {
+	const calls = [];
+	const impl = async (options) => {
+		const file = fileURLToPath(options.url);
+		calls.push({ options, file, directory: path.dirname(file), content: await readFile(file, 'utf8') });
+		return typeof answer === 'function' ? answer(options, calls.at(-1)) : answer;
+	};
+	impl.calls = calls;
+	return impl;
+}
+
+describe('renderViewport', () => {
+	const docWith = (css = '.hero{color:red}', head = '') => loadDocument({ html: markup(`${head}<style>${css}</style>`) });
 
 	test('penthouse gets exactly the option set critical built, plus the caller\'s, and a layout copy that exists while it runs', QUICK, async () => {
 		const doc = await docWith('.hero{color:red}', '<meta charset="utf-8">');
@@ -1531,6 +1615,260 @@ describe('renderViewport', () => {
 	});
 });
 
+describe('generateCriticalCss', () => {
+	const site = () => ({
+		'http://a.test/': htmlPage(markup(link('/a.css'))),
+		'http://a.test/a.css': cssSheet('.hero{color:red}'),
+	});
+	const VIEWPORTS = [{ dimension: MOBILE }, { dimension: DESKTOP }];
+	const TABLET = { width: 800, height: 600 };
+	const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+	/** generateCriticalCss() over `loader` (loaderFor()) and a fake penthouse, unless `extra` changes any of it. */
+	const generate = (loader, extra = {}) => generateCriticalCss({ url: 'http://a.test/', viewports: VIEWPORTS, fetcher: loader.fetcher, log: loader.log, isPageHostAllowed: () => true, penthouseImpl: fakePenthouse(), ...extra });
+
+	/** The documents that were disposed. loadDocument() keeps them in a WeakSet of its own, so what is watched is its `add`. */
+	function watchDisposals(t) {
+		const original = WeakSet.prototype.add;
+		const documents = [];
+		t.mock.method(WeakSet.prototype, 'add', function add(value) {
+			if (typeof value?.dispose === 'function') {
+				documents.push(value);
+			}
+			return original.call(this, value);
+		});
+		return documents;
+	}
+
+	test('the page is loaded once, every viewport is rendered from that document at the same time, and the answers come in the order of the viewports', QUICK, async () => {
+		const loader = loaderFor(site());
+		const inside = [];
+		let release;
+		const allInside = new Promise((resolve) => {
+			release = resolve;
+		});
+		const delays = new Map([[MOBILE.width, 40], [DESKTOP.width, 20], [TABLET.width, 0]]); // the first viewport is the last to finish
+		const penthouseImpl = fakePenthouse(async (options) => {
+			inside.push(options.width);
+			if (inside.length === 3) {
+				release();
+			}
+			await allInside; // none returns before all are inside: a render that waited for another would never get here
+			await wait(delays.get(options.width));
+			return `.w${options.width}{color:red}`;
+		});
+		const css = await generate(loader, { viewports: [{ dimension: MOBILE }, { dimension: DESKTOP }, { dimension: TABLET }], penthouseImpl });
+		assert.deepEqual(css, ['.w412{color:red}', '.w1300{color:red}', '.w800{color:red}']);
+		assert.equal(loader.calls.length, 2, 'the page and its one stylesheet, once each, however many viewports');
+		assert.deepEqual(penthouseImpl.calls.map((call) => call.options.cssString), Array(3).fill('.hero{color:red}'));
+		assert.equal(new Set(penthouseImpl.calls.map((call) => call.content)).size, 1, 'one layout copy, of the one document');
+		assert.equal(new Set(penthouseImpl.calls.map((call) => call.directory)).size, 3, 'each render has a directory of its own');
+		assert.deepEqual(await leftovers(), []);
+	});
+
+	test('every viewport has its own postcss plugins, run over its own answer before the minifier; a viewport may have none', QUICK, async () => {
+		const answer = '@media (max-width:300px){.small{color:red}}@media (min-width:1000px){.large{color:green}}.always{margin:0}';
+		const css = await generate(loaderFor(site()), {
+			viewports: [
+				{ dimension: MOBILE, postcssPlugins: [stripInapplicableMediaQueries(SERVED_WIDTH_RANGES.mobile)] },
+				{ dimension: DESKTOP, postcssPlugins: [stripInapplicableMediaQueries(SERVED_WIDTH_RANGES.desktop)] },
+				{ dimension: TABLET },
+			],
+			penthouseImpl: fakePenthouse(answer),
+		});
+		assert.deepEqual(css, ['@media (max-width:300px){.small{color:red}}.always{margin:0}', '@media (min-width:1000px){.large{color:green}}.always{margin:0}', answer]);
+	});
+
+	test('penthouse gets the caller\'s options and the launcher in puppeteer, which wins over one the caller keeps there; the caller\'s object stays as it was', QUICK, async () => {
+		const mine = async () => {};
+		const theirs = async () => {};
+		const given = { timeout: 60000, blockJSRequests: false, puppeteer: { getBrowser: theirs, product: 'chrome' } };
+		const penthouseImpl = fakePenthouse();
+		await generate(loaderFor(site()), { penthouse: given, getBrowser: mine, penthouseImpl });
+		assert.equal(penthouseImpl.calls.length, 2);
+		for (const { options } of penthouseImpl.calls) {
+			assert.equal(options.timeout, 60000);
+			assert.equal(options.blockJSRequests, false);
+			assert.deepEqual(options.puppeteer, { getBrowser: mine, product: 'chrome' });
+			assert.equal(options.puppeteer.getBrowser, mine);
+		}
+		assert.deepEqual(given, { timeout: 60000, blockJSRequests: false, puppeteer: { getBrowser: theirs, product: 'chrome' } });
+		assert.equal(given.puppeteer.getBrowser, theirs);
+
+		// no launcher argument: the one in the caller's options is used as it is; with a fake penthouse and none anywhere no `puppeteer` is invented
+		const own = fakePenthouse();
+		await generate(loaderFor(site()), { penthouse: { puppeteer: { getBrowser: theirs } }, penthouseImpl: own });
+		assert.equal(own.calls[0].options.puppeteer.getBrowser, theirs);
+		for (const penthouse of [undefined, null, { timeout: 5 }]) {
+			const none = fakePenthouse();
+			await generate(loaderFor(site()), { penthouse, penthouseImpl: none });
+			assert.equal(Object.hasOwn(none.calls[0].options, 'puppeteer'), false, JSON.stringify(penthouse));
+		}
+	});
+
+	test('the first error comes out, in the order of the viewports and not of the clock, and only after every render has finished and cleaned up', QUICK, async () => {
+		const first = new Error('the first viewport');
+		const second = new Error('the second viewport');
+		let finished = 0;
+		const penthouseImpl = fakePenthouse(async (options) => {
+			try {
+				if (options.width === MOBILE.width) {
+					await wait(40);
+					throw first;
+				}
+				if (options.width === DESKTOP.width) {
+					throw second; // long before the first
+				}
+				await wait(80);
+				return '.a{color:red}'; // the last to finish, and it succeeds
+			} finally {
+				finished += 1;
+			}
+		});
+		const error = await rejection(generate(loaderFor(site()), { viewports: [{ dimension: MOBILE }, { dimension: DESKTOP }, { dimension: TABLET }], penthouseImpl }));
+		assert.equal(error, first);
+		assert.equal(finished, 3, 'all three renders were over when the error arrived');
+		assert.deepEqual(await leftovers(), [], 'and had removed their directories');
+	});
+
+	test('whatever a render rejects with reaches the caller, also when it is not an Error; one good viewport does not hide a bad one', QUICK, async () => {
+		for (const failure of [new RangeError('boom'), 'a string', null, undefined]) {
+			const penthouseImpl = fakePenthouse((options) => (options.width === DESKTOP.width ? Promise.reject(failure) : '.a{color:red}'));
+			const outcome = await generate(loaderFor(site()), { penthouseImpl }).then(
+				() => ({ resolved: true }),
+				(reason) => ({ reason }),
+			);
+			assert.ok(!outcome.resolved, `${String(failure)} was swallowed`);
+			assert.equal(outcome.reason, failure);
+		}
+	});
+
+	test('a viewport that cannot even be read is a rejection too: the renders started before it are awaited, not abandoned', QUICK, async () => {
+		let finished = false;
+		const penthouseImpl = fakePenthouse(async () => {
+			await wait(40);
+			finished = true;
+			return '.a{color:red}';
+		});
+		const error = await rejection(generate(loaderFor(site()), { viewports: [{ dimension: MOBILE }, null], penthouseImpl }));
+		assert.ok(error instanceof TypeError);
+		assert.equal(finished, true);
+		assert.deepEqual(await leftovers(), []);
+	});
+
+	test('the document is disposed after a good run and after a failing render; a page that cannot be loaded leaves nothing to dispose', QUICK, async (t) => {
+		const disposed = watchDisposals(t);
+		await generate(loaderFor(site()));
+		assert.equal(disposed.length, 1);
+		await assert.rejects(renderViewport(disposed[0], { dimension: MOBILE, penthouseImpl: async () => assert.fail('a disposed document is not rendered') }), { name: 'TypeError', message: /disposed/ });
+
+		await rejection(generate(loaderFor(site()), { penthouseImpl: async () => Promise.reject(new Error('boom')) }));
+		assert.equal(disposed.length, 2, 'a failing render does not keep the document alive');
+		await assert.rejects(renderViewport(disposed[1], { dimension: MOBILE, penthouseImpl: async () => assert.fail('a disposed document is not rendered') }), { name: 'TypeError', message: /disposed/ });
+
+		await failsWith(generate(loaderFor({ 'http://a.test/': notFound() })), 'PAGE_FAILED', 'STATUS');
+		assert.equal(disposed.length, 2, 'there was no document');
+	});
+
+	test('a page that cannot be loaded comes out as the loader\'s own error and nothing is rendered', QUICK, async () => {
+		const penthouseImpl = fakePenthouse();
+		await failsWith(generate(loaderFor({ 'http://a.test/': notFound() }), { penthouseImpl }), 'PAGE_FAILED', 'STATUS');
+		const deep = await rejection(generateCriticalCss({ html: '<div>'.repeat(600), viewports: VIEWPORTS, penthouseImpl }));
+		assert.ok(deep instanceof HtmlTooDeepError, 'the errors of stylesheets.js pass through as they are');
+		assert.equal(penthouseImpl.calls.length, 0);
+		assert.deepEqual(await leftovers(), []);
+	});
+
+	test('exactly one of url and html, as for loadDocument()', QUICK, async () => {
+		const penthouseImpl = fakePenthouse();
+		await assert.rejects(generateCriticalCss({ viewports: VIEWPORTS, penthouseImpl }), { name: 'TypeError', message: /exactly one of `url` and `html`/ });
+		await assert.rejects(generateCriticalCss({ url: 'http://a.test/', html: '<p>', viewports: VIEWPORTS, isPageHostAllowed: () => true, penthouseImpl }), TypeError);
+		assert.equal(penthouseImpl.calls.length, 0);
+	});
+
+	test('the host pin and the caller\'s signal reach the load; the log reaches the load and the renders, not console', QUICK, async (t) => {
+		const warn = t.mock.method(console, 'warn', () => {});
+		const loader = loaderFor(site());
+		await failsWith(generate(loader, { isPageHostAllowed: () => false }), 'PAGE_FAILED', 'HOST_NOT_ALLOWED');
+		await failsWith(generate(loader, { signal: AbortSignal.abort() }), 'ABORTED', 'ABORTED');
+		assert.equal(loader.calls.length, 0, 'neither got as far as a request');
+		await assert.rejects(generate(loader, { isPageHostAllowed: undefined }), { name: 'TypeError', message: /isPageHostAllowed/ });
+
+		// one warning from loading (a link that is not fetched), one from rendering (a page that unloaded itself)
+		const log = recordingLog();
+		const css = await generateCriticalCss({
+			html: markup('<link rel="stylesheet" href="ftp://x.test/s.css"><style>.a{color:red}</style>'),
+			viewports: [{ dimension: MOBILE }],
+			log,
+			penthouseImpl: async () => Promise.reject(new Error(PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE)),
+		});
+		assert.deepEqual(css, ['']);
+		assert.equal(log.warnings.length, 2);
+		assert.match(log.warnings[0], /^\[critical-css\] skipping the stylesheet link/);
+		assert.match(log.warnings[1], /^\[critical-css\] the page unloaded itself/);
+		assert.equal(warn.mock.callCount(), 0);
+	});
+
+	test('a page passed in as html needs no fetcher; a page without css is an empty string per viewport and penthouse is never called', QUICK, async () => {
+		const css = await generateCriticalCss({ html: markup('<style>.hero{color:red}</style>'), viewports: VIEWPORTS, penthouseImpl: fakePenthouse() });
+		assert.deepEqual(css, ['.hero{color:red}', '.hero{color:red}']);
+		const penthouseImpl = fakePenthouse();
+		assert.deepEqual(await generateCriticalCss({ html: markup(), viewports: VIEWPORTS, penthouseImpl }), ['', '']);
+		assert.equal(penthouseImpl.calls.length, 0);
+	});
+
+	test('at least one viewport is needed, and that is checked before the first request', QUICK, async () => {
+		for (const viewports of [undefined, null, [], 'mobile', {}, { length: 1 }]) {
+			const loader = loaderFor(site());
+			await assert.rejects(generate(loader, { viewports }), { name: 'TypeError', message: /viewports/ }, String(viewports));
+			assert.equal(loader.calls.length, 0);
+		}
+	});
+
+	test('fail-closed: no launcher means no real penthouse, and not even the page is requested', QUICK, async () => {
+		// Were a check missing, the real penthouse would go looking for a Chrome of its own; a path that does not exist makes that fail at once.
+		const previous = process.env.PUPPETEER_EXECUTABLE_PATH;
+		process.env.PUPPETEER_EXECUTABLE_PATH = path.join(scratch, 'no-such-chrome');
+		try {
+			const withoutLauncher = [{}, { getBrowser: 'yes' }, { getBrowser: null }, { penthouse: null }, { penthouse: { timeout: 5 } }, { penthouse: { puppeteer: {} } }, { penthouse: { puppeteer: { getBrowser: 'yes' } } }];
+			for (const options of withoutLauncher) {
+				for (const penthouseImpl of [undefined, null, 'not a function']) {
+					const loader = loaderFor(site());
+					await assert.rejects(generateCriticalCss({ url: 'http://a.test/', viewports: VIEWPORTS, fetcher: loader.fetcher, log: loader.log, isPageHostAllowed: () => true, penthouseImpl, ...options }), { name: 'TypeError', message: /getBrowser/ }, JSON.stringify([options, penthouseImpl]));
+					assert.equal(loader.calls.length, 0, 'no request was made');
+				}
+			}
+			assert.deepEqual(await leftovers(), []);
+		} finally {
+			if (previous === undefined) {
+				delete process.env.PUPPETEER_EXECUTABLE_PATH;
+			} else {
+				process.env.PUPPETEER_EXECUTABLE_PATH = previous;
+			}
+		}
+	});
+
+	test('the real penthouse asks the launcher for a browser once per viewport; what the launcher throws is what comes out, and nothing is left behind', QUICK, async () => {
+		const sentinel = new Error('no browser in a unit test');
+		const asked = [];
+		const getBrowser = () => {
+			asked.push('getBrowser');
+			throw sentinel;
+		};
+		const html = markup('<style>.a{color:red}</style>');
+		const listeners = () => ['exit', 'SIGTERM', 'SIGINT'].map((event) => process.listenerCount(event));
+		const before = listeners();
+		assert.equal(await rejection(generateCriticalCss({ html, viewports: VIEWPORTS, getBrowser })), sentinel);
+		assert.deepEqual(asked, ['getBrowser', 'getBrowser']);
+		// the launcher in the caller's own penthouse options is as good as the argument
+		asked.length = 0;
+		assert.equal(await rejection(generateCriticalCss({ html, viewports: [{ dimension: MOBILE }], penthouse: { puppeteer: { getBrowser } } })), sentinel);
+		assert.deepEqual(asked, ['getBrowser']);
+		assert.deepEqual(listeners(), before, 'penthouse took its process listeners off again');
+		assert.deepEqual(await leftovers(), []);
+	});
+});
+
 // ---------------------------------------------------------------------------
 // part 4: the layout copy
 // ---------------------------------------------------------------------------
@@ -1599,6 +1937,14 @@ describe('buildLayoutHtml', () => {
 		assert.throws(() => buildLayoutHtml(accents, 'a{}', Buffer.byteLength(accents) + Buffer.byteLength('<style>a{}</style>') - 1), { code: 'LAYOUT_TOO_LARGE' });
 		// no head, no copy, so a page over the limit by itself is not this limit's business
 		assert.equal(buildLayoutHtml('x'.repeat(100), CSS, 10), 'x'.repeat(100));
+	});
+
+	test('with no limit given it is LOAD_LIMITS.layoutBytes: a copy of exactly that size is built, one byte more is refused', { timeout: 30_000 }, () => {
+		assert.equal(LOAD_LIMITS.layoutBytes, 40 * 1024 * 1024);
+		const html = '<head>';
+		const css = 'x'.repeat(LOAD_LIMITS.layoutBytes - Buffer.byteLength(`${html}<style></style>`));
+		assert.equal(buildLayoutHtml(html, css).length, LOAD_LIMITS.layoutBytes);
+		assert.throws(() => buildLayoutHtml(html, `${css}x`), { name: 'DocumentLoadError', code: 'LAYOUT_TOO_LARGE' });
 	});
 
 	test('through loadDocument: a page that repeats its head tag is refused with a clear error, before the copies are made', QUICK, async () => {

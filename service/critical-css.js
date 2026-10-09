@@ -6,9 +6,10 @@
  * (service/fixtures/parity). The deliberate differences are the ones the
  * fixtures' README lists as deviations.
  *
- * Two calls, because the page is loaded ONCE and rendered twice (mobile and
- * desktop; `critical` fetched the page and every stylesheet once per viewport,
- * so the two renders could even see different markup):
+ * Two building blocks, because the page is loaded ONCE and rendered twice
+ * (mobile and desktop; `critical` fetched the page and every stylesheet once
+ * per viewport, so the two renders could even see different markup), and one
+ * convenience that wires them together:
  *
  * - loadDocument() fetches the page, discovers its stylesheets, fetches them
  *   one after the other, applies the failure policy and returns the joined,
@@ -17,6 +18,10 @@
  * - renderViewport() writes that layout copy to a temp directory of its own,
  *   lets penthouse lay it out for one viewport, runs our postcss plugins and
  *   minifies, and removes the directory again whatever happened.
+ * - generateCriticalCss() is what the callers use (server.js, the container
+ *   smoke script): load once, render every viewport from that one document,
+ *   end the document's life, so there is a single code path to get right and
+ *   to test.
  *
  * Nothing in here ever touches a path that the page chose: a stylesheet is a
  * URL to fetch, never a file to read, and the only file written is `page.html`
@@ -59,12 +64,14 @@ export const LOAD_DEADLINE_MS = 60_000;
  * through loadDocument's `limits`, which is how the tests reach the boundaries
  * without moving megabytes around - with one exception that only works one way:
  * `cssBytes` can be LOWERED there, never raised, because the fetcher caps every
- * stylesheet at its own LIMITS.cssBytes whatever is asked of it.
+ * fetched stylesheet at its own LIMITS.cssBytes whatever is asked of it, and an
+ * inline one is capped at LIMITS.cssBytes here (sheetSource()).
  *
  * - maxSheets      stylesheets per page, linked and inline together, counted
  *                  after de-duplication and before anything is fetched
  * - totalCssBytes  the joined, rebased css of all of them
- * - cssBytes       one fetched stylesheet (the fetcher's own cap is the ceiling)
+ * - cssBytes       one stylesheet, fetched or inline (a <style> element or a
+ *                  decoded data: link); LIMITS.cssBytes is the ceiling
  * - loadMs         LOAD_DEADLINE_MS
  * - layoutBytes    the layout copy of the page, see buildLayoutHtml()
  * - rewriteWork    what rewriting the url()s of all the stylesheets together
@@ -97,7 +104,8 @@ export const LOAD_LIMITS = Object.freeze({
  * - TOO_MANY_STYLESHEETS   more stylesheets than LOAD_LIMITS.maxSheets
  * - CSS_TOO_LARGE          the stylesheets together are over LOAD_LIMITS.totalCssBytes, or rebasing their url()s could take them
  *                          over (rebaseStylesheet()'s `maxBytes`; then `cause` is its RebaseTooLargeError), or rebasing them would
- *                          cost more than LOAD_LIMITS.rewriteWork (`cause` is its RebaseTooMuchWorkError)
+ *                          cost more than LOAD_LIMITS.rewriteWork (`cause` is its RebaseTooMuchWorkError), or one inline stylesheet
+ *                          (a <style> element, a data: link) is over LOAD_LIMITS.cssBytes (no `cause`: it is not a fetch)
  * - LAYOUT_TOO_LARGE       the layout copy would be over LOAD_LIMITS.layoutBytes
  * - LOAD_DEADLINE          loading took longer than LOAD_LIMITS.loadMs
  * - ABORTED                the caller's AbortSignal fired
@@ -272,9 +280,23 @@ function skipOrFail(context, error, { docUrl, remaining }) {
  * The css of one discovered stylesheet and where it lives, or SKIPPED.
  * An inline sheet (also a decoded data: link) is the page's own: it is rebased
  * as if it were a file next to the page, `<virtualPath>.css`.
+ *
+ * "One stylesheet is at most LIMITS.cssBytes" holds for every kind of sheet: the
+ * fetcher stops a fetched one, this stops an inline one BEFORE it is rebased. The
+ * text of a <style> or of a data: link is chosen by the page and bounded only by
+ * the page limit, and the cost of rebasing (the memory guard, the work guard) is
+ * worked out from the sheet, so a cap on the sheet is a cap on that too: a page
+ * could otherwise put its whole 10 MiB into one <style>. Too large fails the
+ * job, it is never skipped: an inline sheet is the page's own, as a stylesheet
+ * on the page's host is.
  */
 async function sheetSource(context, sheet, { docUrl, virtualPath, base, remaining }) {
 	if (sheet.kind === 'inline') {
+		const bytes = Buffer.byteLength(sheet.value);
+		const cap = Math.min(context.limits.cssBytes, LIMITS.cssBytes);
+		if (bytes > cap) {
+			throw new DocumentLoadError('CSS_TOO_LARGE', `wpcc: an inline stylesheet (a <style> element or a data: link) is ${bytes} bytes, over the ${cap}-byte limit for one stylesheet`);
+		}
 		return { css: sheet.value, stylepath: `${virtualPath}.css` };
 	}
 	const target = resolveStylesheetUrl(sheet.value, base);
@@ -373,8 +395,9 @@ const disposed = new WeakSet();
  *   another (see skipOrFail); a blank href is skipped silently, a link with
  *   a scheme that is not http(s) with one warning;
  * - the overall deadline (LOAD_DEADLINE_MS), the caller's abort, more than
- *   LOAD_LIMITS.maxSheets stylesheets and more css than
- *   LOAD_LIMITS.totalCssBytes always fail the job.
+ *   LOAD_LIMITS.maxSheets stylesheets, an inline stylesheet over
+ *   LOAD_LIMITS.cssBytes and more css than LOAD_LIMITS.totalCssBytes always
+ *   fail the job.
  *
  * @param {object} options exactly one of `url` and `html`
  * @param {string | URL} [options.url] the page to fetch (needs `fetcher` and `isPageHostAllowed`)
@@ -531,5 +554,59 @@ export async function renderViewport(doc, { dimension, postcssPlugins = [], pent
 		return new CleanCSS(CLEAN_CSS_OPTIONS).minify(css).styles;
 	} finally {
 		await rm(directory, { recursive: true, force: true });
+	}
+}
+
+/**
+ * The whole job in one call: load the page ONCE, render every viewport from that one document, end the document's life.
+ * It is the single code path of server.js and of the container smoke script, so what runs in production is what the tests
+ * and the smoke steps run, and server.js (which has no unit tests) stays thin.
+ *
+ * The renders run at the same time. The first error is the one that comes out (in the order of `viewports`, not of the
+ * clock), but only after EVERY render has finished: a render that is still laying out a page, or still has its temp
+ * directory, when the caller's `catch` runs would be left behind for nobody to wait for. The document is disposed in a
+ * `finally`, so also when loading or any render failed.
+ *
+ * Fail-closed: without a browser launcher the real penthouse would start a Chrome of its own, with none of the proxy
+ * switches, JavaScript-off switches or request guard of the service's launcher (see renderViewport()). That is refused
+ * here, before the first request is made, not after the page has been loaded.
+ *
+ * @param {object} options
+ * @param {string | URL} [options.url] the page to fetch, or
+ * @param {string} [options.html] the page itself (exactly one of the two, see loadDocument())
+ * @param {Array<{ dimension: { width: number, height: number }, postcssPlugins?: Array }>} options.viewports at least one;
+ *   see renderViewport() for `dimension` and `postcssPlugins`
+ * @param {{ fetchText: Function }} [options.fetcher] createPageFetcher() of page-fetch.js
+ * @param {Function} [options.getBrowser] penthouse's browser launcher. Required, unless `penthouseImpl` is given or
+ *   `penthouse.puppeteer.getBrowser` is; when both are, this one is used. It is added to `penthouse.puppeteer`, whatever
+ *   else the caller keeps there.
+ * @param {(url: URL) => boolean} [options.isPageHostAllowed] the host pin for the page, required with `url` (see loadDocument())
+ * @param {{ warn: Function, info: Function }} [options.log] console by default, for loading and rendering alike
+ * @param {AbortSignal} [options.signal] cancels the LOADING (a render has penthouse's own `timeout`)
+ * @param {object} [options.penthouse] penthouse's options for every viewport: `timeout`, `blockJSRequests`, ...
+ * @param {Function} [options.penthouseImpl] a fake penthouse, for tests (see renderViewport())
+ * @returns {Promise<string[]>} the critical css of every viewport, in the order of `viewports`; '' for a page without css
+ * @throws {TypeError} no viewports, or no launcher for the real penthouse
+ * @throws {DocumentLoadError | HtmlTooDeepError | HtmlTooComplexError | MalformedDataUriError} from loadDocument()
+ */
+export async function generateCriticalCss({ url, html, viewports, fetcher, getBrowser, isPageHostAllowed, log = console, signal, penthouse: penthouseOptions, penthouseImpl }) {
+	if (!Array.isArray(viewports) || viewports.length === 0) {
+		throw new TypeError('generateCriticalCss: `viewports` must be a non-empty array of { dimension, postcssPlugins }');
+	}
+	const options = typeof getBrowser === 'function' ? { ...penthouseOptions, puppeteer: { ...penthouseOptions?.puppeteer, getBrowser } } : penthouseOptions;
+	if (typeof penthouseImpl !== 'function' && typeof options?.puppeteer?.getBrowser !== 'function') {
+		throw new TypeError('generateCriticalCss: pass `getBrowser`, the launcher of the guarded browser; without one the real penthouse would start an unguarded Chrome');
+	}
+	const doc = await loadDocument({ url, html, fetcher, log, isPageHostAllowed, signal });
+	try {
+		// `async`, so that a viewport that cannot even be read is a rejection like any other and the renders started before it are still awaited
+		const renders = await Promise.allSettled(viewports.map(async (viewport) => renderViewport(doc, { dimension: viewport.dimension, postcssPlugins: viewport.postcssPlugins, penthouse: options, log, penthouseImpl })));
+		const failed = renders.find((render) => render.status === 'rejected');
+		if (failed) {
+			throw failed.reason;
+		}
+		return renders.map((render) => render.value);
+	} finally {
+		doc.dispose();
 	}
 }

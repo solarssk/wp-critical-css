@@ -562,6 +562,23 @@ describe('redirects', () => {
 		}
 	});
 
+	test('the Location a BAD_REDIRECT quotes is escaped: control, format and bidirectional characters never reach a message raw', { timeout: 5000 }, async () => {
+		// A header value is a byte string: what a server can really put in a Location are the Latin-1 characters, among them C0 and C1
+		// controls (ESC, NEL), the soft hyphen (a format character), and, as UTF-8 bytes read as Latin-1, anything else - a bidirectional
+		// override included. Code points above U+00FF cannot be in a header at all (Headers refuses them), so the override is the way it arrives.
+		const NEXT_LINE = String.fromCodePoint(0x85);
+		const ESCAPE = String.fromCodePoint(0x1b);
+		const SOFT_HYPHEN = String.fromCodePoint(0xad);
+		const overrideOnTheWire = Buffer.from(String.fromCodePoint(0x202e), 'utf8').toString('latin1'); // E2 80 AE: a circumflexed a, a C1 control and a registered sign
+		assert.throws(() => new Headers({ location: String.fromCodePoint(0x202e) }), TypeError, 'control: the override itself cannot be sent');
+		const hostile = `http://[x${NEXT_LINE}${ESCAPE}${SOFT_HYPHEN}${overrideOnTheWire}y`; // an IPv6 literal that never ends: not a URL
+		const { fetchText } = fetcherFor({ 'http://a.test/r': redirect(hostile) });
+		const error = await refused(fetchText('http://a.test/r', { kind: 'css' }), 'BAD_REDIRECT', { url: 'http://a.test/r' });
+		const echoed = `http://[x\\u0085\\u001b\\u00ad${String.fromCodePoint(0xe2)}\\u0080${String.fromCodePoint(0xae)}y`;
+		assert.equal(error.message, `wpcc: "http://a.test/r" redirects to an unusable Location "${echoed}"`);
+		assert.ok(!/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(error.message), JSON.stringify(error.message));
+	});
+
 	test('what a redirect answers is not looked at: not its type, not its size, not its body', { timeout: 5000 }, async () => {
 		const unread = watched();
 		const { fetchText } = fetcherFor({

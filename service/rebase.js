@@ -106,14 +106,17 @@ export class RebaseTooMuchWorkError extends Error {
 }
 
 /**
- * How much work rewriting the references of one document may cost, in the unit of rewriteWork(). A unit took between a tenth
- * and half a nanosecond on the maintainer's laptop (every shape that was timed), so this is about half a second of a
- * blocked event loop at the most.
+ * How much work rewriting the references of one document may cost, in the unit of rewriteWork(). A unit took between 0.07 and
+ * 0.9 nanoseconds on the maintainer's laptop (every shape the estimate is about that was timed). The slowest is a declaration
+ * of nothing but `url(x)`s: 0.70 ns per unit when the sheet is rebased to the page, 0.85 ns when it is on another host, which
+ * is 0.70 s and 0.84 s measured at 98% of this limit. So the work let through blocks the event loop for under a second per
+ * page. What the estimate does not cover is a cost that is linear in the bytes (one very long url(): up to 0.3 s for 1.6 MB,
+ * measured); the size limits bound that.
  *
- * Measured, not guessed. Over 896 real stylesheets (the 22 sheets of warsawtravelers.pl, linked and inline; the critical CSS of
+ * Measured, not guessed. Over 897 real stylesheets (the 23 sheets of warsawtravelers.pl, linked and inline; the critical CSS of
  * six public WordPress sites and their 129 inline <style> elements; the parity fixtures) the declaration that costs most is a
  * 2,442-character SVG `mask-image` with two url()s, 19,536 units, and the sheet that costs most is a 200 KB fixture, 286,744;
- * the whole page of warsawtravelers.pl, 22 sheets, is 149,216. The extreme legitimate case is much heavier than any of them: a
+ * the whole page of warsawtravelers.pl, 23 sheets, is 152,060. The extreme legitimate case is much heavier than any of them: a
  * 2 MiB sheet that is one declaration with four base64 fonts, wrapped at 76 characters, is 3.4e7. 1e9 is 30 times that and
  * more than 6,000 times the whole real page, and what it keeps out is css arranged to make postcss-url's regular expression
  * backtrack (see rewriteWork()), which no real sheet is.
@@ -146,8 +149,8 @@ function longestWhitespaceRun(text) {
  *   string `"url(` followed by 2,000 blanks takes 1.4 s, by 8,000 more than a minute: it is cubic in the run).
  *
  * So `rewrites * length * (longest run + 1) ** 2`. It never underestimates (every shape that was timed came out between
- * 0.1 and 0.5 ns per unit), and it is pessimistic on purpose for css whose references all match, which cost far less than
- * that. Real css is nowhere near it: a declaration with a reference has 1 to 4 of them and a run of at most 2 blanks.
+ * 0.07 and 0.9 ns per unit, see MAX_REWRITE_WORK), and it is pessimistic on purpose for css whose references all match,
+ * which cost far less than that. Real css is nowhere near it: a declaration with a reference has 1 to 4 of them and a run of at most 2 blanks.
  *
  * @param {string} value the declaration's value, as postcss-url will see it
  * @param {number} rewrites the number of `url(` and `AlphaImageLoader(` in it, more than 0
