@@ -6,3 +6,9 @@
 reviews:
   auto_review:
     enabled: false
+  # service/fixtures/parity holds ~1,400 small recorded test-data files (what critical@8.0.0 did,
+  # replayed by npm test). CodeRabbit skips a review above its per-review file limit, counted AFTER
+  # path filters, so keep them out of the count (exclusion patterns only; a pattern without ! would
+  # narrow the review to the matching files).
+  path_filters:
+    - "!service/fixtures/parity/**"
