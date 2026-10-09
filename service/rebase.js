@@ -135,10 +135,10 @@ export class RebaseTooMuchWorkError extends Error {
  * page. What the estimate does not cover is a cost that is linear in the bytes (one very long url(): up to 0.3 s for 1.6 MB,
  * measured); the size limits bound that.
  *
- * Measured, not guessed. Over 897 real stylesheets (the 23 sheets of warsawtravelers.pl, linked and inline; the critical CSS of
+ * Measured, not guessed. Over 897 real stylesheets (the 23 sheets of a real production page, linked and inline; the critical CSS of
  * six public WordPress sites and their 129 inline <style> elements; the parity fixtures) the declaration that costs most is a
  * 2,442-character SVG `mask-image` with two url()s, 19,536 units, and the sheet that costs most is a 200 KB fixture, 286,744;
- * the whole page of warsawtravelers.pl, 23 sheets, is 152,060. The extreme legitimate case is much heavier than any of them: a
+ * the whole of that page, 23 sheets, is 152,060. The extreme legitimate case is much heavier than any of them: a
  * 2 MiB sheet that is one declaration with four base64 fonts, wrapped at 76 characters, is 3.4e7. 1e9 is 30 times that and
  * more than 6,000 times the whole real page, and what it keeps out is css arranged to make postcss-url's regular expression
  * backtrack (see rewriteWork()), which no real sheet is.
