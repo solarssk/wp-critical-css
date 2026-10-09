@@ -1,0 +1,27 @@
+{
+	"description": "A sheet on the same port but under another HOSTNAME (localhost vs 127.0.0.1) counts as another host: its relative urls become absolute urls on that hostname.",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{alias}}/wp-content/themes/twentytest/css/main.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "main.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"{{alias}}/wp-content/themes/twentytest/css/main.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

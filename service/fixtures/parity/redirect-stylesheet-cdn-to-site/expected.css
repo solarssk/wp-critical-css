@@ -1,0 +1,4 @@
+/* fixture sheet: cdn2site */
+.cdn2site-a{background:url(../../wp-content/themes/twentytest/css/img/b.png)}
+.cdn2site-b{background:url(../../wp-content/themes/twentytest/img/a.png)}
+.cdn2site-c{background:url(/img/c.png)}

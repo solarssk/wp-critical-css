@@ -1,0 +1,28 @@
+{
+	"description": "The stylesheet is served zlib-deflate-compressed (Content-Encoding: deflate).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/df.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "df.css",
+			"encoding": "deflate"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/df.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,3 @@
+/* rebase: rebase-multiple-urls-in-declaration */
+@font-face{font-family:"Fixture";src:url(../../wp-content/themes/twentytest/fonts/f.eot);src:url(../../wp-content/themes/twentytest/fonts/f.eot?#iefix) format("embedded-opentype"),url(../../wp-content/themes/twentytest/fonts/f.woff2) format("woff2"),url(../../wp-content/themes/twentytest/fonts/f.woff) format("woff"),url(../../wp-content/themes/twentytest/fonts/f.ttf) format("truetype");font-display:swap}
+.rb1{background:url(../../wp-content/themes/twentytest/css/img/a.png) no-repeat 0 0,url(../../wp-content/themes/twentytest/b.png) repeat-x,url(http://127.0.0.1:18982/c.png) center}

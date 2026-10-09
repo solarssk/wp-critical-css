@@ -1,0 +1,28 @@
+{
+	"description": "The stylesheet is served brotli-compressed (Content-Encoding: br).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/br.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "br.css",
+			"encoding": "br"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/br.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

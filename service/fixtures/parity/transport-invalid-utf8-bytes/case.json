@@ -1,0 +1,27 @@
+{
+	"description": "The stylesheet contains Latin-1 bytes (not valid UTF-8): they are decoded as U+FFFD replacement characters.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/l1.css": {
+			"status": 200,
+			"type": "text/css; charset=iso-8859-1",
+			"file": "l1.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/l1.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

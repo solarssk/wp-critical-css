@@ -1,0 +1,37 @@
+{
+	"description": "rel=\"preload\" with as=\"font\" or as=\"script\" or no as attribute is not discovered.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/real.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "real.css"
+		},
+		"/wp-content/themes/twentytest/script.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "script.css"
+		},
+		"/wp-content/themes/twentytest/noas.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "noas.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/real.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

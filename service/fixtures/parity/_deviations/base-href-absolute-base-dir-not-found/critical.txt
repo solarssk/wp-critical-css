@@ -1,0 +1,19 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: throws: Error: File not found: css/a.css
+Message:
+  Error: File not found: css/a.css
+         Current working directory: <cwd>
+         Searched in: {{site}}/, <cwd>
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/foo/ -> 404
+  HEAD {{site}}/ -> 200
+  HEAD {{site}}/css/a.css -> 404
+  HEAD {{site}}/css/a.css -> 404
+
+New layer: thin.kind = differs
+  The new layer resolves the href against the base URL arithmetically and never needs the base directory URL to answer; critical fails the job with FileNotFoundError unless that directory URL returns 2xx.
+  Expected new-layer css: expected-thin.css (91 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

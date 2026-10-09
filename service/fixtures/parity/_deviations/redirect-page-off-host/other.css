@@ -1,0 +1,4 @@
+/* fixture sheet: offhost */
+.offhost-a{background:url(img/b.png)}
+.offhost-b{background:url(../img/a.png)}
+.offhost-c{background:url(/img/c.png)}

@@ -1,0 +1,4 @@
+/* fixture sheet: cdn2site */
+.cdn2site-a{background:url(img/b.png)}
+.cdn2site-b{background:url(../img/a.png)}
+.cdn2site-c{background:url(/img/c.png)}

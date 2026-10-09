@@ -1,0 +1,4 @@
+/* fixture sheet: sredir */
+.sredir-a{background:url(../../wp-content/themes/twentytest/css/img/b.png)}
+.sredir-b{background:url(../../wp-content/themes/twentytest/img/a.png)}
+.sredir-c{background:url(/img/c.png)}

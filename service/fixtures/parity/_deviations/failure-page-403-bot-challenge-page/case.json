@@ -1,0 +1,28 @@
+{
+	"description": "The page answers 403 with a bot-protection challenge page that carries its own inline <style>: critical delivers THAT css as the page's critical css.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 403,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "A non-2xx page response is a hard failure (decision); critical processes the error body as if it were the page."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".challenge-box{max-width:480px;margin:20vh auto;font:16px system-ui}"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

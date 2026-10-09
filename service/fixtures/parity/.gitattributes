@@ -1,0 +1,4 @@
+# Test data, byte-exact: line endings, BOMs and Latin-1 bytes are part of the fixtures, so git must never convert them
+# (core.autocrlf=true on a Windows checkout would otherwise rewrite every LF file and break the byte comparisons).
+# Recorded by a tool, not written by hand: GitHub collapses these diffs by default.
+* -text linguist-generated=true

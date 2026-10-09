@@ -1,0 +1,14 @@
+critical@8.0.0: getDocument("{{site}}/start", { request: {} })
+
+Outcome: css, 168 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/start -> 302
+  HEAD {{cdn}}/landing/ -> 200
+  GET {{cdn}}/landing/ -> 200
+  HEAD {{cdn}}/assets/css/other.css -> 200
+  HEAD {{cdn}}/assets/css/other.css -> 200
+  GET {{cdn}}/assets/css/other.css -> 200
+
+New layer: thin.kind = fail
+  Page redirects must stay on the allowed host: a redirect to another host fails the job. NOTE: in these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port, so the production predicate isAllowedUrl(url, ALLOWED_HOSTNAME), a hostname comparison, would FOLLOW this redirect; the test injects a host:port predicate (isPageHostAllowed) for this case. redirect-page-off-host-alias-hostname is the same rule with a different hostname.

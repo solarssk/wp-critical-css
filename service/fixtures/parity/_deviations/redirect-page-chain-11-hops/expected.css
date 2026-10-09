@@ -1,0 +1,4 @@
+/* fixture sheet: chain */
+.chain-a{background:url(wp-content/themes/twentytest/img/b.png)}
+.chain-b{background:url(wp-content/themes/img/a.png)}
+.chain-c{background:url(/img/c.png)}

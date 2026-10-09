@@ -1,0 +1,22 @@
+{
+	"description": "The page answers 404 with an empty body: critical returns empty css.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 404,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "A non-2xx page response is a hard failure (decision); critical processes the error body as if it were the page."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [],
+		"stylesheetsMedia": []
+	}
+}

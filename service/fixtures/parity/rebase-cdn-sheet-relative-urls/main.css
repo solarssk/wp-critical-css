@@ -1,0 +1,6 @@
+/* rebase: rebase-cdn-sheet-relative-urls */
+.rb1{background:url(../img/a.png)}
+.rb2{background:url(img/b.png)}
+.rb3{background:url(./c.png)}
+.rb4{background:url(../../d.png)}
+.rb5{background:url(../../../../e.png)}

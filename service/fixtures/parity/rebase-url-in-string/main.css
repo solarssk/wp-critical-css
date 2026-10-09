@@ -1,0 +1,4 @@
+/* rebase: rebase-url-in-string */
+.rb1::after{content:"url(../img/not-a-url.png)"}
+.rb2::after{content:'url(img/also-not.png)'}
+.rb3{background:url(../img/real.png)}

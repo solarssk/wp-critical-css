@@ -1,0 +1,30 @@
+{
+	"description": "The page answers HEAD with 405 but GET with 200: critical ignores a failed HEAD on the page.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html",
+			"head": {
+				"status": 405
+			}
+		},
+		"/wp-content/themes/twentytest/x.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "x.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/x.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

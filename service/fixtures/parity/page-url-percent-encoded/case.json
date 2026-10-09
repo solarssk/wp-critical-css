@@ -1,0 +1,27 @@
+{
+	"description": "Page URL with a percent-encoded non-ASCII segment.",
+	"pageUrl": "{{site}}/caf%C3%A9/menu/",
+	"routes": {
+		"/caf%C3%A9/menu/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/caf%C3%A9/menu/index.html",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

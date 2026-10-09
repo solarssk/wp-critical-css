@@ -1,0 +1,30 @@
+{
+	"description": "A relative stylesheet href (css/gone.css) answers 404: critical throws FileNotFoundError.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/css/gone.css": {
+			"status": 404,
+			"type": "text/plain",
+			"body": "Not Found"
+		},
+		"/wp-content/themes/twentytest/before.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "before.css"
+		},
+		"/wp-content/themes/twentytest/after.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "after.css"
+		}
+	},
+	"expect": {
+		"kind": "error",
+		"message": "Error: File not found: css/gone.css\n       Current working directory: <cwd>\n       Searched in: {{site}}/, <cwd>"
+	}
+}

@@ -1,0 +1,5 @@
+/* rebase: rebase-query-and-hash */
+@font-face{font-family:"Q";src:url(../../wp-content/themes/twentytest/fonts/f.woff?v=1.2#iefix) format("woff"),url(../../wp-content/themes/twentytest/fonts/f.svg#svgFontName) format("svg")}
+.rb1{background:url(../../wp-content/themes/twentytest/img/a.png?x=1)}
+.rb2{background:url(../../wp-content/themes/twentytest/img/b.png#frag)}
+.rb3{background:url(../../wp-content/themes/twentytest/img/c.png?x=1&y=2#frag)}

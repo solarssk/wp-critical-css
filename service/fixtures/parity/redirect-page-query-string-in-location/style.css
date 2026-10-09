@@ -1,0 +1,4 @@
+/* fixture sheet: rquery */
+.rquery-a{background:url(img/b.png)}
+.rquery-b{background:url(../img/a.png)}
+.rquery-c{background:url(/img/c.png)}

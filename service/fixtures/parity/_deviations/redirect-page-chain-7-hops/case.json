@@ -1,0 +1,87 @@
+{
+	"description": "Seven redirects before the page (more than the new layer allows, fewer than critical allows).",
+	"pageUrl": "{{site}}/hop0",
+	"routes": {
+		"/hop0": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop1",
+			"headers": {
+				"location": "/hop1"
+			}
+		},
+		"/hop1": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop2",
+			"headers": {
+				"location": "/hop2"
+			}
+		},
+		"/hop2": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop3",
+			"headers": {
+				"location": "/hop3"
+			}
+		},
+		"/hop3": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop4",
+			"headers": {
+				"location": "/hop4"
+			}
+		},
+		"/hop4": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop5",
+			"headers": {
+				"location": "/hop5"
+			}
+		},
+		"/hop5": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop6",
+			"headers": {
+				"location": "/hop6"
+			}
+		},
+		"/hop6": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /final/",
+			"headers": {
+				"location": "/final/"
+			}
+		},
+		"/final/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "The new layer follows at most 5 redirects; critical follows up to 10 per request. redirect-page-chain-5-hops is the boundary that must still work, -6-hops the first that must fail."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/final/index.html",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

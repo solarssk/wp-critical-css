@@ -1,0 +1,28 @@
+{
+	"description": "The type attribute of <style> is not looked at: type=\"text/less\" and type=\"text/x-scss\" blocks are included like any other.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".less-block{color:red}"
+			},
+			{
+				"inline": ".scss-block{color:blue}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

@@ -1,0 +1,32 @@
+{
+	"description": "The preload+onload swap pattern with a <noscript> fallback: the preload link is discovered, the fallback is not.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/lc.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "lc.css"
+		},
+		"/wp-content/themes/twentytest/lcfallback.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "lcfallback.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/lc.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,3 @@
+/* rebase: rebase-alpha-image-loader-cdn-sheet */
+.rb1{filter:progid:DXImageTransform.Microsoft.AlphaImageLoader(src='img/x.png')}
+.rb2{filter:progid:DXImageTransform.Microsoft.AlphaImageLoader(src=img/y.png)}

@@ -1,0 +1,24 @@
+{
+	"description": "A percent-encoded UTF-8 payload (non-ASCII content) in a data: stylesheet.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".utf8::after{content:\"Zażółć →\"}"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

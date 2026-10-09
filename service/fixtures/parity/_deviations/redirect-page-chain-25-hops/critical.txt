@@ -1,0 +1,30 @@
+critical@8.0.0: getDocument("{{site}}/hop0", { request: {} })
+
+Outcome: css, 0 bytes, 0 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/hop0 -> 301
+  HEAD {{site}}/hop1 -> 302
+  HEAD {{site}}/hop2 -> 301
+  HEAD {{site}}/hop3 -> 302
+  HEAD {{site}}/hop4 -> 301
+  HEAD {{site}}/hop5 -> 302
+  HEAD {{site}}/hop6 -> 301
+  HEAD {{site}}/hop7 -> 302
+  HEAD {{site}}/hop8 -> 301
+  HEAD {{site}}/hop9 -> 302
+  HEAD {{site}}/hop10 -> 301
+  GET {{site}}/hop10 -> 301
+  GET {{site}}/hop11 -> 302
+  GET {{site}}/hop12 -> 301
+  GET {{site}}/hop13 -> 302
+  GET {{site}}/hop14 -> 301
+  GET {{site}}/hop15 -> 302
+  GET {{site}}/hop16 -> 301
+  GET {{site}}/hop17 -> 302
+  GET {{site}}/hop18 -> 301
+  GET {{site}}/hop19 -> 302
+  GET {{site}}/hop20 -> 301
+
+New layer: thin.kind = fail
+  Too many redirects fail the job (max 5). critical silently returns an empty result instead.

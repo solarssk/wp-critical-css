@@ -1,0 +1,38 @@
+{
+	"description": "A link and a style at the bottom of 400 nested <div> elements are discovered (a nesting guard must not trigger this early).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/top.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "top.css"
+		},
+		"/wp-content/themes/twentytest/deep.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "deep.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/top.css",
+			"{{site}}/wp-content/themes/twentytest/deep.css",
+			{
+				"inline": ".deep-inline{margin:0}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

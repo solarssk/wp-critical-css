@@ -1,0 +1,5 @@
+/* rebase: rebase-cdn-sheet-quotes-and-whitespace */
+.rb1{background:url("../img/a.png")}
+.rb2{background:url('../img/b.png')}
+.rb3{background:url(  ../img/c.png  )}
+.rb4{background:url("../img/my image.png")}

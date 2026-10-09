@@ -1,0 +1,10 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 0 bytes, 0 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+
+New layer: thin.kind = fail
+  The page content-type must be html or xhtml, so anything else (JSON here) fails the job.

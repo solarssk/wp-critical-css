@@ -1,0 +1,19 @@
+critical@8.0.0: getDocument("{{site}}/start", { request: {} })
+
+Outcome: throws: Error: File not found: style.css
+Message:
+  Error: File not found: style.css
+         Current working directory: <cwd>
+         Searched in: <cwd>
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/start -> 405
+  GET {{site}}/start -> 302
+  GET {{site}}/blog/landing/ -> 200
+  HEAD {{site}}/start -> 405
+  HEAD {{site}}/ -> 404
+  HEAD {{site}}/style.css -> 404
+
+New layer: thin.kind = differs
+  The new layer takes the final URL from its single GET (no HEAD probe), so the relative href resolves against /blog/landing/ and the job succeeds; expected-thin.css is critical's output when HEAD answers like GET. critical keeps the pre-redirect URL when its HEAD probe fails, resolves the relative href against / and throws FileNotFoundError.
+  Expected new-layer css: expected-thin.css (167 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

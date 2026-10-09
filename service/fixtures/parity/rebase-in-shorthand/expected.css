@@ -1,0 +1,4 @@
+/* rebase: rebase-in-shorthand */
+.rb1{background:#fff url(../../wp-content/themes/twentytest/img/a.png) no-repeat 0 0 / cover}
+.rb2{list-style:square url(../../wp-content/themes/twentytest/css/img/b.png) inside}
+.rb3{cursor:url(../../wp-content/themes/twentytest/img/c.cur),auto}

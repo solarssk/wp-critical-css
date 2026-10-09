@@ -1,0 +1,21 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: throws: Error: File not found: /wp-content/themes/twentytest/nohead.css
+Message:
+  Error: File not found: /wp-content/themes/twentytest/nohead.css
+         Current working directory: <cwd>
+         Searched in: {{site}}/, <cwd>
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/nohead.css -> 405
+  HEAD {{site}}/wp-content/themes/twentytest/nohead.css -> 405
+
+New layer: thin.kind = differs
+  The new layer sends GET only, so the sheet is fetched and the job succeeds (expected-thin.css).
+  Expected new-layer css: expected-thin.css (247 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

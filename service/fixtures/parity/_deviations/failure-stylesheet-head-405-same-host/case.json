@@ -1,0 +1,56 @@
+{
+	"description": "The server rejects HEAD (405) but serves the stylesheet on GET: critical decides from HEAD and silently DROPS the sheet.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/nohead.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "nohead.css",
+			"head": {
+				"status": 405
+			}
+		},
+		"/wp-content/themes/twentytest/before.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "before.css"
+		},
+		"/wp-content/themes/twentytest/after.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "after.css"
+		}
+	},
+	"thin": {
+		"kind": "differs",
+		"note": "The new layer sends GET only, so the sheet is fetched and included (expected-thin.css).",
+		"derive": {
+			"routes": {
+				"/wp-content/themes/twentytest/nohead.css": {
+					"head": null
+				}
+			}
+		},
+		"cssFile": "expected-thin.css"
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/before.css",
+			"{{site}}/wp-content/themes/twentytest/nohead.css",
+			"{{site}}/wp-content/themes/twentytest/after.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

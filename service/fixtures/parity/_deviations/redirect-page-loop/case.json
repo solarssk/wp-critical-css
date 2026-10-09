@@ -1,0 +1,33 @@
+{
+	"description": "Two URLs that redirect to each other. critical does NOT fail: the last 3xx response body is used as the page, no stylesheets are found, the result is empty css.",
+	"pageUrl": "{{site}}/ping",
+	"routes": {
+		"/ping": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /pong",
+			"headers": {
+				"location": "/pong"
+			}
+		},
+		"/pong": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /ping",
+			"headers": {
+				"location": "/ping"
+			}
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "A redirect loop (or more than 5 redirects) fails the job."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/ping",
+		"stylesheets": [],
+		"stylesheetsMedia": []
+	}
+}

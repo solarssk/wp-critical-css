@@ -1,0 +1,39 @@
+{
+	"description": "A /*! license */ block, an ordinary comment and a sourceMappingURL comment: critical keeps all three comments.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/x.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "x.css"
+		}
+	},
+	"thin": {
+		"kind": "differs",
+		"note": "The new layer never reads or writes a source map (postcss runs with map: false, so no local file is ever looked up), and postcss then deletes the sourceMappingURL comment from the css; the license block and the ordinary comment stay. expected-thin.css is critical's own output for the same sheet without that comment (the comment is the last line of the sheet, so nothing else moves).",
+		"derive": {
+			"routes": {
+				"/wp-content/themes/twentytest/x.css": {
+					"file": "x.thin.css"
+				}
+			}
+		},
+		"cssFile": "expected-thin.css"
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/x.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

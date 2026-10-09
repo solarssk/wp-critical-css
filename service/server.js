@@ -2,13 +2,15 @@
  * Self-hosted critical CSS generator for WordPress.
  *
  * Replaces WP Rocket's / QUIC.cloud's paid "Remove Unused CSS" SaaS with a
- * locally-run equivalent: a real headless browser (via the `critical`
- * package, which drives Puppeteer for the render engine) renders each URL
- * and extracts the above-the-fold CSS for mobile and desktop viewports.
- * Results are pushed back to WordPress over a REST endpoint and stored
- * per-post - useful if your builder (Elementor, etc.) emits a separate
- * physical CSS file per post, since the critical subset then differs per
- * post too, not just per template.
+ * locally-run equivalent: a real headless browser (penthouse, driving
+ * Puppeteer) renders each URL and extracts the above-the-fold CSS for mobile
+ * and desktop viewports. critical-css.js loads the page and its stylesheets
+ * ONCE per job (page-fetch.js, through the local policy proxy below) and
+ * renders both viewports from that one copy. Results are pushed back to
+ * WordPress over a REST endpoint and stored per-post - useful if your
+ * builder (Elementor, etc.) emits a separate physical CSS file per post,
+ * since the critical subset then differs per post too, not just per
+ * template.
  *
  * Two ways work gets queued:
  *   - POST /generate  { url }   - fired by WordPress on save_post (fast path)
@@ -21,11 +23,9 @@
  * once - this is what keeps memory/CPU bounded on modest hardware.
  */
 
-import { lookup as dnsLookup } from 'node:dns';
 import express from 'express';
 import cron from 'node-cron';
 import { parseStringPromise } from 'xml2js';
-import { generate as generateCriticalCss } from 'critical';
 import puppeteer from 'puppeteer';
 import {
 	isValidSecret,
@@ -33,15 +33,16 @@ import {
 	logSafe,
 	readBodyPreview,
 	extractUrlsFromUrlset,
-	isPrivateOrReservedAddress,
-	isBlockedLiteralAddress,
 	safeFetch,
 	stripInapplicableMediaQueries,
 	SERVED_WIDTH_RANGES,
 	createJobQueue,
 } from './lib.js';
+import { generateCriticalCss } from './critical-css.js';
+import { buildUserAgent, createPageFetcher, createProxyRequest } from './page-fetch.js';
 import { JS_OFF_LAUNCH_ARGS, guardBrowser } from './ssrf-chromium.js';
 import { chromeProxyArgs, createSsrfProxy } from './ssrf-proxy.js';
+import packageInfo from './package.json' with { type: 'json' };
 
 const PORT = process.env.PORT || 3939;
 const SHARED_SECRET = process.env.SHARED_SECRET;
@@ -84,69 +85,6 @@ const VIEWPORTS = {
 	mobile: { width: 412, height: 915 },
 	desktop: { width: 1280, height: 800 },
 };
-
-/**
- * `isAllowedUrl()` only gates the URL /generate is called with. The `critical`
- * package does its own Node-side HTTP fetching internally (the page itself,
- * then every stylesheet/preload href it finds in that page's HTML) via
- * `got`, entirely independent of the Puppeteer render step - none of that
- * traffic was ever covered by the ALLOWED_HOSTNAME check. A page on the
- * allowed host could embed `<link rel="stylesheet" href="http://169.254.169.254/...">`
- * and this generator would fetch it directly, no secret required from
- * whoever put that link there.
- *
- * A per-URL hostname allowlist isn't the right tool here (a legitimate page
- * can reasonably reference a real third-party stylesheet, e.g. Google
- * Fonts) - what actually needs blocking is the destination address class,
- * not the specific host. Two layers close this, both wired into every
- * request `got` makes (the top-level fetch, and every stylesheet href) via
- * the `request` option in generateForViewport() below - including redirects,
- * since got re-runs its whole request pipeline (hooks included) per hop, not
- * just for the original URL:
- *
- * - ssrfSafeBeforeRequest() catches a LITERAL IP target (e.g. a `<link
- *   href="http://169.254.169.254/...">`). This has to be checked here, not
- *   only in the DNS hook below - Node's own http/net internals recognize an
- *   already-literal IP and skip calling the configured DNS `lookup` function
- *   entirely, confirmed directly against Node's connection handling (a
- *   custom `lookup` is simply never invoked for a target that doesn't need
- *   resolving) - so a DNS-hook-only guard leaves exactly the address-literal
- *   case, the headline cloud-metadata scenario, completely open.
- * - ssrfSafeDnsLookup() catches everything else: a real hostname that
- *   resolves to a private/reserved address (RFC1918, loopback, link-local,
- *   etc. - see isPrivateOrReservedAddress in lib.js), checked against the
- *   address actually being connected to, not a separately-resolved one, so
- *   a DNS-rebinding attempt between check and connect can't slip through.
- */
-function ssrfSafeBeforeRequest(options) {
-	const hostname = options.url.hostname;
-	if (isBlockedLiteralAddress(hostname)) {
-		throw new Error(`wpcc: refusing to connect to reserved/private address ${hostname}`);
-	}
-}
-
-function ssrfSafeDnsLookup(hostname, options, callback) {
-	if (typeof options === 'function') {
-		callback = options;
-		options = {};
-	}
-	dnsLookup(hostname, options, (err, address, family) => {
-		if (err) {
-			return callback(err);
-		}
-		if (options.all) {
-			const blocked = address.find((r) => isPrivateOrReservedAddress(r.address, r.family));
-			if (blocked) {
-				return callback(new Error(`wpcc: refusing to connect to reserved/private address ${blocked.address}`));
-			}
-			return callback(null, address);
-		}
-		if (isPrivateOrReservedAddress(address, family)) {
-			return callback(new Error(`wpcc: refusing to connect to reserved/private address ${address}`));
-		}
-		callback(null, address, family);
-	});
-}
 
 // Bounds the single in-memory queue below - without this, a compromised or
 // leaked shared secret hammering /generate, or an unexpectedly huge
@@ -227,13 +165,52 @@ async function postToReceiverWithRetry(body) {
 	throw lastError;
 }
 
+/**
+ * Loads the page and its stylesheets ONCE and renders both viewports from that
+ * one copy (critical-css.js: the single code path the container smoke test
+ * runs as well), then hands the result to WordPress. A failure - a page that
+ * cannot be loaded, a stylesheet of the page's own host that cannot, a limit
+ * hit - is thrown with a one-line message and ends the job; the queue logs it
+ * through logSafe(), and only the message: the error's `cause` and `url`
+ * carry the page-controlled detail and stay out of the logs. The log lines
+ * critical-css.js writes itself (skipped stylesheets, ...) carry their own
+ * `[critical-css]` prefix and have every page-controlled part escaped by
+ * logSafe(), so `console` is what it is given.
+ */
 async function generateAndSubmit(url) {
 	console.log(`[critical-css] generating for ${logSafe(url)}`);
 
-	const [mobile, desktop] = await Promise.all([
-		generateForViewport(url, VIEWPORTS.mobile, SERVED_WIDTH_RANGES.mobile),
-		generateForViewport(url, VIEWPORTS.desktop, SERVED_WIDTH_RANGES.desktop),
-	]);
+	const [mobile, desktop] = await generateCriticalCss({
+		url,
+		fetcher: pageFetcher,
+		// Only the PAGE has to stay on the allowed host, redirects included: a
+		// stylesheet may legitimately live on a CDN (see pageFetcher below).
+		isPageHostAllowed: (pageUrl) => isAllowedUrl(pageUrl.href, ALLOWED_HOSTNAME),
+		getBrowser: getSsrfSafeBrowser,
+		penthouse: {
+			timeout: 60000,
+			// One handler owns every interception decision per page
+			// (setupSsrfSafeRequestInterception in ssrf-chromium.js), so
+			// penthouse's own must be off - which ALSO drops its
+			// page.setJavaScriptEnabled(false). That module turns page
+			// JavaScript off itself; ssrf-chromium.test.js and the CI smoke test
+			// fail if it ever stops doing so.
+			blockJSRequests: false,
+		},
+		// See stripInapplicableMediaQueries's own doc comment in lib.js: closes
+		// a gap in penthouse's own media-query pruning (a standalone
+		// `max-width` query is never dropped, however irrelevant to this
+		// specific viewport) that was the single biggest contributor to
+		// oversized desktop output on real-world pages. Takes the bucket's
+		// whole SERVED width range, not `dimension` (the single point
+		// rendered here) - wpcc-inject.php serves this result to every real
+		// visitor across that range, not just the one width sampled for the
+		// render itself; see SERVED_WIDTH_RANGES's own doc comment in lib.js.
+		viewports: [
+			{ dimension: VIEWPORTS.mobile, postcssPlugins: [stripInapplicableMediaQueries(SERVED_WIDTH_RANGES.mobile)] },
+			{ dimension: VIEWPORTS.desktop, postcssPlugins: [stripInapplicableMediaQueries(SERVED_WIDTH_RANGES.desktop)] },
+		],
+	});
 
 	const res = await postToReceiverWithRetry(JSON.stringify({ url, css_mobile: mobile, css_desktop: desktop }));
 
@@ -245,22 +222,53 @@ async function generateAndSubmit(url) {
 }
 
 /**
- * Chrome's ONLY way onto the network is a local policy proxy (ssrf-proxy.js):
- * for every http:// request and every CONNECT tunnel (https://, ws://, wss://)
+ * A local policy proxy (ssrf-proxy.js) is the ONLY way onto the network for
+ * everything that fetches a page or what a page links to: Chrome, and this
+ * process's own fetches of the page and its stylesheets (pageFetcher below).
+ * For every http:// request and every CONNECT tunnel (https://, ws://, wss://)
  * it resolves the name itself, refuses anything that resolves to a
  * private/reserved address, and connects to the address it validated - so
  * DNS rebinding, `*.localhost` names and `<link rel=preconnect>` cannot get
  * around request interception (ssrf-chromium.js), which only sees requests
  * and checks them before Chrome resolves the name on its own. The switches
- * that do this, and why each is needed, are documented at chromeProxyArgs().
- * If the proxy stops, Chrome has no fallback to a direct connection: every
- * request fails. The process exits if it errors rather than limp on.
+ * that do this for Chrome, and why each is needed, are documented at
+ * chromeProxyArgs(). If the proxy stops, neither has a fallback to a direct
+ * connection: every request fails. The process exits if it errors rather
+ * than limp on.
  */
 const ssrfProxy = createSsrfProxy();
 const ssrfProxyPort = await ssrfProxy.listen();
 ssrfProxy.server.on('error', (error) => {
 	console.error(`[critical-css] SSRF proxy failed, exiting: ${logSafe(error.message)}`);
 	process.exit(1);
+});
+
+/**
+ * The page and its stylesheets are fetched by this process, not by Chrome, and
+ * page-fetch.js is the only code that does it. `isAllowedUrl()` only gates the
+ * URL /generate is called with, while a page on the allowed host names its own
+ * stylesheets and may redirect anywhere - and a per-URL hostname allowlist is
+ * the wrong tool for those (a legitimate page references third-party
+ * stylesheets, e.g. Google Fonts): what has to be blocked is the destination
+ * address class. So the fetcher checks EVERY hop, redirects included (it
+ * follows them itself), for scheme, credentials and a private/reserved IP
+ * literal, and sends the request through the policy proxy above, which
+ * resolves the name once and connects to the address it validated: the tunnel
+ * carries the NAME and this process never resolves it, so there is no second
+ * DNS answer for a rebinding name to change. The page itself must in addition
+ * stay on ALLOWED_HOSTNAME across redirects (isPageHostAllowed, passed per
+ * job). TLS is verified here, unlike in Chrome. Limits, error codes and the
+ * failure policy (a missing stylesheet of the page's own host fails the job,
+ * one on another host is skipped with a warning) are documented in
+ * page-fetch.js and critical-css.js.
+ *
+ * Created after the proxy listens because it needs the port; a plain `node
+ * server.js` has no shutdown path to close it in (SIGTERM ends the process),
+ * and its only connections are loopback ones to the in-process proxy.
+ */
+const pageFetcher = createPageFetcher({
+	request: createProxyRequest({ proxyPort: ssrfProxyPort }),
+	userAgent: buildUserAgent(packageInfo.version),
 });
 
 /**
@@ -278,9 +286,9 @@ const PUPPETEER_LAUNCH_ARGS = ['--disable-setuid-sandbox', '--no-sandbox', '--ig
 let cachedBrowserPromise = null;
 
 /**
- * Shared by both viewport renders of the SAME url (called via Promise.all
- * in generateAndSubmit) so they use one browser/one Chrome process, not
- * two - launching a fresh browser is real overhead on the "modest
+ * Shared by both viewport renders of the SAME url (generateCriticalCss
+ * renders them at the same time) so they use one browser/one Chrome process,
+ * not two - launching a fresh browser is real overhead on the "modest
  * hardware" this is designed to run on. Safe to cache at module scope
  * despite that: penthouse closes the browser it was handed once every job
  * using it has finished (unless unstableKeepBrowserAlive is set, which
@@ -321,53 +329,6 @@ async function launchGuardedBrowser() {
 	}
 }
 
-async function generateForViewport(url, dimensions, servedWidthRange) {
-	const { css } = await generateCriticalCss({
-		src: url,
-		inline: false,
-		dimensions: [dimensions],
-		// See stripInapplicableMediaQueries's own doc comment in lib.js: closes
-		// a gap in penthouse's own media-query pruning (a standalone
-		// `max-width` query is never dropped, however irrelevant to this
-		// specific viewport) that was the single biggest contributor to
-		// oversized desktop output on real-world pages. Takes the bucket's
-		// whole SERVED width range, not `dimensions` (the single point
-		// rendered here) - wpcc-inject.php serves this result to every real
-		// visitor across that range, not just the one width sampled for the
-		// render itself; see SERVED_WIDTH_RANGES's own doc comment in lib.js.
-		postcss: [stripInapplicableMediaQueries(servedWidthRange)],
-		penthouse: {
-			timeout: 60000,
-			// One handler owns every interception decision per page
-			// (setupSsrfSafeRequestInterception in ssrf-chromium.js), so
-			// penthouse's own must be off - which ALSO drops its
-			// page.setJavaScriptEnabled(false). That module turns page
-			// JavaScript off itself; ssrf-chromium.test.js and the CI smoke test
-			// fail if it ever stops doing so.
-			blockJSRequests: false,
-			puppeteer: {
-				getBrowser: getSsrfSafeBrowser,
-			},
-		},
-		request: {
-			// Redirects are followed normally (got's default) - a real page
-			// or stylesheet legitimately 30x's sometimes (an http->https
-			// canonical redirect, a CDN asset redirect), and disabling that
-			// outright broke generation for those cases. Safe to leave on:
-			// got re-runs its whole request pipeline, hooks included, for
-			// each redirect hop (verified directly against got's own
-			// source - _makeRequest() is invoked again per hop, not
-			// skipped), so both checks below apply to every hop, not just
-			// the first request.
-			hooks: {
-				beforeRequest: [ssrfSafeBeforeRequest],
-			},
-			dnsLookup: ssrfSafeDnsLookup,
-		},
-	});
-	return css.toString();
-}
-
 // Both bound how much work one sweep can trigger even against a hostile or
 // just unexpectedly huge sitemap - a compromised or misconfigured sitemap
 // index could otherwise point at hundreds of sub-sitemaps, or one
@@ -388,8 +349,8 @@ async function fetchSitemapUrls() {
 	// what it POINTS AT - and, one level down, what a sitemap INDEX's own
 	// `loc` entries point at - isn't, and previously used a plain fetch()
 	// with none of the SSRF protections the rest of this service already
-	// applies to page/stylesheet fetching (ssrfSafeBeforeRequest/
-	// ssrfSafeDnsLookup) and Chromium's own requests
+	// applies to page/stylesheet fetching (page-fetch.js, through the policy
+	// proxy) and Chromium's own requests
 	// (isChromiumRequestTargetBlocked in ssrf-chromium.js). expectedHostname pins every hop -
 	// including the top-level fetch - to the sitemap's own host, so even a
 	// compromised/misconfigured SITE_SITEMAP_URL can't redirect this

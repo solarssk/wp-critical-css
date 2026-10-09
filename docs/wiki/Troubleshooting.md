@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Start with the service log, which says what it did with every URL: `docker logs -f critical-css-service`. Lines begin with `[critical-css]`: `generating for ...`, `delivered for ...`, and a warning or error when something went wrong.
+Start with the service log, which says what it did with every URL: `docker logs -f critical-css-service`. Lines begin with `[critical-css]`: `generating for ...`, `delivered for ...`, `failed for ...` followed by the reason, and a warning when something was left out.
 
 ## There is no `<style id="wpcc-critical-css">` on a page
 
@@ -9,8 +9,9 @@ Work through these in order:
 1. **Has it been generated yet?** A page gets CSS when it is saved or when a sweep reaches it. Look for `delivered for <url>` in the log. For a page that was never saved since you installed the plugin, run a sweep ([Getting Started](Getting-Started#6-backfill-existing-content)). If saving a page never produces a `generating for` line, WP-Cron may not be running: the plugin sends its request from a WP-Cron event, which never fires on a site that sets `DISABLE_WP_CRON` without a system cron. The log line `queue at its N-entry limit, dropping` means the queue was full when the save arrived; the plugin does not retry, so save again or wait for the sweep.
 2. **Is the plugin configured?** Without `WPCC_SHARED_SECRET` in `wp-config.php` the plugin asks for nothing and refuses every delivery, and shows a notice in wp-admin.
 3. **Is it a page the plugin covers?** Only published `post` and `page` content and the homepage get CSS. Archives, tag and category pages, other post types, the second and later pages of a latest-posts homepage and the blog index of a site with a static homepage never do, by design.
-4. **Did the delivery fail?** Look for a `receiver attempt` warning or an error naming a status. See the table below.
-5. **Is a page cache serving an older copy?** Purge it, then reload.
+4. **Did the render fail?** A `failed for <url>` line gives the reason: the page or one of its stylesheets could not be loaded, or the page hit a limit. See [A job fails before anything is delivered](#a-job-fails-before-anything-is-delivered).
+5. **Did the delivery fail?** Look for a `receiver attempt` warning or an error naming a status. See the table below.
+6. **Is a page cache serving an older copy?** Purge it, then reload.
 
 ## What the receiver's answer means
 
@@ -56,12 +57,68 @@ The URL is not on `ALLOWED_HOSTNAME`, so the service will not render it. A save 
 - It must be written the way a browser normalises a hostname: lower case, no scheme, no port (a port in the page URL is fine). `Example.com` would never match, because URLs are compared in lower case.
 - It is an exact match: `www.example.com` and `example.com` are different hostnames.
 
-## A render fails with `refusing to connect to reserved/private address`
+## A job fails before anything is delivered
 
-The service blocks any hostname that resolves to a private or reserved address. This protects you, but it can hit a legitimate setup:
+The service could not load the page or one of its stylesheets, or the page broke a limit. The log line is `[critical-css] failed for "<url>": "wpcc: <message>"`. Nothing is sent to WordPress (the CSS it already has for that page stays), and the service does not retry: the next save of the page or the next sweep queues it again. A code in brackets in the message says why:
 
-- **A hostname with a stray AAAA record** in a reserved IPv6 range makes the whole site refused, because the check fails if any one address is bad. The message names the address. Fix the DNS record.
+| The message contains | Meaning | What to do |
+|---|---|---|
+| `the page could not be loaded (STATUS)` | The page answered with something other than a 2xx status: a maintenance page, a bot-challenge page, a 404 or a 5xx. The old version processed such a page as if it were yours. | Fix what the server answers. If a firewall or bot filter blocks the service, allow its User-Agent, which contains `wp-critical-css`. |
+| `the page could not be loaded (CONTENT_TYPE)` | The page is not served as `text/html` or `application/xhtml+xml`, or has no `Content-Type` header at all. | Fix the server's response; WordPress always sends the header. |
+| `(HOST_NOT_ALLOWED)` | The page redirected to a host name other than `ALLOWED_HOSTNAME`, typically `example.com` to `www.example.com`. | Set `ALLOWED_HOSTNAME` to the name your pages are really served on, and queue URLs on that name. |
+| `(TOO_MANY_REDIRECTS)`, `(REDIRECT_LOOP)` | More than 5 redirects, or the redirects lead back to a URL already visited. | Fix the redirect chain. |
+| `(PROXY_REFUSED)` | The local proxy refused the destination. | See [The proxy refuses a host name](#the-proxy-refuses-a-host-name). |
+| `(TIMEOUT)`, `(NETWORK)` | The server took longer than 30 seconds (or sent nothing for 15), or the connection failed: refused, reset, or a TLS certificate that does not verify. Unlike Chrome, the service checks certificates when it fetches the page and its stylesheets. | Check that your site is reachable from the container and its certificate is valid. |
+| `(TOO_LARGE)` | The page is over 10 MiB, or a stylesheet is over 2 MiB. | Shrink it. |
+| `a stylesheet on the page's own host could not be loaded` | A stylesheet on your own site (same host name and port) could not be loaded. The message names the stylesheet and the reason (`STATUS`, `NETWORK`, `TIMEOUT`, `TOO_LARGE`, `CONTENT_TYPE`, ...); `CONTENT_TYPE` here means it came back as an HTML page. The service fails the job rather than deliver critical CSS without your own rules. | Open the URL it names and fix what it answers. A transient error fails only that job and the next save or sweep retries it. |
+| `the page has N stylesheets, more than the 100 that are loaded` | Linked stylesheets, inline `<style>` elements and `data:` links together. | Reduce them (a plugin that emits many small ones is the usual cause). |
+| `an inline stylesheet ... is N bytes, over the 2097152-byte limit` | One `<style>` element or `data:` stylesheet over 2 MiB. | Move it out of the page or shrink it. |
+| `the stylesheets are over the 8388608-byte limit for all of them together` | All stylesheets of the page, after their `url()`s are rewritten, are over 8 MiB. | Reduce the CSS the page loads. |
+| `the stylesheets are too expensive to process` | The `url()` rewriting would cost too much; typically a very long declaration with long runs of blanks, such as a pretty-printed `data:` URI of several hundred KB. | Minify that CSS (no indentation or line breaks inside the value) or serve the image as a file. [The rule](https://github.com/solarssk/wp-critical-css/blob/main/docs/DEPLOYMENT.md#upgrading-from-028) has the arithmetic. |
+| `loading the page and its stylesheets took longer than 60000 ms` | The page and all its stylesheets together took over 60 seconds. | Check how slow your site is for the container. |
+| `page markup nests elements deeper than 512 levels`, `too misnested to parse in bounded time` | The page's HTML is far outside what a browser builds. | Fix the markup. |
+| `malformed data: URI in a stylesheet link` | A `<link href="data:...">` stylesheet without a comma, so without a payload. | Fix or remove the link. |
+| `Page crashed!` (no `wpcc:` and no code in brackets) | Chrome's renderer ran out of memory laying the page out. The page was loaded fine, and the service stays up. | See [Out of memory](#out-of-memory). |
+
+The page and the stylesheets are fetched before Chrome starts, so these are different from a render problem. If the log shows `failed for` with none of these, the render itself failed: penthouse gave up after its 60 seconds, Chrome could not start, or Chrome ran out of memory (`Page crashed!`, above).
+
+A job can also end with no `failed for` line at all. If the log has `generating for "<url>"`, then no `delivered for` and no `failed for` for that URL, and then `listening on :3939` again, the service itself ran out of memory and restarted: see [Out of memory](#out-of-memory).
+
+### The proxy refuses a host name
+
+The service refuses any host name that resolves to a private or reserved address, for the page and its stylesheets as well as for Chrome. The proxy logs it: `[ssrf-proxy] refused "<host>":443 (name resolves to a private or reserved address)`, and a job fails with `(PROXY_REFUSED)`. This protects you, but it can hit a legitimate setup:
+
+- **A hostname with a stray AAAA record** in a reserved IPv6 range makes the whole site refused, because the check fails if any one address is bad. The log names the host and the reason, not the address, so look the host up (for example with `dig`) to find it, and fix the DNS record.
 - **A site that resolves to a private address from inside the container** (a split-horizon DNS, an `/etc/hosts` entry pointing at an internal IP) is refused on purpose. The service must render your public site through its public address.
+- **A name that does not resolve at all** is refused too, but without a `[ssrf-proxy]` line.
+
+## Out of memory
+
+The limits on pages and stylesheets keep loading bounded and fail an oversize page early, with a message. They are **not a guarantee that a page fits in memory** when Chrome lays it out. The example compose file gives the container 1 GiB (`mem_limit: 1g`), and a very large page that is inside every limit can be more than that. It shows up in one of two ways:
+
+| What the log shows | What happened |
+|---|---|
+| `[critical-css] failed for "<url>": "Page crashed!"` | Chrome's renderer ran out of memory. The service stays up and keeps its queue. `docker inspect -f '{{.State.OOMKilled}}' critical-css-service` prints `true`. |
+| `generating for "<url>"`, then neither `delivered for` nor `failed for` for it, then `[critical-css] listening on :3939` again, sometimes after a block of V8 text ending in `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory` | The service itself ran out of memory and the container restarted. Everything waiting in the queue is gone, and `docker inspect -f '{{.RestartCount}}' critical-css-service` has gone up. The next sweep queues the same page again, so it will happen again. |
+
+What to do:
+
+1. **Find the page.** It is the URL on the last `generating for` line before the restart, or on the `failed for` line.
+2. **Make it smaller if you can.** Look at what makes it big: a plugin that prints a very large amount of CSS inline, or images embedded in the markup as `data:` text.
+3. **Or give the container more memory.** Raise `mem_limit` in your compose file, recreate the container and queue the page again. Do this for a site with more than about 2 MiB of CSS in all, or pages with more than about 2 MiB of HTML. A bigger limit moves the point where this happens; it does not remove it.
+
+Measured in the 1 GiB container (Node's heap limit there is 560 MiB, and a trivial page already takes about 550 MiB): 1.975 MiB of dense CSS rendered; 3.95 MiB restarted the service without swap, and 7.9 MiB (four stylesheets, each under the 2 MiB limit) restarted it with swap available; 2 MiB of HTML rendered, 3 MiB gave `Page crashed!` without swap, and 9 MiB gave it with swap available. The numbers are indicative: they come from an amd64 image running emulated on Docker Desktop, mostly without swap, and the test CSS was built to be dense (the heaviest real page measured is 515 KiB of HTML and 1.05 MiB of CSS). The [deployment guide](https://github.com/solarssk/wp-critical-css/blob/main/docs/DEPLOYMENT.md#memory-and-very-large-pages) has the full table.
+
+## Lines that are not failures
+
+Some things are left out of the critical CSS without failing the job:
+
+| The line | Meaning |
+|---|---|
+| `skipping a stylesheet that could not be loaded from another host (CODE)` | A stylesheet on a CDN, a font service or a third-party widget could not be loaded. The critical CSS is made without it. Nothing to fix on your side unless that stylesheet matters above the fold. |
+| `skipping the stylesheet link "..."` | The link's scheme is not `http:` or `https:` (`ftp:`, `file:`, ...), or it is not a valid URL. It is never requested. |
+| `the stylesheet "<path>" could not be processed and is left out of the critical CSS: <reason>` | The stylesheet has a syntax error that the CSS rewriting could not get past (the reason says which). It contributes nothing. |
+| `the page unloaded itself while the 412x915 layout was being measured` | The page navigated away while Chrome measured it, so that viewport has no critical CSS. |
 
 ## The page looks different, or flashes, before the full stylesheet loads
 

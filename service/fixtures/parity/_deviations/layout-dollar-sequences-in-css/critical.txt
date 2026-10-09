@@ -1,0 +1,12 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 39 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+
+New layer: thin.kind = same
+  The css is the same as critical's (expected.css, the characters are copied literally). Only the layout copy differs: the new layer injects the css literally (function replacer), so expected-thin-layout.html holds the text exactly as it is in expected.css, where critical's expected-layout.html has the patterns expanded (and the css therefore corrupted).
+  Expected new-layer css: expected.css (unchanged).
+  Expected new-layer layout copy: expected-thin-layout.html (399 bytes) = the same page with the css injected literally after every <head ...> tag; critical expands $-patterns of the css there (expected-layout.html).

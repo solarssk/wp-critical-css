@@ -1,0 +1,24 @@
+{
+	"description": "$& $1 $$ inside an inline <style> element.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".price::after{content:\"$& $1 $$ $` $'\"}"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,27 @@
+{
+	"description": "A ~200 KB multi-line stylesheet (generated deterministically; committed as a file) with relative urls to rebase.",
+	"pageUrl": "{{site}}/blog/",
+	"routes": {
+		"/blog/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/large.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "large.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/large.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

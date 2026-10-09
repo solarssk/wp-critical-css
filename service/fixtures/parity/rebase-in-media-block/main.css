@@ -1,0 +1,3 @@
+/* rebase: rebase-in-media-block */
+@media (min-width:600px){.rb1{background:url(../img/wide.png)}}
+@media print{.rb2{background:url(img/print.png)}}

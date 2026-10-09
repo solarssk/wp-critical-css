@@ -1,0 +1,24 @@
+{
+	"description": "A data: stylesheet with media=\"(max-width: 480px)\" is wrapped in @media.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".data-media{color:#0aa}\n"
+			}
+		],
+		"stylesheetsMedia": [
+			"(max-width: 480px)"
+		]
+	}
+}

@@ -1,0 +1,27 @@
+{
+	"description": "Protocol-relative href pointing at the page host itself.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/pr.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "pr.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"//{{site_host}}/wp-content/themes/twentytest/pr.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

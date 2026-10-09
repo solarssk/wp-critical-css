@@ -1,0 +1,30 @@
+{
+	"description": "A root-relative stylesheet answers 404: critical throws FileNotFoundError for the whole job.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/gone.css": {
+			"status": 404,
+			"type": "text/html; charset=UTF-8",
+			"body": "<!DOCTYPE html>\n<html><head><title>Not Found</title><style>.not-found-page{color:#900}</style></head><body class=\"not-found-page\"><h1>Not Found</h1></body></html>\n"
+		},
+		"/wp-content/themes/twentytest/before.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "before.css"
+		},
+		"/wp-content/themes/twentytest/after.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "after.css"
+		}
+	},
+	"expect": {
+		"kind": "error",
+		"message": "Error: File not found: /wp-content/themes/twentytest/gone.css\n       Current working directory: <cwd>\n       Searched in: {{site}}/, <cwd>"
+	}
+}

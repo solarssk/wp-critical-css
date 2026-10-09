@@ -1,0 +1,32 @@
+{
+	"description": "Absolute <base href=\"{{site}}/foo/\"> and a relative stylesheet href: fetched from the base directory.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/foo/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "dir.html"
+		},
+		"/foo/css/a.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "a.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"css/a.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

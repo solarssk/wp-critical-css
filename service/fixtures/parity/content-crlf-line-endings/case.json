@@ -1,0 +1,34 @@
+{
+	"description": "A stylesheet with CRLF line endings (the CRs are kept, the join is still a bare LF).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/crlf.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "crlf.css"
+		},
+		"/wp-content/themes/twentytest/lf.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "lf.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/crlf.css",
+			"{{site}}/wp-content/themes/twentytest/lf.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

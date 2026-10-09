@@ -1,0 +1,51 @@
+{
+	"description": "A stylesheet URL with a chain of three redirects.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/s0.css": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /s1.css",
+			"headers": {
+				"location": "/s1.css"
+			}
+		},
+		"/s1.css": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /s2.css",
+			"headers": {
+				"location": "/s2.css"
+			}
+		},
+		"/s2.css": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /wp-content/themes/twentytest/final.css",
+			"headers": {
+				"location": "/wp-content/themes/twentytest/final.css"
+			}
+		},
+		"/wp-content/themes/twentytest/final.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "final.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/s0.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

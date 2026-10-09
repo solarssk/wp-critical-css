@@ -1,0 +1,31 @@
+{
+	"description": "The page answers 302 with no Location header and an HTML body: critical uses that body.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 302,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/x.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "x.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "A non-2xx page response is a hard failure (decision); critical processes the error body as if it were the page."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/x.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

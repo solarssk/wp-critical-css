@@ -1,0 +1,35 @@
+{
+	"description": "A stylesheet URL redirects (301) within the site: relative url()s are rebased from the FINAL stylesheet path.",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/style.css": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /wp-content/themes/twentytest/css/style.css",
+			"headers": {
+				"location": "/wp-content/themes/twentytest/css/style.css"
+			}
+		},
+		"/wp-content/themes/twentytest/css/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"{{site}}/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

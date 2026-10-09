@@ -1,0 +1,29 @@
+{
+	"description": "A second <head> start tag after the first one (the parser ignores it) is matched as well: the css is injected twice.",
+	"pageUrl": "{{site}}/",
+	"layout": true,
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/main.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "main.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/main.css"
+		],
+		"stylesheetsMedia": [
+			""
+		],
+		"layoutFile": "expected-layout.html"
+	}
+}

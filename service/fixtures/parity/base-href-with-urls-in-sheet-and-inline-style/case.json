@@ -1,0 +1,31 @@
+{
+	"description": "A <base href> does not change url() rebasing: urls are rebased from the sheet path to the PAGE path, and an inline style keeps its urls.",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/a/s.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "s.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"{{site}}/a/s.css",
+			{
+				"inline": ".inline-img{background:url(img/i.png)}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

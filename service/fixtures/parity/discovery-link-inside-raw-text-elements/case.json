@@ -1,0 +1,52 @@
+{
+	"description": "Link markup inside <title>, <iframe>, <noembed>, <noframes> and <xmp> is text, not discovered; only the real link is.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/real.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "real.css"
+		},
+		"/wp-content/themes/twentytest/intitle.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "intitle.css"
+		},
+		"/wp-content/themes/twentytest/iniframe.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "iniframe.css"
+		},
+		"/wp-content/themes/twentytest/innoembed.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "innoembed.css"
+		},
+		"/wp-content/themes/twentytest/innoframes.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "innoframes.css"
+		},
+		"/wp-content/themes/twentytest/inxmp.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "inxmp.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/real.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

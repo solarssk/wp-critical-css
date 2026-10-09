@@ -1,0 +1,4 @@
+/* rebase: rebase-percent23-and-leading-blank-in-quotes */
+.rb1{background:url(%23clip)}
+.rb2{background:url("../../wp-content/themes/twentytest/css/img/with%20space.png")}
+.rb3{background:url(/wp-content/uploads/a.jpg?x=1#f)}

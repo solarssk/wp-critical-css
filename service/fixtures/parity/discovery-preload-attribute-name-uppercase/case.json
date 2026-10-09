@@ -1,0 +1,27 @@
+{
+	"description": "AS=\"style\" (upper-case attribute NAME) is the same attribute in HTML: discovered.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/upname.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "upname.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/upname.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

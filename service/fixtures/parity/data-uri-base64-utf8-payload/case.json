@@ -1,0 +1,24 @@
+{
+	"description": "A base64 data: stylesheet whose payload has multibyte UTF-8 (decoded as UTF-8, not as Latin-1).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".b64-utf8::after{content:\"Zażółć →\"}\n"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

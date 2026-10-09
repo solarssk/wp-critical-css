@@ -1,0 +1,5 @@
+/* rebase: rebase-query-and-hash */
+@font-face{font-family:"Q";src:url(../fonts/f.woff?v=1.2#iefix) format("woff"),url(../fonts/f.svg#svgFontName) format("svg")}
+.rb1{background:url(../img/a.png?x=1)}
+.rb2{background:url(../img/b.png#frag)}
+.rb3{background:url(../img/c.png?x=1&y=2#frag)}

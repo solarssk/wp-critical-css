@@ -1,0 +1,27 @@
+{
+	"description": "The onload test is a plain substring test: onload=\"mediaReady()\" keeps a print sheet.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/substring.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "substring.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/substring.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

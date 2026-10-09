@@ -1,0 +1,37 @@
+{
+	"description": "media=\"print\" with an onload that does not contain \"media\" (rel swap, null handler) is dropped.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/keep.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "keep.css"
+		},
+		"/wp-content/themes/twentytest/lcrel.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "lcrel.css"
+		},
+		"/wp-content/themes/twentytest/lcnull.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "lcnull.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/keep.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

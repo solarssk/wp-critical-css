@@ -1,0 +1,3 @@
+/* rebase: rebase-in-custom-property */
+:root{--hero:url(../img/hero.png);--icon:url("img/icon.svg")}
+.rb1{background:var(--hero)}

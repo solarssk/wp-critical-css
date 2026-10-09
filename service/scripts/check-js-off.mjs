@@ -35,7 +35,7 @@ const server = http.createServer((req, res) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 // The top page is served as http://localhost:<port>/top and its frames are http://127.0.0.1:<port>/...:
 // different sites, so the frames are cross-site and out-of-process, as they are in the file:// copy
-// `critical` hands to penthouse (a file:// page would need a file in a shared temp directory).
+// the service hands to penthouse (critical-css.js renderViewport; a file:// page would need a file in a shared temp directory).
 const port = server.address().port;
 const TOP = `<!doctype html><title>off</title>
 <iframe src="http://127.0.0.1:${port}/iframe"></iframe>

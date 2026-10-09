@@ -1,0 +1,24 @@
+{
+	"description": "A single inline <style> block in the head.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".site-title{font-size:2rem;font-weight:700}"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,3 @@
+.price::after{content:"$&"}
+/* total: $& */
+.a\$\&b{color:red}

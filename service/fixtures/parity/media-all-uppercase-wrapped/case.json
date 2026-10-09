@@ -1,0 +1,34 @@
+{
+	"description": "media=\"ALL\" / media=\"Screen\" differ in case from the exempt words: wrapped in @media ALL { } / @media Screen { }.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/upall.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "upall.css"
+		},
+		"/wp-content/themes/twentytest/upscreen.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "upscreen.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/upall.css",
+			"{{site}}/wp-content/themes/twentytest/upscreen.css"
+		],
+		"stylesheetsMedia": [
+			"ALL",
+			"Screen"
+		]
+	}
+}
