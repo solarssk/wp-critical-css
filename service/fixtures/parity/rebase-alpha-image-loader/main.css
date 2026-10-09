@@ -1,0 +1,6 @@
+/* rebase: rebase-alpha-image-loader */
+.rb1{filter:progid:DXImageTransform.Microsoft.AlphaImageLoader(src='images/a.png', sizingMethod='scale')}
+.rb2{filter:progid:DXImageTransform.Microsoft.AlphaImageLoader(src=images/b.png)}
+.rb3{filter:progid:DXImageTransform.Microsoft.AlphaImageLoader(src="/abs/c.png")}
+.rb4{filter:progid:DXImageTransform.Microsoft.AlphaImageLoader(src='{{cdn}}/d.png')}
+.rb5{-ms-filter:"progid:DXImageTransform.Microsoft.AlphaImageLoader(src='../img/e.png')"}

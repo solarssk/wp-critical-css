@@ -1,0 +1,44 @@
+{
+	"description": "<base target=\"_blank\" href=\"/foo/\">: critical only recognises href as the FIRST attribute of <base>, so it ignores this base; the HTML spec honours it.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/css/a.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "page-dir.css"
+		},
+		"/foo/css/a.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "base-dir.css"
+		}
+	},
+	"thin": {
+		"kind": "differs",
+		"note": "Spec <base href> handling: the base is honoured wherever href sits in the attribute list, so the sheet is fetched from /foo/css/a.css (expected-thin.css). critical resolves the href against the page directory instead and fetches /css/a.css (expected.css).",
+		"derive": {
+			"routes": {
+				"/": {
+					"file": "page.thin.html"
+				}
+			}
+		},
+		"cssFile": "expected-thin.css"
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"css/a.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,6 @@
+/* fixture sheet: dupm */
+.dupm{display:block;margin:0 auto;color:#1d4ed8}
+
+@media (max-width: 600px) { /* fixture sheet: dupm */
+.dupm{display:block;margin:0 auto;color:#1d4ed8}
+ }

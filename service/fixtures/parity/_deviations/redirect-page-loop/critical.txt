@@ -1,0 +1,30 @@
+critical@8.0.0: getDocument("{{site}}/ping", { request: {} })
+
+Outcome: css, 0 bytes, 0 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ping -> 302
+  HEAD {{site}}/pong -> 302
+  HEAD {{site}}/ping -> 302
+  HEAD {{site}}/pong -> 302
+  HEAD {{site}}/ping -> 302
+  HEAD {{site}}/pong -> 302
+  HEAD {{site}}/ping -> 302
+  HEAD {{site}}/pong -> 302
+  HEAD {{site}}/ping -> 302
+  HEAD {{site}}/pong -> 302
+  HEAD {{site}}/ping -> 302
+  GET {{site}}/ping -> 302
+  GET {{site}}/pong -> 302
+  GET {{site}}/ping -> 302
+  GET {{site}}/pong -> 302
+  GET {{site}}/ping -> 302
+  GET {{site}}/pong -> 302
+  GET {{site}}/ping -> 302
+  GET {{site}}/pong -> 302
+  GET {{site}}/ping -> 302
+  GET {{site}}/pong -> 302
+  GET {{site}}/ping -> 302
+
+New layer: thin.kind = fail
+  A redirect loop (or more than 5 redirects) fails the job.

@@ -1,0 +1,27 @@
+{
+	"description": "Protocol-relative href //cdn/x.css (the page is http).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{cdn}}/assets/css/pr.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "pr.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"//{{cdn_host}}/assets/css/pr.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

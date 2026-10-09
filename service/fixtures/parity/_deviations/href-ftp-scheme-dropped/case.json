@@ -1,0 +1,40 @@
+{
+	"description": "A stylesheet href with a scheme other than http(s) (ftp://) is dropped silently; the sheets around it are kept.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/before.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "before.css"
+		},
+		"/wp-content/themes/twentytest/after.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "after.css"
+		}
+	},
+	"thin": {
+		"kind": "skip",
+		"note": "A scheme other than http or https is refused before any request, which counts as a failure on another host: the sheet is skipped with one logSafe'd warning and the job succeeds with the sheets around it. The css is expected.css (critical dropped the same sheet silently)."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/before.css",
+			"ftp://files.example.invalid/style.css",
+			"{{site}}/wp-content/themes/twentytest/after.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

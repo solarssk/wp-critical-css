@@ -1,0 +1,4 @@
+/* fixture sheet: r302root */
+.r302root-a{background:url(img/b.png)}
+.r302root-b{background:url(../img/a.png)}
+.r302root-c{background:url(/img/c.png)}

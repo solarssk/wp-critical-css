@@ -1,13 +1,13 @@
 /**
  * SSRF guard for Chromium's OWN network stack.
  *
- * `critical` fetches the page and every stylesheet/preload href with `got`
- * (guarded by ssrfSafeBeforeRequest/ssrfSafeDnsLookup in server.js), then
- * hands Puppeteer a local `file://` copy of the page. That copy still
+ * page-fetch.js fetches the page and every stylesheet/preload href (guarded
+ * per hop, through the policy proxy), then critical-css.js hands penthouse a
+ * local `file://` copy of the page. That copy still
  * contains the page's original markup verbatim, so anything Chromium itself
  * resolves while rendering it (an <iframe src="...">, an <img src="...">, a
  * background-image: url(...)) is fetched directly by Chromium, completely
- * bypassing the `got` guards. `<iframe src="http://169.254.169.254/...">` on
+ * bypassing that fetcher's checks. `<iframe src="http://169.254.169.254/...">` on
  * an otherwise-legitimate allowed page is a real, confirmed example.
  *
  * Three layers per page, applied by setupSsrfSafeRequestInterception(), which
@@ -35,8 +35,8 @@
  *    in `.js` were already aborted (layer 2); this is about inline scripts.
  *
  * 2. Puppeteer request interception (CDP's Fetch domain), checked against
- *    the exact same private/reserved-address policy as the `got` path
- *    (isPrivateOrReservedTarget in lib.js). It also aborts every `.js` URL,
+ *    the exact same private/reserved-address policy as the server-side fetch
+ *    path (isPrivateOrReservedTarget in lib.js). It also aborts every `.js` URL,
  *    penthouse's other half of blockJSRequests.
  *
  * 3. A page-side WebSocket constructor override, belt-and-braces behind

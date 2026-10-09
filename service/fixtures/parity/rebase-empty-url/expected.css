@@ -1,0 +1,5 @@
+/* rebase: rebase-empty-url */
+.rb1{background:url()}
+.rb2{background:url("")}
+.rb3{background:url('')}
+.rb4{background:url(../../wp-content/themes/twentytest/img/ok.png)}

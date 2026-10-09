@@ -1,0 +1,49 @@
+{
+	"description": "Order of the joined css follows document order across head link, inline style, body link, body style, late head-level style.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/one.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "one.css"
+		},
+		"/wp-content/themes/twentytest/three.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "three.css"
+		},
+		"/wp-content/themes/twentytest/four.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "four.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/one.css",
+			{
+				"inline": ".inline-two{color:#222}"
+			},
+			"{{site}}/wp-content/themes/twentytest/three.css",
+			"{{site}}/wp-content/themes/twentytest/four.css",
+			{
+				"inline": ".inline-five{color:#555}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			"",
+			"",
+			""
+		]
+	}
+}

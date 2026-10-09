@@ -1,0 +1,15 @@
+{
+	"description": "html: entry point with a relative stylesheet href: there is nothing to resolve it against, critical throws FileNotFoundError.",
+	"html": "page.html",
+	"routes": {
+		"/css/a.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "a.css"
+		}
+	},
+	"expect": {
+		"kind": "error",
+		"message": "Error: File not found: css/a.css\n       Current working directory: <cwd>\n       Searched in: <cwd>"
+	}
+}

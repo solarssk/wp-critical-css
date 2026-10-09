@@ -1,0 +1,4 @@
+/* rebase: rebase-important-and-vendor-prefixes */
+.rb1{background-image:url(../../wp-content/themes/twentytest/img/a.png)!important}
+.rb2{-webkit-mask-image:url(../../wp-content/themes/twentytest/img/m.svg);mask-image:url(../../wp-content/themes/twentytest/img/m.svg)}
+.rb3{border-image:url(../../wp-content/themes/twentytest/img/b.png) 30 round}

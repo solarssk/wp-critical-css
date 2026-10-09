@@ -1,0 +1,227 @@
+{
+	"description": "Twenty-five redirects: more than HEAD probe + GET can follow. critical does NOT fail: it uses the last 3xx response body as the page, finds no stylesheets and returns empty css.",
+	"pageUrl": "{{site}}/hop0",
+	"routes": {
+		"/hop0": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop1",
+			"headers": {
+				"location": "/hop1"
+			}
+		},
+		"/hop1": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop2",
+			"headers": {
+				"location": "/hop2"
+			}
+		},
+		"/hop2": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop3",
+			"headers": {
+				"location": "/hop3"
+			}
+		},
+		"/hop3": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop4",
+			"headers": {
+				"location": "/hop4"
+			}
+		},
+		"/hop4": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop5",
+			"headers": {
+				"location": "/hop5"
+			}
+		},
+		"/hop5": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop6",
+			"headers": {
+				"location": "/hop6"
+			}
+		},
+		"/hop6": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop7",
+			"headers": {
+				"location": "/hop7"
+			}
+		},
+		"/hop7": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop8",
+			"headers": {
+				"location": "/hop8"
+			}
+		},
+		"/hop8": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop9",
+			"headers": {
+				"location": "/hop9"
+			}
+		},
+		"/hop9": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop10",
+			"headers": {
+				"location": "/hop10"
+			}
+		},
+		"/hop10": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop11",
+			"headers": {
+				"location": "/hop11"
+			}
+		},
+		"/hop11": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop12",
+			"headers": {
+				"location": "/hop12"
+			}
+		},
+		"/hop12": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop13",
+			"headers": {
+				"location": "/hop13"
+			}
+		},
+		"/hop13": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop14",
+			"headers": {
+				"location": "/hop14"
+			}
+		},
+		"/hop14": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop15",
+			"headers": {
+				"location": "/hop15"
+			}
+		},
+		"/hop15": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop16",
+			"headers": {
+				"location": "/hop16"
+			}
+		},
+		"/hop16": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop17",
+			"headers": {
+				"location": "/hop17"
+			}
+		},
+		"/hop17": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop18",
+			"headers": {
+				"location": "/hop18"
+			}
+		},
+		"/hop18": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop19",
+			"headers": {
+				"location": "/hop19"
+			}
+		},
+		"/hop19": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop20",
+			"headers": {
+				"location": "/hop20"
+			}
+		},
+		"/hop20": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop21",
+			"headers": {
+				"location": "/hop21"
+			}
+		},
+		"/hop21": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop22",
+			"headers": {
+				"location": "/hop22"
+			}
+		},
+		"/hop22": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop23",
+			"headers": {
+				"location": "/hop23"
+			}
+		},
+		"/hop23": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop24",
+			"headers": {
+				"location": "/hop24"
+			}
+		},
+		"/hop24": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /final/",
+			"headers": {
+				"location": "/final/"
+			}
+		},
+		"/final/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "Too many redirects fail the job (max 5). critical silently returns an empty result instead."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/hop10",
+		"stylesheets": [],
+		"stylesheetsMedia": []
+	}
+}

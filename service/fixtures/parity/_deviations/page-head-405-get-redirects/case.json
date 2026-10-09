@@ -1,0 +1,43 @@
+{
+	"description": "The page URL rejects HEAD (405) but redirects on GET: critical never learns the final URL and resolves the relative stylesheet href against the wrong directory.",
+	"pageUrl": "{{site}}/start",
+	"routes": {
+		"/start": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /blog/landing/",
+			"headers": {
+				"location": "/blog/landing/"
+			},
+			"head": {
+				"status": 405
+			}
+		},
+		"/blog/landing/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/blog/landing/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"thin": {
+		"kind": "differs",
+		"note": "The new layer takes the final URL from its single GET (no HEAD probe), so the relative href resolves against /blog/landing/ and the job succeeds; expected-thin.css is critical's output when HEAD answers like GET. critical keeps the pre-redirect URL when its HEAD probe fails, resolves the relative href against / and throws FileNotFoundError.",
+		"derive": {
+			"routes": {
+				"/start": {
+					"head": null
+				}
+			}
+		},
+		"cssFile": "expected-thin.css"
+	},
+	"expect": {
+		"kind": "error",
+		"message": "Error: File not found: style.css\n       Current working directory: <cwd>\n       Searched in: <cwd>"
+	}
+}

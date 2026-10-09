@@ -1,0 +1,4 @@
+/* fixture sheet: base-abs-rel */
+.base-abs-rel-a{background:url(foo/css/img/b.png)}
+.base-abs-rel-b{background:url(foo/img/a.png)}
+.base-abs-rel-c{background:url(/img/c.png)}

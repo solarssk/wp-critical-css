@@ -376,15 +376,17 @@ export function isPrivateOrReservedAddress(address, family) {
 }
 
 /**
- * A DNS-resolution hook (like the one this backs, ssrfSafeDnsLookup() in
- * server.js) is never consulted at all when the connection target is
+ * A DNS-resolution hook (a custom `lookup` function, as safeFetch() below
+ * uses) is never consulted at all when the connection target is
  * already a literal IP address - Node's own net/http internals special-case
  * that and connect directly, skipping the configured `lookup` function
  * entirely (verified directly against Node's connection handling, not
  * assumed). So a page embedding e.g. `<link href="http://169.254.169.254/...">`
  * would sail straight through a DNS-lookup-only guard. This has to be
- * checked separately, before any connection is attempted at all - see
- * ssrfSafeBeforeRequest() in server.js for where this is actually wired in.
+ * checked separately, before any connection is attempted at all - page-fetch.js
+ * does it on every hop of a page or stylesheet fetch, ahead of the policy
+ * proxy (which classifies literal addresses as well), and safeFetch() below
+ * does it too.
  *
  * `hostname` is taken as-is from a URL's `.hostname` property, which wraps
  * an IPv6 literal in brackets (e.g. "[::1]") - stripped here since
@@ -400,8 +402,8 @@ export function isPrivateOrReservedAddress(address, family) {
  * directly: net.isIP() itself returns 0 - "not a literal IP" - for every one
  * of those raw forms, so a caller passing one straight through, without
  * routing it through `new URL(...).hostname` first, would silently fail
- * open here rather than being caught). Every current call site (got's
- * beforeRequest hook, isChromiumRequestTargetBlocked(), and Chromium's own
+ * open here rather than being caught). Every current call site (page-fetch.js's
+ * per-hop check, isChromiumRequestTargetBlocked(), and Chromium's own
  * request.url()) satisfies this already - a future call site built from a
  * raw header or config value, without going through URL parsing first,
  * would not.
@@ -426,9 +428,9 @@ export function isBlockedLiteralAddress(hostname) {
  * safeFetch should refuse anything but http(s) outright).
  *
  * Same DNS-then-connect gap as every other guard in this codebase that
- * can't hook the actual connection's own resolver (see
- * ssrfSafeDnsLookup's doc comment in server.js for the one path that
- * doesn't have this gap, because got supports a real dnsLookup hook): a
+ * can't hook the actual connection's own resolver (page-fetch.js and
+ * Chromium don't have this gap: both connect through the policy proxy, which
+ * resolves a name once and connects to the address it validated): a
  * sufficiently fast DNS-rebinding attack between this check and the
  * fetch() call that follows it could theoretically slip a different
  * address past it. Accepted, documented residual risk, same as
@@ -548,9 +550,9 @@ export async function readBodyPreview(res, maxBytes = 2048) {
  * redirect - that resolves to a private/reserved address. Redirects are
  * followed manually (redirect: 'manual' plus this loop) specifically so
  * EVERY hop gets re-validated, not just the first URL: native fetch()
- * doesn't expose a per-hop hook the way `got` does elsewhere in this
- * codebase (see ssrfSafeDnsLookup in server.js), so this is the only way
- * to guard a redirect chain at all with the built-in client. Bounded
+ * doesn't expose a per-hop hook, so this is the only way to guard a
+ * redirect chain at all with the built-in client (page-fetch.js follows
+ * redirects manually for the same reason). Bounded
  * redirect count and response size so a malicious or runaway response
  * can't hang this indefinitely or exhaust memory.
  *
@@ -626,7 +628,7 @@ export function extractUrlsFromUrlset(parsed) {
 
 /**
  * penthouse-esm's own dead-media-query pruning (non-matching-media-query-remover.js,
- * wired in by the `critical` package before this ever sees the CSS) is
+ * run inside penthouse before this ever sees the CSS) is
  * documented as only filtering out: @print, a `min-width`/`min-height` that
  * exceeds the target viewport, and a combined `min-width AND max-width` that
  * does. A standalone `max-width` query - by far the most common breakpoint
@@ -814,16 +816,16 @@ export function isMediaQueryApplicable(mediaQueryParams, widthRange) {
 }
 
 /**
- * A postcss plugin (per critical's own `postcss` postprocessing option -
- * see options.postcss in critical/src/core.js's create()) that removes any
+ * A postcss plugin (renderViewport() in critical-css.js runs it over
+ * penthouse's output) that removes any
  * `@media` block isMediaQueryApplicable() above proves can never apply to
- * any real visitor served `widthRange`. Wired into generateForViewport()
- * in server.js, once per bucket, with that bucket's own
+ * any real visitor served `widthRange`. Passed to generateCriticalCss() in
+ * server.js's generateAndSubmit(), once per bucket, with that bucket's own
  * SERVED_WIDTH_RANGES entry (not its render viewport) - see that
  * constant's doc comment for why the two aren't the same thing.
  *
- * Runs after penthouse's extraction but before critical's own final
- * CleanCSS minify pass, so whatever empty/now-duplicate media blocks this
+ * Runs after penthouse's extraction but before the final CleanCSS minify
+ * pass of renderViewport(), so whatever empty/now-duplicate media blocks this
  * leaves behind get cleaned up by that existing step already - no extra
  * cleanup needed here.
  */

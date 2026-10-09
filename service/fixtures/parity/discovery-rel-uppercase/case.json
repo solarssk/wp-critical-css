@@ -1,0 +1,34 @@
+{
+	"description": "rel is matched case-insensitively: rel=\"StyleSheet\" and an upper-case REL=\"STYLESHEET\" attribute name.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/mixed.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "mixed.css"
+		},
+		"/wp-content/themes/twentytest/upper.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "upper.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/mixed.css",
+			"{{site}}/wp-content/themes/twentytest/upper.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

@@ -1,0 +1,29 @@
+{
+	"description": "The same href with a different media value is NOT a duplicate: included twice, the second wrapped in @media.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/dupm.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "dupm.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/dupm.css",
+			"{{site}}/wp-content/themes/twentytest/dupm.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"(max-width: 600px)"
+		]
+	}
+}

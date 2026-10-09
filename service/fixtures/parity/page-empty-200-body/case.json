@@ -1,0 +1,18 @@
+{
+	"description": "The page answers 200 with an empty body.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [],
+		"stylesheetsMedia": []
+	}
+}

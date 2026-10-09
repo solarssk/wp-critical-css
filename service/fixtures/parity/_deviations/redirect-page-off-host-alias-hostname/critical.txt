@@ -1,0 +1,14 @@
+critical@8.0.0: getDocument("{{site}}/start", { request: {} })
+
+Outcome: css, 172 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/start -> 302
+  HEAD {{alias}}/landing/ -> 200
+  GET {{alias}}/landing/ -> 200
+  HEAD {{alias}}/assets/css/other.css -> 200
+  HEAD {{alias}}/assets/css/other.css -> 200
+  GET {{alias}}/assets/css/other.css -> 200
+
+New layer: thin.kind = fail
+  Page redirects must stay on the allowed host: localhost:18981 is not 127.0.0.1:18981. Unlike redirect-page-off-host (same hostname, other port) this redirect changes the HOSTNAME, so it must fail under a hostname comparison (what isAllowedUrl(url, ALLOWED_HOSTNAME) is) as well as under host:port.

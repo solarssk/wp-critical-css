@@ -1,0 +1,51 @@
+{
+	"description": "Three redirects (301, 302, 301) before the page.",
+	"pageUrl": "{{site}}/hop0",
+	"routes": {
+		"/hop0": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop1",
+			"headers": {
+				"location": "/hop1"
+			}
+		},
+		"/hop1": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /hop2",
+			"headers": {
+				"location": "/hop2"
+			}
+		},
+		"/hop2": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /final/",
+			"headers": {
+				"location": "/final/"
+			}
+		},
+		"/final/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/final/index.html",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

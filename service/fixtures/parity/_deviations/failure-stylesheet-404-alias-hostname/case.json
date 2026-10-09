@@ -1,0 +1,45 @@
+{
+	"description": "A stylesheet on the same port under another hostname (localhost) answers 404: critical silently drops it.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{alias}}/assets/css/gone.css": {
+			"status": 404,
+			"type": "text/plain",
+			"body": "Not Found"
+		},
+		"/wp-content/themes/twentytest/before.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "before.css"
+		},
+		"/wp-content/themes/twentytest/after.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "after.css"
+		}
+	},
+	"thin": {
+		"kind": "skip",
+		"note": "A failed stylesheet on another host (CDN / third party) is skipped with one logSafe'd warning and the job succeeds. {{alias}} is localhost:18981 and the page is on 127.0.0.1:18981: the same port under another HOSTNAME, so it is another host under a hostname comparison as well as under host:port. A comparison on the port alone would call it the same host and fail the job."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/before.css",
+			"{{alias}}/assets/css/gone.css",
+			"{{site}}/wp-content/themes/twentytest/after.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

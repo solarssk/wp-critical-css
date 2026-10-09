@@ -1,0 +1,34 @@
+{
+	"description": "The same file with different ?ver= values is two sheets.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/q.css?ver=1": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "q1.css"
+		},
+		"/wp-content/themes/twentytest/q.css?ver=2": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "q2.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/q.css?ver=1",
+			"{{site}}/wp-content/themes/twentytest/q.css?ver=2"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

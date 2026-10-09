@@ -1,0 +1,45 @@
+{
+	"description": "Three sheets ending with no newline, one newline and two newlines: the exact separator between sheets is a single newline.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/j1.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "j1.css"
+		},
+		"/wp-content/themes/twentytest/j2.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "j2.css"
+		},
+		"/wp-content/themes/twentytest/j3.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "j3.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/j1.css",
+			"{{site}}/wp-content/themes/twentytest/j2.css",
+			"{{site}}/wp-content/themes/twentytest/j3.css",
+			{
+				"inline": ".j4{color:red}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			"",
+			""
+		]
+	}
+}

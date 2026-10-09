@@ -1,0 +1,27 @@
+{
+	"description": "media=\"(max-width: 600px)\" wraps the whole sheet in @media (max-width: 600px) { }.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/mw.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "mw.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/mw.css"
+		],
+		"stylesheetsMedia": [
+			"(max-width: 600px)"
+		]
+	}
+}

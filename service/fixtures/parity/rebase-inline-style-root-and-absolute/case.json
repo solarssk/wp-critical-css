@@ -1,0 +1,24 @@
+{
+	"description": "Inline <style>: root-relative, absolute, protocol-relative, data: and #fragment urls stay unchanged.",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			{
+				"inline": "\n.rb1{background:url(/img/a.png)}\n.rb2{background:url({{site}}/img/b.png)}\n.rb3{background:url({{cdn}}/c.png)}\n.rb4{background:url(//{{cdn_host}}/d.png)}\n.rb5{background:url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)}\n.rb6{filter:url(#f)}\n"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

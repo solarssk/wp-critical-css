@@ -1,0 +1,27 @@
+{
+	"description": "href with a percent-encoded space in the path.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/uploads/my%20styles/a.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "a.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/uploads/my%20styles/a.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

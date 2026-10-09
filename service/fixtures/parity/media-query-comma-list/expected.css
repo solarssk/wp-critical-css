@@ -1,0 +1,3 @@
+@media screen and (max-width: 600px), print and (orientation: landscape) { /* fixture sheet: mlist */
+.mlist{display:block;margin:0 auto;color:#1d4ed8}
+ }

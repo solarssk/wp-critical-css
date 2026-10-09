@@ -1,0 +1,36 @@
+{
+	"description": "Absolute <base href=\"{{site}}/foo/\"> but the relative sheet only exists under the page directory (/css/a.css), not under the base (/foo/css/a.css).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/foo/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "dir.html"
+		},
+		"/css/a.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "under-page.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "Spec <base href> handling: css/a.css resolves to /foo/css/a.css, which answers 404 on the page's own host, so the job fails like any other same-host stylesheet failure. critical falls back to probing the page directory (HEAD /foo/css/a.css 404, then GET /css/a.css) and includes the sheet from there: that guessing is what the new layer drops. See base-href-absolute-base-dir-not-found for the case where the sheet does exist under the base."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"css/a.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,43 @@
+{
+	"description": "307 then 308 (method-preserving redirects) to the final page.",
+	"pageUrl": "{{site}}/a",
+	"routes": {
+		"/a": {
+			"status": 307,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /b",
+			"headers": {
+				"location": "/b"
+			}
+		},
+		"/b": {
+			"status": 308,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /c/",
+			"headers": {
+				"location": "/c/"
+			}
+		},
+		"/c/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/c/index.html",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

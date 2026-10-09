@@ -1,0 +1,16 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: throws: Error: File not found: DATA:text/css,.up%7Bcolor%3Ared%7D
+Message:
+  Error: File not found: DATA:text/css,.up%7Bcolor%3Ared%7D
+         Current working directory: <cwd>
+         Searched in: {{site}}/, <cwd>
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/ -> 200
+
+New layer: thin.kind = differs
+  The URL scheme is case-insensitive: DATA: is decoded exactly like data: (one rule, no special failure), so the job succeeds and the rule is included. expected-thin.css is critical's output for the same page with a lower-case data: scheme and the same payload.
+  Expected new-layer css: expected-thin.css (90 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

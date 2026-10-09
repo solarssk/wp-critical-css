@@ -1,0 +1,4 @@
+/* fixture sheet: base-cdn */
+.base-cdn-a{background:url(img/b.png)}
+.base-cdn-b{background:url(../img/a.png)}
+.base-cdn-c{background:url(/img/c.png)}

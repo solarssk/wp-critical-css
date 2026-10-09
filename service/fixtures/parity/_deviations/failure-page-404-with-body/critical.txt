@@ -1,0 +1,13 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 83 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 404
+  GET {{site}}/ -> 404
+  HEAD {{site}}/wp-content/themes/twentytest/x.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/x.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/x.css -> 200
+
+New layer: thin.kind = fail
+  A non-2xx page response is a hard failure (decision); critical processes the error body as if it were the page.

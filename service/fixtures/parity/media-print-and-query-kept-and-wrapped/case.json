@@ -1,0 +1,27 @@
+{
+	"description": "media=\"print and (min-width: 100px)\" is not exactly \"print\": kept and wrapped.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/printq.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "printq.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/printq.css"
+		],
+		"stylesheetsMedia": [
+			"print and (min-width: 100px)"
+		]
+	}
+}

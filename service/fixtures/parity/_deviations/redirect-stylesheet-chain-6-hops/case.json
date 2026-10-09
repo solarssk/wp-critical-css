@@ -1,0 +1,79 @@
+{
+	"description": "Six redirects before a same-host stylesheet: one more than the new layer follows.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/css/hop0.css": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /css/hop1.css",
+			"headers": {
+				"location": "/css/hop1.css"
+			}
+		},
+		"/css/hop1.css": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /css/hop2.css",
+			"headers": {
+				"location": "/css/hop2.css"
+			}
+		},
+		"/css/hop2.css": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /css/hop3.css",
+			"headers": {
+				"location": "/css/hop3.css"
+			}
+		},
+		"/css/hop3.css": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /css/hop4.css",
+			"headers": {
+				"location": "/css/hop4.css"
+			}
+		},
+		"/css/hop4.css": {
+			"status": 301,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /css/hop5.css",
+			"headers": {
+				"location": "/css/hop5.css"
+			}
+		},
+		"/css/hop5.css": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /css/final.css",
+			"headers": {
+				"location": "/css/final.css"
+			}
+		},
+		"/css/final.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "final.css"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "The new layer follows at most 5 redirects: the sixth fails that stylesheet, and a failed same-host stylesheet fails the job. critical follows it. redirect-stylesheet-chain-5-hops is the case that must still work."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/css/hop0.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

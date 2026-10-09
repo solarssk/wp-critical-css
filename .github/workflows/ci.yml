@@ -234,15 +234,15 @@ jobs:
       # A build that succeeds doesn't prove the image works - Puppeteer
       # needs more than "Chrome is present somewhere in the filesystem", so
       # this actually launches Chrome and renders a real page, not just
-      # checks the HTTP server answers.
+      # checks the HTTP server answers. service/scripts/check-render.mjs runs
+      # the function server.js calls (generateCriticalCss in critical-css.js):
+      # it starts the SSRF proxy, fetches https://example.com through it, and
+      # renders both viewports in a Chrome launched with the production
+      # switches. (The same script runs offline in publish-container.yml.)
       - name: Smoke test - real Puppeteer render
+        timeout-minutes: 3
         run: |
-          docker run --rm wp-critical-css:ci node --input-type=module -e "
-          import { generate } from 'critical';
-          const { css } = await generate({ src: 'https://example.com', inline: false, dimensions: [{ width: 412, height: 915 }], penthouse: { timeout: 30000 } });
-          if (!css || css.toString().length === 0) { throw new Error('generated empty CSS'); }
-          console.log('Puppeteer render OK,', css.toString().length, 'bytes of CSS');
-          "
+          docker run --rm -i -e CHECK_RENDER_MODE=url wp-critical-css:ci node --input-type=module - < service/scripts/check-render.mjs
 
       # The render above would also pass on the WRONG Chrome (the base image's
       # own, or an older one if the pin never took effect), so assert that what
@@ -301,10 +301,12 @@ jobs:
           curl -sf http://localhost:3939/health | grep -q '"status":"ok"'
           docker stop wpcc-smoke
 
-      # The renders above call `critical` directly, so none of them goes
+      # The renders above run the service's modules from a script that builds
+      # its own copy of the browser launcher, so none of them goes
       # through the service's OWN browser factory (getSsrfSafeBrowser in
       # server.js) - the place where Chrome is pointed at the local policy
-      # proxy (ssrf-proxy.js). A broken flag there would only show in
+      # proxy (ssrf-proxy.js) - nor through its own wiring of the page fetcher.
+      # A broken flag or argument there would only show in
       # production, so drive a real /generate through the running container
       # and check the CSS arrives at a receiver on the runner.
       - name: Smoke test - real /generate through the service's own browser

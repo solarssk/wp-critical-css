@@ -1,0 +1,32 @@
+{
+	"description": "Several inline style blocks keep their order and are joined with a single newline each.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": ".s1{color:#111}"
+			},
+			{
+				"inline": ".s2{color:#222}"
+			},
+			{
+				"inline": ".s3{color:#333}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

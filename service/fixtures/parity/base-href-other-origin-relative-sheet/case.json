@@ -1,0 +1,32 @@
+{
+	"description": "Absolute <base href> on the CDN origin with a relative stylesheet href: the sheet comes from the CDN (so its url()s become absolute cdn URLs).",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"{{cdn}}/assets/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "dir.html"
+		},
+		"{{cdn}}/assets/css/b.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "b.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"css/b.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

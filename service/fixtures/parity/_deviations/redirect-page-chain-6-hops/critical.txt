@@ -1,0 +1,22 @@
+critical@8.0.0: getDocument("{{site}}/hop0", { request: {} })
+
+Outcome: css, 189 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/hop0 -> 301
+  HEAD {{site}}/hop1 -> 302
+  HEAD {{site}}/hop2 -> 301
+  HEAD {{site}}/hop3 -> 302
+  HEAD {{site}}/hop4 -> 301
+  HEAD {{site}}/hop5 -> 302
+  HEAD {{site}}/final/ -> 200
+  GET {{site}}/final/ -> 200
+  HEAD {{site}}/final/ -> 200
+  HEAD {{site}}/ -> 404
+  HEAD {{site}}/wp-content/themes/twentytest/style.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/style.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/style.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/style.css -> 200
+
+New layer: thin.kind = fail
+  The new layer follows at most 5 redirects: the sixth fails the job. critical follows it. redirect-page-chain-5-hops is the case that must still work.

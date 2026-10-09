@@ -1,0 +1,27 @@
+{
+	"description": "A dynamically generated stylesheet (style.php?ver=1) served as text/css.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/plugins/dyn/style.php?ver=1": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.php.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/plugins/dyn/style.php?ver=1"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

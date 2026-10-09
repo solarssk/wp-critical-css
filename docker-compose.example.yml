@@ -43,6 +43,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    # 1g suits ordinary pages; a site with more than ~2 MiB of CSS or HTML on a page needs more - see docs/DEPLOYMENT.md, "Memory and very large pages".
     mem_limit: 1g
     cpus: "1.0" # tune to your hardware - bounds a single render's worst case, this generator only ever runs one at a time by design
     pids_limit: 256 # generous headroom for Chrome's normal multi-process footprint, still a real ceiling

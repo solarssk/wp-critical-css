@@ -34,10 +34,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # libuv's thread pool (4 threads by default) runs every DNS lookup, fs call and
-# zlib/crypto job in the process. ssrf-proxy.js resolves each name Chrome asks
-# for there and lets at most HALF of the pool be busy with that, so a page
-# naming many slow hosts cannot starve got's lookups and the receiver POST:
-# 16 threads leave 8 for those.
+# zlib/crypto job in the process. ssrf-proxy.js resolves each name Chrome or the
+# page fetcher (page-fetch.js) asks for there and lets at most HALF of the pool
+# be busy with that, so a page naming many slow hosts cannot starve the
+# sitemap fetch's lookups and the receiver POST: 16 threads leave 8 for those.
 ENV UV_THREADPOOL_SIZE=16
 
 # The base image (built FROM a full node:*-bookworm image, which is
@@ -249,7 +249,7 @@ RUN : "${PUPPETEER_CHROME_VERSION:?PUPPETEER_CHROME_VERSION must be set to the p
 		|| { echo "ERROR: the pinned Chrome ($CHROME_BIN) did not run or did not report $PUPPETEER_CHROME_VERSION" >&2; exit 1; }; } \
 	&& sha256sum "$CHROME_BIN" \
 	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-COPY --chown=pptruser:pptruser server.js lib.js ssrf-chromium.js ssrf-proxy.js ./
+COPY --chown=pptruser:pptruser server.js lib.js ssrf-chromium.js ssrf-proxy.js stylesheets.js rebase.js page-fetch.js critical-css.js ./
 
 USER pptruser
 

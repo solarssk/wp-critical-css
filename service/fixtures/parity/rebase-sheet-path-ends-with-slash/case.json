@@ -1,0 +1,48 @@
+{
+	"description": "Stylesheet URLs whose path ends in \"/\" (a directory-style or query-only dynamic URL): same-host and CDN, with url(img/..) in each.",
+	"pageUrl": "{{site}}/blog/post/",
+	"routes": {
+		"/blog/post/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/css/": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "dir.css"
+		},
+		"/?sccss=1": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "root.css"
+		},
+		"{{cdn}}/dyn/": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "cdn-dir.css"
+		},
+		"{{cdn}}/?x=1": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "cdn-root.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/post/index.html",
+		"stylesheets": [
+			"{{site}}/css/",
+			"{{site}}/?sccss=1",
+			"{{cdn}}/dyn/",
+			"{{cdn}}/?x=1"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			"",
+			""
+		]
+	}
+}

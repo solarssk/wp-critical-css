@@ -1,0 +1,31 @@
+{
+	"description": "An XHTML page served as application/xhtml+xml with self-closing link tags.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "application/xhtml+xml; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/x.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "x.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/x.css",
+			{
+				"inline": ".xhtml-inline{color:red}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

@@ -1,0 +1,13 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: throws: The "path" argument must be of type string. Received undefined
+Message:
+  The "path" argument must be of type string. Received undefined
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+
+New layer: thin.kind = differs
+  Spec <base href> handling: the new layer resolves the stylesheet href against the base (itself resolved against the page URL), fetches /foo/css/a.css and the job succeeds. critical throws a TypeError ("path" argument must be of type string) in this situation.
+  Expected new-layer css: expected-thin.css (83 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

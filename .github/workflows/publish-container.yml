@@ -221,22 +221,14 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
 
-      # Runs the image that was just built, scanned and gated - the layers "Push image" below ships - before anything is pushed. ci.yml's real render runs a different build of the same Dockerfile that replays its apt layer from cache, so it never executes the refreshed packages this workflow pulls in (libexpat1, libssl3, ca-certificates ... are what Chrome's rendering and TLS stack load). Offline on purpose (`--network none`, the page is passed as `html`): on a release this step runs after the tag already exists, so an outage of a third-party site must not be able to fail it. The page has one rule above the fold and one far below it, so the check only passes if Chrome started AND laid the page out. Skipped on the weekly schedule, which re-scans the already-published image and builds nothing.
+      # Runs the image that was just built, scanned and gated - the layers "Push image" below ships - before anything is pushed. ci.yml's real render runs a different build of the same Dockerfile that replays its apt layer from cache, so it never executes the refreshed packages this workflow pulls in (libexpat1, libssl3, ca-certificates ... are what Chrome's rendering and TLS stack load). Offline on purpose (`--network none`, the page is passed as `html`): on a release this step runs after the tag already exists, so an outage of a third-party site must not be able to fail it. The page has one rule above the fold and one far below it, so the check only passes if Chrome started AND laid the page out (service/scripts/check-render.mjs, mode `html`; ci.yml runs the same script in mode `url`). Skipped on the weekly schedule, which re-scans the already-published image and builds nothing.
       - name: Smoke test - real Puppeteer render of the scanned image
         if: github.event_name != 'schedule'
         timeout-minutes: 3
         env:
           IMAGE: ghcr.io/${{ github.repository }}:ci-scan
         run: |
-          docker run --rm --network none "$IMAGE" node --input-type=module -e "
-          import { generate } from 'critical';
-          const html = '<!doctype html><html><head><style>.hero{color:red}.far{color:blue}</style></head><body><h1 class=hero>x</h1><div style=\"height:5000px\"></div><p class=far>y</p></body></html>';
-          const { css } = await generate({ html, inline: false, dimensions: [{ width: 412, height: 915 }], penthouse: { timeout: 30000 } });
-          const out = css.toString();
-          if (!out.includes('.hero')) { throw new Error('the above-the-fold rule is missing: ' + out); }
-          if (out.includes('.far')) { throw new Error('a rule below the fold was kept, so the page was not laid out: ' + out); }
-          console.log('Puppeteer render OK,', out.length, 'bytes of CSS');
-          "
+          docker run --rm -i --network none -e CHECK_RENDER_MODE=html "$IMAGE" node --input-type=module - < service/scripts/check-render.mjs
 
       - name: Push image
         id: push

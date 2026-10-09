@@ -1,0 +1,27 @@
+{
+	"description": "Relative href \"../wp-content/...\" from a page at /blog/post.html resolves to /wp-content/...",
+	"pageUrl": "{{site}}/blog/post.html",
+	"routes": {
+		"/blog/post.html": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/post.html",
+		"stylesheets": [
+			"../wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

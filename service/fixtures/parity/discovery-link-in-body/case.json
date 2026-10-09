@@ -1,0 +1,34 @@
+{
+	"description": "A <link rel=\"stylesheet\"> in the middle of <body> (a plugin printing late) is discovered.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/head.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "head.css"
+		},
+		"/wp-content/themes/twentytest/inbody.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "inbody.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/head.css",
+			"{{site}}/wp-content/themes/twentytest/inbody.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

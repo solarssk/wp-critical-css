@@ -1,0 +1,35 @@
+{
+	"description": "Location carries a new query string: /old?x=1 -> /new/?y=2.",
+	"pageUrl": "{{site}}/old?x=1",
+	"routes": {
+		"/old?x=1": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to /new/?y=2",
+			"headers": {
+				"location": "/new/?y=2"
+			}
+		},
+		"/new/?y=2": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/new/index.html",
+		"stylesheets": [
+			"/wp-content/themes/twentytest/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

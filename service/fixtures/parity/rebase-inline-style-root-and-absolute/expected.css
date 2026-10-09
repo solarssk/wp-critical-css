@@ -1,0 +1,7 @@
+
+.rb1{background:url(/img/a.png)}
+.rb2{background:url(http://127.0.0.1:18981/img/b.png)}
+.rb3{background:url(http://127.0.0.1:18982/c.png)}
+.rb4{background:url(//127.0.0.1:18982/d.png)}
+.rb5{background:url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)}
+.rb6{filter:url(#f)}

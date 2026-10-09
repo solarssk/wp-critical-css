@@ -1,0 +1,31 @@
+{
+	"description": "A <style> element inside an inline <svg> is discovered like an HTML one.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/real.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "real.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/real.css",
+			{
+				"inline": ".svg-style{fill:red}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

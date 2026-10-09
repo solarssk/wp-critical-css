@@ -1,0 +1,8 @@
+/* crlf sheet */
+.a{
+	color:red;
+	background:url(wp-content/themes/img/a.png)
+}
+
+/* fixture sheet: lf */
+.lf{display:block;margin:0 auto;color:#1d4ed8}

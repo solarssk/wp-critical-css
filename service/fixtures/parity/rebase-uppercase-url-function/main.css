@@ -1,0 +1,4 @@
+/* rebase: rebase-uppercase-url-function */
+.rb1{background:URL(../img/a.png)}
+.rb2{background:Url("../img/b.png")}
+.rb3{background:uRl(img/c.png)}

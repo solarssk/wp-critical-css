@@ -1,0 +1,22 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 157 bytes, 3 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{cdn}}/assets/css/nohead.css -> 405
+  HEAD {{site}}/ -> 200
+  HEAD {{cdn}}/assets/css/nohead.css -> 405
+  HEAD {{cdn}}/assets/css/nohead.css -> 405
+  HEAD {{cdn}}/assets/css/nohead.css -> 405
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/after.css -> 200
+
+New layer: thin.kind = differs
+  The new layer sends GET only, so the sheet is fetched and included (expected-thin.css).
+  Expected new-layer css: expected-thin.css (245 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

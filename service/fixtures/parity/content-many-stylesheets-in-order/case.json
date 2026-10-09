@@ -1,0 +1,195 @@
+{
+	"description": "Twenty-five stylesheets: document order is preserved in the joined css.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/m01.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m01.css"
+		},
+		"/wp-content/themes/twentytest/m02.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m02.css"
+		},
+		"/wp-content/themes/twentytest/m03.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m03.css"
+		},
+		"/wp-content/themes/twentytest/m04.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m04.css"
+		},
+		"/wp-content/themes/twentytest/m05.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m05.css"
+		},
+		"/wp-content/themes/twentytest/m06.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m06.css"
+		},
+		"/wp-content/themes/twentytest/m07.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m07.css"
+		},
+		"/wp-content/themes/twentytest/m08.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m08.css"
+		},
+		"/wp-content/themes/twentytest/m09.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m09.css"
+		},
+		"/wp-content/themes/twentytest/m10.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m10.css"
+		},
+		"/wp-content/themes/twentytest/m11.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m11.css"
+		},
+		"/wp-content/themes/twentytest/m12.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m12.css"
+		},
+		"/wp-content/themes/twentytest/m13.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m13.css"
+		},
+		"/wp-content/themes/twentytest/m14.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m14.css"
+		},
+		"/wp-content/themes/twentytest/m15.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m15.css"
+		},
+		"/wp-content/themes/twentytest/m16.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m16.css"
+		},
+		"/wp-content/themes/twentytest/m17.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m17.css"
+		},
+		"/wp-content/themes/twentytest/m18.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m18.css"
+		},
+		"/wp-content/themes/twentytest/m19.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m19.css"
+		},
+		"/wp-content/themes/twentytest/m20.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m20.css"
+		},
+		"/wp-content/themes/twentytest/m21.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m21.css"
+		},
+		"/wp-content/themes/twentytest/m22.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m22.css"
+		},
+		"/wp-content/themes/twentytest/m23.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m23.css"
+		},
+		"/wp-content/themes/twentytest/m24.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m24.css"
+		},
+		"/wp-content/themes/twentytest/m25.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "m25.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/m01.css",
+			"{{site}}/wp-content/themes/twentytest/m02.css",
+			"{{site}}/wp-content/themes/twentytest/m03.css",
+			"{{site}}/wp-content/themes/twentytest/m04.css",
+			"{{site}}/wp-content/themes/twentytest/m05.css",
+			"{{site}}/wp-content/themes/twentytest/m06.css",
+			"{{site}}/wp-content/themes/twentytest/m07.css",
+			"{{site}}/wp-content/themes/twentytest/m08.css",
+			"{{site}}/wp-content/themes/twentytest/m09.css",
+			"{{site}}/wp-content/themes/twentytest/m10.css",
+			"{{site}}/wp-content/themes/twentytest/m11.css",
+			"{{site}}/wp-content/themes/twentytest/m12.css",
+			"{{site}}/wp-content/themes/twentytest/m13.css",
+			"{{site}}/wp-content/themes/twentytest/m14.css",
+			"{{site}}/wp-content/themes/twentytest/m15.css",
+			"{{site}}/wp-content/themes/twentytest/m16.css",
+			"{{site}}/wp-content/themes/twentytest/m17.css",
+			"{{site}}/wp-content/themes/twentytest/m18.css",
+			"{{site}}/wp-content/themes/twentytest/m19.css",
+			"{{site}}/wp-content/themes/twentytest/m20.css",
+			"{{site}}/wp-content/themes/twentytest/m21.css",
+			"{{site}}/wp-content/themes/twentytest/m22.css",
+			"{{site}}/wp-content/themes/twentytest/m23.css",
+			"{{site}}/wp-content/themes/twentytest/m24.css",
+			"{{site}}/wp-content/themes/twentytest/m25.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			""
+		]
+	}
+}

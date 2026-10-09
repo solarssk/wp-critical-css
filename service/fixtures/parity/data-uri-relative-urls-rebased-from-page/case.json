@@ -1,0 +1,24 @@
+{
+	"description": "url() inside a data: stylesheet is rebased as if the css lived next to the page (<page path>.css); page is nested.",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			{
+				"inline": ".d1{background:url(img/a.png)}\n.d2{background:url(../img/b.png)}\n.d3{background:url(/img/c.png)}\n"
+			}
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,14 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 93 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/x.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/x.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/x.css -> 200
+
+New layer: thin.kind = differs
+  The new layer never reads or writes a source map (postcss runs with map: false, so no local file is ever looked up), and postcss then deletes the sourceMappingURL comment from the css; the license block and the ordinary comment stay. expected-thin.css is critical's own output for the same sheet without that comment (the comment is the last line of the sheet, so nothing else moves).
+  Expected new-layer css: expected-thin.css (55 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

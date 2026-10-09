@@ -1,0 +1,4 @@
+/* fixture sheet: r301slash */
+.r301slash-a{background:url(img/b.png)}
+.r301slash-b{background:url(../img/a.png)}
+.r301slash-c{background:url(/img/c.png)}

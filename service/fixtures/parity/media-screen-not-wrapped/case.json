@@ -1,0 +1,27 @@
+{
+	"description": "media=\"screen\" is kept and NOT wrapped in @media.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/scr.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "scr.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/scr.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

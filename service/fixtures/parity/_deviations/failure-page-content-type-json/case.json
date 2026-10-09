@@ -1,0 +1,22 @@
+{
+	"description": "The page URL answers 200 with application/json (an API endpoint): critical parses it as HTML and finds nothing.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "application/json",
+			"file": "page.html"
+		}
+	},
+	"thin": {
+		"kind": "fail",
+		"note": "The page content-type must be html or xhtml, so anything else (JSON here) fails the job."
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [],
+		"stylesheetsMedia": []
+	}
+}

@@ -1,0 +1,35 @@
+{
+	"description": "A same-host stylesheet URL redirects (302) to the CDN: the sheet is rebased against the FINAL (cdn) URL, so its relative url()s become absolute cdn URLs.",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/cache/combined.css": {
+			"status": 302,
+			"type": "text/plain; charset=UTF-8",
+			"body": "Redirecting to {{cdn}}/assets/css/combined.css",
+			"headers": {
+				"location": "{{cdn}}/assets/css/combined.css"
+			}
+		},
+		"{{cdn}}/assets/css/combined.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "combined.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/cache/combined.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,27 @@
+{
+	"description": "Relative href with more ../ than the page has directories (\"../../x.css\" at /post.html).",
+	"pageUrl": "{{site}}/post.html",
+	"routes": {
+		"/post.html": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/x.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "x.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/post.html",
+		"stylesheets": [
+			"../../x.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

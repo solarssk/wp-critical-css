@@ -1,0 +1,4 @@
+/* fixture sheet: rabs */
+.rabs-a{background:url(img/b.png)}
+.rabs-b{background:url(../img/a.png)}
+.rabs-c{background:url(/img/c.png)}

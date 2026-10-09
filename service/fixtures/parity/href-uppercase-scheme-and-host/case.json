@@ -1,0 +1,27 @@
+{
+	"description": "Upper-case scheme and host (HTTP://127.0.0.1:...): normalised by the URL parser.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/upper.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "upper.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"HTTP://{{site_host}}/wp-content/themes/twentytest/upper.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

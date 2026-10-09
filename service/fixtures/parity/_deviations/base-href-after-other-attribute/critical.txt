@@ -1,0 +1,16 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 105 bytes, 1 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/ -> 200
+  HEAD {{site}}/css/a.css -> 200
+  HEAD {{site}}/css/a.css -> 200
+  HEAD {{site}}/css/a.css -> 200
+  GET {{site}}/css/a.css -> 200
+
+New layer: thin.kind = differs
+  Spec <base href> handling: the base is honoured wherever href sits in the attribute list, so the sheet is fetched from /foo/css/a.css (expected-thin.css). critical resolves the href against the page directory instead and fetches /css/a.css (expected.css).
+  Expected new-layer css: expected-thin.css (105 bytes) = critical's own output for this page when the routes listed in thin.derive are changed.

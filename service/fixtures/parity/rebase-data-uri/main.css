@@ -1,0 +1,4 @@
+/* rebase: rebase-data-uri */
+.rb1{background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'><rect width='1' height='1'/></svg>")}
+.rb2{background:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==)}
+.rb3{background:url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)}

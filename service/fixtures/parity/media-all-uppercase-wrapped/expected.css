@@ -1,0 +1,6 @@
+@media ALL { /* fixture sheet: upall */
+.upall{display:block;margin:0 auto;color:#1d4ed8}
+ }
+@media Screen { /* fixture sheet: upscreen */
+.upscreen{display:block;margin:0 auto;color:#1d4ed8}
+ }

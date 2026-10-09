@@ -1,0 +1,1 @@
+.price::after{content:"$<name> $<1>"}

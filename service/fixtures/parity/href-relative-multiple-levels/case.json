@@ -1,0 +1,41 @@
+{
+	"description": "Relative hrefs of different depth from a page at /a/b/c/: \"../../up.css\" and \"same.css\" and \"../sib/x.css\".",
+	"pageUrl": "{{site}}/a/b/c/",
+	"routes": {
+		"/a/b/c/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/a/up.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "up.css"
+		},
+		"/a/b/c/same.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "same.css"
+		},
+		"/a/b/sib/x.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "x.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/a/b/c/index.html",
+		"stylesheets": [
+			"../../up.css",
+			"same.css",
+			"../sib/x.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

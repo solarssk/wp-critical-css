@@ -1,0 +1,31 @@
+{
+	"description": "A data: stylesheet with an invalid base64 payload: what critical does (decoded leniently or throws).",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/real.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "real.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			{
+				"inline": "��~m�\u001e�"
+			},
+			"{{site}}/wp-content/themes/twentytest/real.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

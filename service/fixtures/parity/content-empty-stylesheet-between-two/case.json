@@ -1,0 +1,41 @@
+{
+	"description": "A 0-byte stylesheet between two others contributes an empty element to the join.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/first.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "first.css"
+		},
+		"/wp-content/themes/twentytest/empty.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "empty.css"
+		},
+		"/wp-content/themes/twentytest/last.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "last.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/first.css",
+			"{{site}}/wp-content/themes/twentytest/empty.css",
+			"{{site}}/wp-content/themes/twentytest/last.css"
+		],
+		"stylesheetsMedia": [
+			"",
+			"",
+			""
+		]
+	}
+}

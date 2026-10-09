@@ -1,0 +1,27 @@
+{
+	"description": "href=\"...?a=1&amp;b=2\" is entity-decoded by the parser before it is fetched.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/amp.css?a=1&b=2": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "amp.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/amp.css?a=1&b=2"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

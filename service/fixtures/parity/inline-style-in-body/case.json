@@ -1,0 +1,31 @@
+{
+	"description": "An inline <style> in the body (printed late by a plugin) is discovered.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/head.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "head.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/head.css",
+			{
+				"inline": ".in-body{margin:0}"
+			}
+		],
+		"stylesheetsMedia": [
+			"",
+			""
+		]
+	}
+}

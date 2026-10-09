@@ -1,0 +1,49 @@
+critical@8.0.0: getDocument("{{site}}/", { request: {} })
+
+Outcome: css, 158 bytes, 3 stylesheet(s) discovered
+
+Requests critical made, in order (method url -> status the fixture server answered):
+  HEAD {{site}}/ -> 200
+  GET {{site}}/ -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/before.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/before.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop2.css -> 302
+  GET {{site}}/wp-content/themes/twentytest/loop.css -> 302
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  HEAD {{site}}/wp-content/themes/twentytest/after.css -> 200
+  GET {{site}}/wp-content/themes/twentytest/after.css -> 200
+
+New layer: thin.kind = fail
+  A failed stylesheet on the page's own host fails the whole job (decision: shipping critical css that silently lacks the owner's own rules is worse than shipping none). (In these fixtures {{site}} and {{cdn}} share the hostname 127.0.0.1 and differ only by port: the stylesheet same-host rule compares hostname:port with the scheme ignored, the notion the url() rebasing uses.)

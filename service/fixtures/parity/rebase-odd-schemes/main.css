@@ -1,0 +1,8 @@
+/* rebase: rebase-odd-schemes */
+.rb1{background:url(mailto:someone@example.invalid)}
+.rb2{background:url(tel:+15550100)}
+.rb3{background:url(javascript:void(0))}
+.rb4{background:url(about:blank)}
+.rb5{background:url(blob:http://example.invalid/uuid)}
+.rb6{background:url(ftp://files.example.invalid/a.png)}
+.rb7{background:url(chrome://theme/x)}

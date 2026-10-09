@@ -1,0 +1,27 @@
+{
+	"description": "The sheet sits at the site root (/style.css): ../ climbs above the root.",
+	"pageUrl": "{{site}}/blog/hello-world/",
+	"routes": {
+		"/blog/hello-world/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/style.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "style.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/blog/hello-world/index.html",
+		"stylesheets": [
+			"{{site}}/style.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

@@ -1,0 +1,4 @@
+/* rebase: rebase-important-and-vendor-prefixes */
+.rb1{background-image:url(../img/a.png)!important}
+.rb2{-webkit-mask-image:url(../img/m.svg);mask-image:url(../img/m.svg)}
+.rb3{border-image:url(../img/b.png) 30 round}

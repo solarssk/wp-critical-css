@@ -1,0 +1,32 @@
+{
+	"description": "media=\"print\" with an empty onload attribute is dropped.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/keep.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "keep.css"
+		},
+		"/wp-content/themes/twentytest/emptyonload.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "emptyonload.css"
+		}
+	},
+	"expect": {
+		"kind": "css",
+		"cssFile": "expected.css",
+		"virtualPath": "/index.html",
+		"stylesheets": [
+			"{{site}}/wp-content/themes/twentytest/keep.css"
+		],
+		"stylesheetsMedia": [
+			""
+		]
+	}
+}

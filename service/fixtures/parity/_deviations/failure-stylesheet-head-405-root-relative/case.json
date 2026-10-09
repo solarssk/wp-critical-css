@@ -1,0 +1,45 @@
+{
+	"description": "The server rejects HEAD (405) for a ROOT-RELATIVE stylesheet: critical throws FileNotFoundError for the whole job although GET would work.",
+	"pageUrl": "{{site}}/",
+	"routes": {
+		"/": {
+			"status": 200,
+			"type": "text/html; charset=UTF-8",
+			"file": "page.html"
+		},
+		"/wp-content/themes/twentytest/nohead.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "nohead.css",
+			"head": {
+				"status": 405
+			}
+		},
+		"/wp-content/themes/twentytest/before.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "before.css"
+		},
+		"/wp-content/themes/twentytest/after.css": {
+			"status": 200,
+			"type": "text/css; charset=UTF-8",
+			"file": "after.css"
+		}
+	},
+	"thin": {
+		"kind": "differs",
+		"note": "The new layer sends GET only, so the sheet is fetched and the job succeeds (expected-thin.css).",
+		"derive": {
+			"routes": {
+				"/wp-content/themes/twentytest/nohead.css": {
+					"head": null
+				}
+			}
+		},
+		"cssFile": "expected-thin.css"
+	},
+	"expect": {
+		"kind": "error",
+		"message": "Error: File not found: /wp-content/themes/twentytest/nohead.css\n       Current working directory: <cwd>\n       Searched in: {{site}}/, <cwd>"
+	}
+}
