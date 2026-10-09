@@ -50,6 +50,13 @@ function getBrowser() {
 	browserPromise ??= launchGuardedBrowser();
 	return browserPromise;
 }
+// penthouse closes the browser it was handed once its jobs are done; this is for a failure on the way there. Read here, in a function of
+// its own, because getBrowser() is what assigns browserPromise (an analyser reading it at the top level only sees the initial null).
+async function closeBrowserIfLaunched() {
+	if (browserPromise) {
+		await (await browserPromise).close();
+	}
+}
 
 let results;
 let failure = null;
@@ -64,11 +71,8 @@ try {
 } catch (error) {
 	failure = error;
 } finally {
-	// penthouse closes the browser it was handed once its jobs are done; this is for a failure on the way there.
 	try {
-		if (browserPromise) {
-			await (await browserPromise).close();
-		}
+		await closeBrowserIfLaunched();
 	} catch {
 		// the launch failed or the browser is gone already: nothing left to close
 	}
