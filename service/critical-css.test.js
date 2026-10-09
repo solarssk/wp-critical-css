@@ -1,7 +1,7 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import fs, { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import { execFile } from 'node:child_process';
 import http from 'node:http';
 import net from 'node:net';
 import { Worker } from 'node:worker_threads';
+import CleanCSS from 'clean-css';
 import fc from 'fast-check';
 import { PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE } from 'penthouse-esm';
 import postcss from 'postcss';
@@ -67,6 +68,29 @@ after(async () => {
 	await rm(scratch, { recursive: true, force: true });
 });
 const leftovers = () => readdir(scratch);
+
+/**
+ * Runs `work`, gives the event loop two turns for a rejection that nobody handles to surface, and returns every one it saw. The
+ * service has no handler of its own for these, so each one is the end of the process; here the runner's own listeners are put
+ * aside while the window is open, so that what is counted does not also fail whatever test happens to be running.
+ */
+async function unhandledRejectionsDuring(work) {
+	const seen = [];
+	const saved = process.listeners('unhandledRejection');
+	process.removeAllListeners('unhandledRejection');
+	process.on('unhandledRejection', (reason) => seen.push(reason));
+	try {
+		await work();
+		await new Promise((resolve) => setImmediate(resolve));
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	} finally {
+		process.removeAllListeners('unhandledRejection');
+		for (const listener of saved) {
+			process.on('unhandledRejection', listener);
+		}
+	}
+	return seen;
+}
 
 /** A log that records its calls; `lines` has all of them in order. */
 function recordingLog() {
@@ -410,6 +434,30 @@ describe('loadDocument: arguments', () => {
 		await failsWith(loadDocument({ html: markup('<style>.a{}</style>'), limits: { layoutBytes: 0 } }), 'LAYOUT_TOO_LARGE'); // 0 is a limit like any other
 		const unlimited = await loadDocument({ html: markup('<style>.a{}</style>'), limits: { maxSheets: Number.POSITIVE_INFINITY, layoutBytes: Number.POSITIVE_INFINITY } });
 		assert.equal(unlimited.cssString, '.a{}');
+	});
+
+	test('the refusal names the limit and shows the value it got, escaped; the first bad one is the one named', QUICK, async () => {
+		const rows = [
+			[{ maxSheets: Number.NaN }, 'maxSheets', 'null'],
+			[{ totalCssBytes: -1 }, 'totalCssBytes', '-1'],
+			[{ cssBytes: undefined }, 'cssBytes', 'undefined'],
+			[{ loadMs: '60000' }, 'loadMs', '"60000"'],
+			[{ layoutBytes: null }, 'layoutBytes', 'null'],
+			[{ rewriteWork: `${BIDI_OVERRIDE}9` }, 'rewriteWork', '"\\u202e9"'],
+			[{ maxSheets: -2, loadMs: -3 }, 'maxSheets', '-2'],
+		];
+		for (const [limits, name, shown] of rows) {
+			await assert.rejects(loadDocument({ html: markup(), limits }), { name: 'TypeError', message: `loadDocument: limits.${name} must be a non-negative number, got ${shown}` }, JSON.stringify(limits));
+		}
+	});
+
+	test('the caller\'s limits are laid over the defaults, key by key: what is not named keeps its default', QUICK, async () => {
+		const sheets = (count) => Array.from({ length: count }, (_, index) => `<style>.s${index}{}</style>`).join('');
+		await failsWith(loadDocument({ html: markup(sheets(3)), limits: { maxSheets: 2 } }), 'TOO_MANY_STYLESHEETS');
+		assert.equal((await loadDocument({ html: markup(sheets(2)), limits: { maxSheets: 2 } })).cssString, '.s0{}\n.s1{}');
+		assert.equal((await loadDocument({ html: markup(sheets(101)), limits: { maxSheets: 101 } })).cssString.split('\n').length, 101);
+		await failsWith(loadDocument({ html: markup(sheets(101)), limits: {} }), 'TOO_MANY_STYLESHEETS'); // the default is still 100
+		await failsWith(loadDocument({ html: markup(sheets(101)) }), 'TOO_MANY_STYLESHEETS');
 	});
 
 	test('a page URL needs a host pin: none is assumed, so a forgotten one cannot silently allow every host', QUICK, async () => {
@@ -1185,6 +1233,103 @@ describe('loadDocument: a stylesheet postcss cannot process', () => {
 	});
 });
 
+describe('loadDocument: a url() in a stylesheet cannot end the process, whoever serves the sheet', () => {
+	// The shapes: a reference the URL parser refuses (`http:[`) and, after it, one that postcss-url's own parsing refuses
+	// (`http://[::1/`, an unclosed IPv6 literal: node:url throws for it on Node 24 and on Node 26 alike). Rewriting the first starts a promise that
+	// rejects; the second makes postcss-url throw before it has kept that promise.
+	const PAIR = 'a{b:url(http:[)} c{d:url(http://[::1/)}';
+
+	for (const [where, sheetUrl] of [
+		['on another host', 'https://cdn.test/a/b.css'],
+		['on the page host', 'http://site.test/a/b.css'],
+	]) {
+		test(`${where}: the sheet is left out like any it cannot process, and nothing is left rejecting`, QUICK, async () => {
+			const { load, log } = loaderFor({ 'http://site.test/': htmlPage(markup(link(sheetUrl))), [sheetUrl]: cssSheet(PAIR) });
+			let doc;
+			const rejections = await unhandledRejectionsDuring(async () => {
+				doc = await load('http://site.test/');
+			});
+			assert.deepEqual(rejections, []);
+			assert.equal(doc.cssString, '');
+			assert.equal(doc.layoutHtml, undefined);
+			assert.equal(log.infos.length, 1);
+			assert.match(log.infos[0], /could not be processed and is left out of the critical CSS/);
+			assert.deepEqual(log.warnings, []);
+		});
+	}
+
+	test('on another host a reference the URL parser refuses stays as written, beside the others that are rebased', QUICK, async () => {
+		const { load, log } = loaderFor({
+			'http://site.test/': htmlPage(markup(link('https://cdn.test/a/b.css'))),
+			'https://cdn.test/a/b.css': cssSheet('a{b:url(http:[)} c{d:url(ok.png)}'),
+		});
+		let doc;
+		const rejections = await unhandledRejectionsDuring(async () => {
+			doc = await load('http://site.test/');
+		});
+		assert.deepEqual(rejections, []);
+		assert.equal(doc.cssString, 'a{b:url(http:[)} c{d:url(https://cdn.test/a/ok.png)}');
+		assert.deepEqual(log.lines, []);
+	});
+
+	test('a fresh process with no handler of its own, as the service runs, is still there after the pair', { timeout: 30_000 }, async () => {
+		// The unit tests above count what would be unhandled; this is the consequence: without a listener, node ends the process on one.
+		const script = `
+			import { loadDocument } from ${JSON.stringify(new URL('./critical-css.js', import.meta.url).href)};
+			const page = '<!doctype html><html><head><link rel=stylesheet href="https://cdn.test/a/b.css"></head><body>x</body></html>';
+			const fetcher = { async fetchText(url, { kind }) { return { finalUrl: new URL(url), status: 200, contentType: kind === 'html' ? 'text/html' : 'text/css', text: kind === 'html' ? page : ${JSON.stringify(PAIR)}, hops: 0 }; } };
+			const doc = await loadDocument({ url: 'http://site.test/', fetcher, isPageHostAllowed: () => true, log: { warn() {}, info() {} } });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			console.log(JSON.stringify({ listeners: process.listenerCount('unhandledRejection'), css: doc.cssString }));`;
+		const output = await new Promise((resolve, reject) => {
+			execFile(process.execPath, ['--input-type=module', '-e', script], { timeout: 20_000, encoding: 'utf8' }, (error, stdout, stderr) => (error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout)));
+		});
+		assert.deepEqual(JSON.parse(output), { listeners: 0, css: '' });
+	});
+});
+
+describe('loadDocument: a $ in what the page chose never becomes a command for the url rewriter', () => {
+	const urls = Array.from({ length: 10 }, () => 'url(x.png)').join(' ');
+	const css = `a{b:${urls} ${'z'.repeat(900)}}`;
+
+	test('in the path of a stylesheet, on the page host and on another: the same file, written with %24, at the size it was', QUICK, async () => {
+		const directory = "$'".repeat(7);
+		const written = "%24'".repeat(7);
+		const { load, log } = loaderFor({
+			'http://site.test/p/': htmlPage(markup(`${link(`http://site.test/${directory}/s.css`)}${link(`https://cdn.test/${directory}/c.css`)}`)),
+			[`http://site.test/${directory}/s.css`]: cssSheet(css),
+			[`https://cdn.test/${directory}/c.css`]: cssSheet(css),
+		});
+		const doc = await load('http://site.test/p/');
+		assert.deepEqual(log.lines, []);
+		assert.equal(doc.cssString, [css.replaceAll('url(x.png)', `url(../${written}/x.png)`), css.replaceAll('url(x.png)', `url(https://cdn.test/${written}/x.png)`)].join('\n'));
+	});
+
+	test('in the path of the page: an inline sheet is a file next to its page, and the part they share is the same part', QUICK, async () => {
+		const { load, log } = loaderFor({
+			'http://site.test/$&/q/': htmlPage(markup(`<style>.a{background:url(i.png)}</style>${link('/$&/q/s.css')}`)),
+			'http://site.test/$&/q/s.css': cssSheet('.b{background:url(j.png)}'),
+		});
+		const doc = await load('http://site.test/$&/q/');
+		assert.deepEqual(log.lines, []);
+		assert.equal(doc.cssString, '.a{background:url(i.png)}\n.b{background:url(j.png)}');
+	});
+
+	test('a stylesheet whose host name holds a $ cannot be written safely: it is left out with an info line, the others are kept', QUICK, async () => {
+		const sheetUrl = "https://a$'b.cdn.test/s.css";
+		const { load, log } = loaderFor({
+			'http://site.test/': htmlPage(markup(`${link(sheetUrl)}${link('/own.css')}`)),
+			[sheetUrl]: cssSheet(css),
+			'http://site.test/own.css': cssSheet('.own{color:red}'),
+		});
+		const doc = await load('http://site.test/');
+		assert.equal(doc.cssString, '\n.own{color:red}');
+		assert.deepEqual(log.warnings, []);
+		assert.equal(log.infos.length, 1);
+		assert.match(log.infos[0], /^\[critical-css\] the stylesheet "https:\/\/a\$'b\.cdn\.test\/s\.css" could not be processed and is left out of the critical CSS: "the host name of the stylesheet contains a \\"\$\\"/);
+	});
+});
+
 describe('loadDocument over the real thing: fetcher, undici client and policy proxy, against a loopback origin', () => {
 	// Nothing is faked but the DNS answers and the last hop: names resolve to public addresses (injected lookup) and the proxy's dial is
 	// redirected (injected connect) to a loopback origin, so a request really goes client -> CONNECT tunnel -> proxy -> origin.
@@ -1612,6 +1757,107 @@ describe('renderViewport', () => {
 		await renderViewport(await docWith(), { dimension: MOBILE, penthouseImpl: async () => Promise.reject(new Error(PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE)) });
 		assert.equal(warn.mock.callCount(), 2);
 		assert.match(warn.mock.calls[1].arguments[0], /^\[critical-css\] the page unloaded itself/);
+	});
+});
+
+/** Every path the file system functions clean-css uses were asked about, while `work` ran. */
+async function pathsAskedAbout(t, work) {
+	const spies = ['existsSync', 'statSync', 'readFileSync'].map((name) => t.mock.method(fs, name));
+	try {
+		await work();
+	} finally {
+		for (const spy of spies) {
+			spy.mock.restore();
+		}
+	}
+	return spies.flatMap((spy) => spy.mock.calls.map((call) => String(call.arguments[0])));
+}
+
+describe('renderViewport: the minifier never reads a file', () => {
+	const imported = '.from-the-imported-file{color:green}';
+	let directory;
+	let reference;
+	before(async () => {
+		directory = await mkdtemp(path.join(scratch, 'import-'));
+		await writeFile(path.join(directory, 'imported.css'), imported);
+		// clean-css resolves a local @import against the working directory of the process, so this is how an @import names the file from there
+		reference = path.relative(process.cwd(), path.join(directory, 'imported.css'));
+	});
+	after(async () => {
+		await rm(directory, { recursive: true, force: true });
+	});
+
+	for (const [name, rule] of [
+		['@import url(...)', () => `@import url(${reference});`],
+		['@import "..."', () => `@import "${reference}";`],
+	]) {
+		test(`${name} of a file that exists is not inlined, the file is not even looked at, and the rule stays as written`, QUICK, async (t) => {
+			const input = `${rule()}.a{color:red}`;
+			let styles;
+			const asked = await pathsAskedAbout(t, async () => {
+				styles = await renderViewport(await loadDocument({ html: markup('<style>.hero{color:red}</style>') }), { dimension: MOBILE, penthouseImpl: fakePenthouse(input) });
+			});
+			assert.equal(styles, `@import url(${reference});.a{color:red}`);
+			assert.ok(!styles.includes('from-the-imported-file'));
+			assert.deepEqual(
+				asked.filter((asked) => asked.includes('imported.css')),
+				[],
+				'neither existsSync, statSync nor readFileSync was asked about it',
+			);
+		});
+	}
+
+	test('the control: with the default settings the same minifier reads that file and puts it into the css, and the spies see it', QUICK, async (t) => {
+		let styles;
+		const asked = await pathsAskedAbout(t, async () => {
+			styles = new CleanCSS({ level: 1 }).minify(`@import url(${reference});.a{color:red}`).styles;
+		});
+		assert.equal(styles, `${imported}.a{color:red}`);
+		assert.ok(
+			asked.some((entry) => entry.endsWith('imported.css')),
+			`the spies saw: ${asked.length} calls`,
+		);
+	});
+
+	test('a remote @import is left alone either way (nothing is fetched), and the css around the rule is minified as before', QUICK, async () => {
+		const css = await renderViewport(await loadDocument({ html: markup('<style>.hero{color:red}</style>') }), { dimension: MOBILE, penthouseImpl: fakePenthouse('@import url(https://fonts.test/f.css);a { color : #00ff00 }') });
+		assert.equal(css, '@import url(https://fonts.test/f.css);a{color:#0f0}');
+	});
+});
+
+describe('renderViewport: the minifier fetches nothing', () => {
+	// The service calls clean-css's synchronous API, which cannot fetch; the callback (asynchronous) API can. clean-css's own default inlines
+	// LOCAL files only, so for a REMOTE rule `inline: false` is not what keeps the server quiet today: this pins the result, so that a setting
+	// that turns remote inlining on (`inline: ['all']`) fails here, whichever API is used. CLEAN_CSS_OPTIONS is not exported, and copying
+	// its numbers here would test the copy: the instance the service built is caught on its way through renderViewport() and used as it is.
+	test('a remote @import is not fetched, not even by the asynchronous API on the very instance the service minifies with (the control, with remote inlining on, fetches)', QUICK, async (t) => {
+		let hits = 0;
+		const server = http.createServer((_request, response) => {
+			hits += 1;
+			response.writeHead(200, { 'content-type': 'text/css' });
+			response.end('.fetched{color:blue}');
+		});
+		await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+		t.after(() => {
+			server.closeAllConnections(); // clean-css asks through the global agent, which keeps the connection alive
+			return new Promise((resolve) => server.close(resolve));
+		});
+		const input = `@import url(http://127.0.0.1:${server.address().port}/f.css);.a{color:red}`;
+		const minify = CleanCSS.prototype.minify;
+		const instances = [];
+		t.mock.method(CleanCSS.prototype, 'minify', function catching(...args) {
+			instances.push(this);
+			return minify.apply(this, args);
+		});
+		const styles = await renderViewport(await loadDocument({ html: markup('<style>.hero{color:red}</style>') }), { dimension: MOBILE, penthouseImpl: fakePenthouse(input) });
+		assert.equal(styles, input);
+		assert.equal(instances.length, 1, 'renderViewport minified once');
+		const asynchronous = await new Promise((resolve) => minify.call(instances[0], input, (errors, output) => resolve({ errors, output })));
+		assert.equal(asynchronous.output.styles, input);
+		assert.equal(hits, 0, 'neither API asked the server for the file');
+		const control = await new Promise((resolve) => new CleanCSS({ inline: ['remote'] }).minify(input, (errors, output) => resolve(output)));
+		assert.equal(hits, 1, 'the control: the same rule, with remote inlining on, does reach the server');
+		assert.equal(control.styles, '.fetched{color:#00f}.a{color:red}');
 	});
 });
 

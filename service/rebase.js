@@ -60,12 +60,34 @@ const fromPathOf = (stylepath) => (stylepath.endsWith('/') ? `${stylepath}temp.c
 // The same for the page; a sheet on another host ignores it, every reference being resolved against the sheet's URL.
 const toPathOf = (virtualPath) => (virtualPath.endsWith('/') ? `${virtualPath}temp.html` : virtualPath);
 
+// postcss-url writes every rewritten reference into the declaration with String#replace and the new reference as its replacement
+// TEMPLATE, in which `$&`, `$'`, `` $` `` and `$1` are commands, not text (a quirk the parity fixtures pin for the declaration's OWN
+// text, and costGuard() bounds). The paths handed to it come from URLs the page chose and no guard counts a `$` in them, so the
+// character is written as %24 before it gets anywhere near postcss-url: the same character in a URL, and no command in a template.
+const literalDollars = (text) => text.replaceAll('$', '%24');
+
 /**
  * What postcss-url does with every url() of a stylesheet that lives on another host: a relative reference becomes
  * absolute, resolved against the stylesheet's own URL (a page-relative one would point at the page's host); one that
  * is remote already is returned as it was written, not normalised.
+ *
+ * It never throws and never rejects. postcss-url runs it inside a promise of its own and keeps that promise only until
+ * the next declaration is read: when postcss-url itself fails on a LATER reference (it parses every reference with
+ * node:url, which refuses some), the earlier promise has no handler left, and a rejection that nobody handles ends the
+ * process. A reference that cannot be resolved (`http:[` and the like: the URL parser refuses it) is therefore left
+ * alone, exactly as it was written: `undefined` is postcss-url's word for "keep this one", and it is a url the browser
+ * could not load either way.
  */
-const absolutizeAgainst = (stylesheetUrl) => (asset) => (isRemoteReference(asset.originUrl) ? asset.originUrl : new URL(asset.originUrl, stylesheetUrl).href);
+const absolutizeAgainst = (stylesheetUrl) => (asset) => {
+	if (isRemoteReference(asset.originUrl)) {
+		return asset.originUrl;
+	}
+	try {
+		return new URL(asset.originUrl, stylesheetUrl).href;
+	} catch {
+		return undefined;
+	}
+};
 
 // What postcss-url rewrites: `url(` (case-sensitive: `URL(` is not recognised) and the legacy `AlphaImageLoader(src=`.
 // Every rewrite starts with one of these, in a declaration, and no two rewrites share one.
@@ -175,7 +197,9 @@ function rewriteWork(value, rewrites) {
  *   result can double with every such sequence, so a few hundred bytes of css ask for gigabytes (`url($')` repeated 20
  *   times is 152 MB; 30 KB of `$&` in one url() is 450 MB). Each `$` can do that at most once, whatever else it is
  *   next to. The parity fixtures pin the expansion of a single `$&`, so it stays; what cannot stay is how far it can
- *   run. A declaration without a rewritable reference is not touched, whatever it contains.
+ *   run. A declaration without a rewritable reference is not touched, whatever it contains. Only the declaration's
+ *   own `$` count: the ones in the stylesheet's URL or the page's path never reach postcss-url (see literalDollars()),
+ *   which is what keeps this count the whole of it.
  *
  * What the bound leaves out: the percent-encoding of the references themselves (a byte that is encoded becomes three), so
  * the result can exceed it, by at most twice the size of the sheet times the factor above; the caller's check on the real
@@ -212,7 +236,7 @@ function costGuard({ sheetBytes, maxBytes, growth, maxWork, onWork }) {
 /**
  * Rebase the `url()`s of one stylesheet.
  *
- * postcss is called with `map: false`, which critical did not do and which is the one deliberate difference in this
+ * postcss is called with `map: false`, which critical did not do and which is the first deliberate difference in this
  * module's output: with its defaults postcss follows a `sourceMappingURL` comment in the sheet to the map it names,
  * decoding an inline `data:` one in place (an unusable one fails the sheet) and reading a file next to the
  * stylesheet's path from the LOCAL file system. A stylesheet path is a URL path, not a place on this disk, so
@@ -220,6 +244,9 @@ function costGuard({ sheetBytes, maxBytes, growth, maxWork, onWork }) {
  * direction. Its price, accepted: postcss then deletes the `sourceMappingURL` comment from the css (critical kept
  * it). The comment pointed at a file that does not exist at the page's URL anyway. The parity fixture
  * `content-comments-kept-sourcemap-comment-dropped` pins it.
+ *
+ * The other deliberate difference: a `$` in the stylesheet's own path or URL, or in the page's path, appears as `%24` in
+ * the urls that are rewritten from them (see literalDollars()). The same URL, but not a command for postcss-url any more.
  *
  * @param {string} css the stylesheet, wrapped in its `@media` block already when it has a media query (see wrapInMedia)
  * @param {object} options
@@ -246,16 +273,27 @@ function costGuard({ sheetBytes, maxBytes, growth, maxWork, onWork }) {
  *   (not for a sheet that is not looked at: an inline one without a page, or one postcss cannot parse), so a caller
  *   with a budget for a whole document can pass what is left of it as `maxWork` for the next sheet
  * @returns {Promise<string>} the rebased css; the EMPTY string when postcss could not process the sheet - a
- *   syntax error anywhere in it, an unclosed block, a url that cannot be resolved - exactly as critical dropped
- *   the content of such a sheet but kept the (empty) sheet, which still counts as an element in the join
+ *   syntax error anywhere in it, an unclosed block, a url that postcss-url cannot parse, a stylesheet whose own host
+ *   name holds a `$` - exactly as critical dropped the content of such a sheet but kept the (empty) sheet, which still
+ *   counts as an element in the join. A url that cannot be resolved against another host's stylesheet is not one of
+ *   them: it is kept as written (see absolutizeAgainst()).
  * @throws {RebaseTooLargeError | RebaseTooMuchWorkError} the two things that are not an empty sheet: a sheet over `maxBytes` or
  *   over `maxWork` is not a bad sheet, it is a budget that is gone
  */
-export async function rebaseStylesheet(css, { stylepath, virtualPath, onError, onWork, maxBytes = Number.POSITIVE_INFINITY, maxWork = MAX_REWRITE_WORK }) {
-	const remote = URL.canParse(stylepath);
-	if (!remote && !virtualPath) {
+export async function rebaseStylesheet(css, { stylepath: sheetPath, virtualPath: pagePath, onError, onWork, maxBytes = Number.POSITIVE_INFINITY, maxWork = MAX_REWRITE_WORK }) {
+	const remote = URL.canParse(sheetPath);
+	if (!remote && !pagePath) {
 		return css;
 	}
+	if (remote && new URL(sheetPath).host.includes('$')) {
+		// A `$` in a host name cannot be written as %24 (the URL parser reads it back as `$`), so there is no safe spelling of the
+		// stylesheet's URL to hand to postcss-url. No real host name has one; a sheet that does is left out, like any it cannot process.
+		onError?.(new Error('the host name of the stylesheet contains a "$", so the urls in it cannot be rewritten safely'));
+		return '';
+	}
+	// See literalDollars(): the two paths are the only strings postcss-url gets that the declaration did not bring itself.
+	const stylepath = literalDollars(sheetPath);
+	const virtualPath = literalDollars(pagePath);
 	const from = fromPathOf(stylepath);
 	const to = toPathOf(virtualPath);
 	// The most a rewrite can add to a reference: see costGuard() and the `maxBytes` option. ASCII both, being the pathname and the href of URLs.

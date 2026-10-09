@@ -48,11 +48,15 @@ const MiB = 1024 * 1024;
  * holds the sheets that are not fetched (inline, data:) to `cssBytes`; they live
  * here so every limit of the network boundary is in one reviewed place.
  *
- * The byte limits are what the documented 1 GiB container can hold while it
- * lays a page out (critical-css.js LOAD_LIMITS has the arithmetic). The
- * maintainer's own WordPress/Elementor site, the heaviest page measured for them,
- * is 515 KiB of html and 23 stylesheets (13 of them inline) of 1.05 MiB in all,
- * the largest, an inline one, 360 KiB, so 10 MiB of html, 2 MiB for one
+ * The byte limits keep realistic pages far inside the container and bound what
+ * this layer and the rebasing hold; they are NOT a memory guarantee for rendering
+ * (critical-css.js LOAD_LIMITS has the measurements: dense css within them can still
+ * exhaust the Node heap of a 1 GiB container, and a very large page can crash the
+ * Chrome renderer; the rendering stage is the same code as in 0.2.8, so that limit is
+ * not new, but it was not re-measured on 0.2.8; a page over a limit now fails early
+ * and cleanly). The maintainer's own WordPress/Elementor site, the heaviest page measured
+ * for them, is 515 KiB of html and 23 stylesheets (13 of them inline) of 1.05 MiB in
+ * all, the largest, an inline one, 360 KiB, so 10 MiB of html, 2 MiB for one
  * stylesheet and 8 MiB for all of them leave a factor of 6 to 20. A body is
  * counted DECODED, so a compression bomb is cut at the same numbers.
  */

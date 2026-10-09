@@ -30,6 +30,29 @@ const BOM = String.fromCodePoint(0xfeff);
 
 const bytes = (css) => Buffer.byteLength(css);
 
+/**
+ * Runs `work`, gives the event loop two turns for a rejection that nobody handles to surface, and returns every one it saw. The
+ * service has no handler of its own for these, so each one is the end of the process; here the runner's own listeners are put
+ * aside while the window is open, so that what is counted does not also fail whatever test happens to be running.
+ */
+async function unhandledRejectionsDuring(work) {
+	const seen = [];
+	const saved = process.listeners('unhandledRejection');
+	process.removeAllListeners('unhandledRejection');
+	process.on('unhandledRejection', (reason) => seen.push(reason));
+	try {
+		await work();
+		await new Promise((resolve) => setImmediate(resolve));
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	} finally {
+		process.removeAllListeners('unhandledRejection');
+		for (const listener of saved) {
+			process.on('unhandledRejection', listener);
+		}
+	}
+	return seen;
+}
+
 const FIXTURES = fileURLToPath(new URL('./fixtures/parity/', import.meta.url));
 
 describe('stylesheetPath: the table recorded from critical', () => {
@@ -398,12 +421,14 @@ describe('rebaseStylesheet: a sheet whose rewriting could keep the process busy 
 	});
 
 	test('it is refused before postcss-url has looked at a single reference: a reference that postcss-url would trip over is never reached', QUICK, async () => {
-		const css = '.a{background:url(/\\[)}'; // cannot be resolved against a stylesheet URL on another host: with room to work it is an empty sheet
-		const errors = [];
-		await assert.rejects(rebaseStylesheet(css, { ...cdn, maxWork: 0, onError: (error) => errors.push(error) }), RebaseTooMuchWorkError);
-		assert.deepEqual(errors, []);
-		assert.equal(await rebaseStylesheet(css, { ...cdn, onError: (error) => errors.push(error) }), '', 'the control: the same sheet is processed, and fails there');
-		assert.equal(errors.length, 1);
+		const css = '.a{background:url(http://[::1/)}'; // postcss-url parses every reference with node:url, which refuses an unclosed IPv6 literal (on every Node version we run): with room to work it is an empty sheet
+		for (const where of [place, cdn]) {
+			const errors = [];
+			await assert.rejects(rebaseStylesheet(css, { ...where, maxWork: 0, onError: (error) => errors.push(error) }), RebaseTooMuchWorkError);
+			assert.deepEqual(errors, []);
+			assert.equal(await rebaseStylesheet(css, { ...where, onError: (error) => errors.push(error) }), '', 'the control: the same sheet is processed, and fails there');
+			assert.equal(errors.length, 1);
+		}
 	});
 
 	test('a sheet that is over both limits is refused for its size: that is the one that asks for gigabytes', QUICK, async () => {
@@ -485,12 +510,20 @@ describe('rebaseStylesheet: a sheet postcss cannot process comes back empty', ()
 	test('the reason is optional to ask for', QUICK, async () => {
 		assert.equal(await rebaseStylesheet('.a{color:red', SCENARIOS.page), '');
 	});
-	test('a url that cannot be resolved against the stylesheet URL empties the sheet too (another host only)', QUICK, async () => {
-		const css = '.a{background:url(/\\[)}';
+	test('a url that cannot be resolved against the stylesheet URL on another host stays as it was written; the rest of the sheet is rebased and onError is not told', QUICK, async () => {
+		const css = '.a{background:url(/\\[)}.b{background:url(img/b.png)}';
 		const errors = [];
-		assert.equal(await rebaseStylesheet(css, { ...SCENARIOS.cdn, onError: (error) => errors.push(error) }), '');
-		assert.ok(errors[0] instanceof TypeError);
-		assert.equal(await rebaseStylesheet(css, SCENARIOS.page), css);
+		assert.equal(await rebaseStylesheet(css, { ...SCENARIOS.cdn, onError: (error) => errors.push(error) }), '.a{background:url(/\\[)}.b{background:url(https://cdn.test/assets/css/img/b.png)}');
+		assert.deepEqual(errors, []);
+		assert.equal(await rebaseStylesheet('.a{background:url(/\\[)}', SCENARIOS.page), '.a{background:url(/\\[)}');
+	});
+	test('a url that postcss-url itself cannot parse empties the sheet, on the page host and on another one', QUICK, async () => {
+		const css = '.a{background:url(img/a.png)}.b{background:url(http://[::1/)}';
+		for (const [scenario, options] of Object.entries(SCENARIOS)) {
+			const errors = [];
+			assert.equal(await rebaseStylesheet(css, { ...options, onError: (error) => errors.push(error) }), '', scenario);
+			assert.equal(errors.length, 1, scenario);
+		}
 	});
 	test('a sheet that is fine does not call onError', QUICK, async () => {
 		let called = 0;
@@ -499,6 +532,269 @@ describe('rebaseStylesheet: a sheet postcss cannot process comes back empty', ()
 	});
 	test('an empty sheet is a valid sheet', QUICK, async () => {
 		assert.deepEqual(await Promise.all(Object.values(SCENARIOS).map((options) => rebaseStylesheet('', options))), ['', '', '', '']);
+	});
+});
+
+describe('rebaseStylesheet: nothing a url() holds can leave a rejection behind', () => {
+	// postcss-url starts a promise for every reference it finds and keeps them only until the next reference is read; when it throws
+	// on a LATER one, an earlier promise that rejects has nobody to handle it, and the process ends. So the processor for a stylesheet
+	// on another host (ours) must never reject, and these are the shapes that make the URL parser, node:url or both refuse a reference.
+	const ODD_REFERENCES = [
+		'http:[',
+		'http:',
+		'http:/',
+		'http:///',
+		'https://',
+		'http://a:b/',
+		'http://a:99999/',
+		'http://[::1/',
+		'http://[::g]/',
+		'http://[1:2:3:4:5:6:7:8:9]/',
+		'http://a b/',
+		'http://a%b/',
+		'http://a..b/',
+		'http://%/',
+		'http://-/',
+		'http://256.256.256.256/',
+		'http://0x/',
+		'http://example.com:65536/',
+		'http://us er@host/',
+		'ftp://a:b/',
+		'file:///x',
+		'x:[',
+		'://',
+		':::',
+		':',
+		'[',
+		']',
+		'%',
+		'%zz',
+		'%00',
+		'a%',
+		'\\',
+		'\\\\',
+		'\\\\[',
+		'\\\\\\\\x:y',
+		'\\\\evil.test\\x',
+		'/\\[',
+		'//[',
+		'//a:b',
+		'//',
+		'///',
+		'////x',
+		'#',
+		'?',
+		'#%',
+		'?%',
+		'..',
+		'../..',
+		'/',
+		'javascript:void(0',
+		'data:',
+		'data:,',
+		'mailto:x@y',
+		'about:blank',
+		`http://${String.fromCodePoint(0)}/`,
+		`a${String.fromCodePoint(0)}b`,
+		'http://ünï.test/',
+		`http://${'a'.repeat(300)}/`,
+	];
+	// A reference that postcss-url cannot parse itself (node:url refuses an unclosed IPv6 literal, on Node 24 and on Node 26 alike; a bad PORT is only a
+	// deprecation warning on Node 24, so it is not a tripwire): it ends the sheet, and everything started before it is left to settle on its own.
+	const TRIPWIRE = 'http://[::1/';
+	const PLACES = { ...SCENARIOS, 'html passed in directly': { stylepath: 'http://127.0.0.1:18981/wp-content/a.css', virtualPath: '' } };
+
+	test('the instrument works: a rejection nobody handles is seen, one that is handled is not, and the runner\'s own listeners come back', QUICK, async () => {
+		const before = process.listeners('unhandledRejection');
+		const seen = await unhandledRejectionsDuring(async () => {
+			Promise.reject(new Error('left behind')); // on purpose: the positive control, the instrument must see a rejection nobody handles
+			Promise.reject(new Error('handled')).catch(() => {});
+		});
+		assert.deepEqual(
+			seen.map((reason) => reason.message),
+			['left behind'],
+		);
+		assert.deepEqual(process.listeners('unhandledRejection'), before);
+	});
+
+	for (const [name, place] of Object.entries(PLACES)) {
+		test(`${name}: ${ODD_REFERENCES.length} shapes, before, after and beside a reference postcss-url cannot parse, never leave a rejection behind and always answer with css`, SLOW, async () => {
+			const answers = [];
+			const rejections = await unhandledRejectionsDuring(async () => {
+				for (const reference of ODD_REFERENCES) {
+					for (const css of [`.a{b:url(${reference})}.c{d:url(${TRIPWIRE})}`, `.c{d:url(${TRIPWIRE})}.a{b:url(${reference})}`, `.a{b:url(${reference}) url(${TRIPWIRE}) url(${reference})}`, `.a{b:url("${reference}")}.c{d:url('${TRIPWIRE}')}`, `.a{b:url(${reference})}`]) {
+						answers.push(await rebaseStylesheet(css, { ...place, onError: () => {} }));
+					}
+				}
+			});
+			assert.deepEqual(
+				rejections.map((reason) => `${reason?.name}: ${reason?.message}`),
+				[],
+			);
+			assert.equal(answers.length, ODD_REFERENCES.length * 5);
+			assert.ok(
+				answers.every((answer) => typeof answer === 'string'),
+				'every sheet gets an answer, an empty one when it cannot be processed',
+			);
+		});
+	}
+
+	test('the pair that was found in review, as it stands: a reference the URL parser refuses, then one node:url refuses', QUICK, async () => {
+		const css = 'a{b:url(http:[)} c{d:url(http://[::1/)}';
+		const errors = [];
+		const rejections = await unhandledRejectionsDuring(async () => {
+			assert.equal(await rebaseStylesheet(css, { stylepath: 'https://cdn.test/a/b.css', virtualPath: '/index.html', onError: (error) => errors.push(error) }), '', 'the second reference ends the sheet, as it did for critical');
+		});
+		assert.equal(errors.length, 1);
+		assert.deepEqual(rejections, []);
+	});
+
+	test('a reference that cannot be resolved is left exactly as written, a $ in it too: it is not the template of anything', QUICK, async () => {
+		for (const reference of ['http:[$&', "http:[$'", 'http:[$`', 'http:[$$', '\\\\[$1']) {
+			assert.equal(await rebaseStylesheet(`.a{b:url(${reference})}.c{d:url(i.png)}`, SCENARIOS.cdn), `.a{b:url(${reference})}.c{d:url(https://cdn.test/assets/css/i.png)}`, reference);
+		}
+	});
+
+	test('on its own the first of them is simply kept as written, the others around it are rebased', QUICK, async () => {
+		const rejections = await unhandledRejectionsDuring(async () => {
+			assert.equal(await rebaseStylesheet('a{b:url(http:[)} c{d:url(ok.png)}', { stylepath: 'https://cdn.test/a/b.css', virtualPath: '/index.html' }), 'a{b:url(http:[)} c{d:url(https://cdn.test/a/ok.png)}');
+		});
+		assert.deepEqual(rejections, []);
+	});
+
+	test('the shapes the URL parser refuses are kept exactly as written, and the references around them are still rebased', QUICK, async () => {
+		for (const reference of ['http:[', '\\\\[', '/\\[', '\\\\\\\\x:y']) {
+			assert.equal(await rebaseStylesheet(`.a{b:url(${reference})}.c{d:url(i.png)}`, SCENARIOS.cdn), `.a{b:url(${reference})}.c{d:url(https://cdn.test/assets/css/i.png)}`, reference);
+		}
+	});
+
+	test('property: any run of url-ish characters, any number of times, in any order beside the tripwire, leaves nothing behind', SLOW, async () => {
+		const piece = fc.constantFrom('http:', 'https:', '//', '/', '\\', '[', ']', ':', '%', '@', '.', '-', '0', 'a', ' ', 'b/', '..', '#', '?');
+		const reference = fc.array(piece, { minLength: 1, maxLength: 8 }).map((parts) => parts.join('').replaceAll(/[()'"]/g, ''));
+		await fc.assert(
+			fc.asyncProperty(fc.array(reference, { minLength: 1, maxLength: 4 }), fc.boolean(), fc.constantFrom(...Object.values(PLACES)), async (references, tripwireFirst, place) => {
+				const urls = references.map((value) => `url(${value})`);
+				const css = `.a{b:${urls.join(' ')}}.c{d:url(${TRIPWIRE})}`;
+				const rejections = await unhandledRejectionsDuring(async () => {
+					const answer = await rebaseStylesheet(tripwireFirst ? `.c{d:url(${TRIPWIRE})}.a{b:${urls.join(' ')}}` : css, { ...place, onError: () => {} });
+					assert.equal(typeof answer, 'string');
+				});
+				assert.deepEqual(rejections, [], css);
+			}),
+			{ ...CFG, numRuns: Math.min(CFG.numRuns, 300) },
+		);
+	});
+});
+
+describe('rebaseStylesheet: a $ in a path the page chose is written as %24 and is never a command for postcss-url', () => {
+	const sheet = '.a{background:url(i.png)}';
+
+	test('the stylesheet path on the page host: the same file, with %24 where the $ was', QUICK, async () => {
+		assert.equal(await rebaseStylesheet(sheet, { stylepath: "/w$p/a$'b/s.css", virtualPath: '/p/index.html' }), ".a{background:url(../w%24p/a%24'b/i.png)}");
+		assert.equal(await rebaseStylesheet(sheet, { stylepath: '/x$&/s.css', virtualPath: '/p/index.html' }), '.a{background:url(../x%24&/i.png)}');
+	});
+
+	test('every kind of template command stays text: $$, $&, $`, $\', $1, $<n>', QUICK, async () => {
+		for (const command of ['$$', '$&', '$`', "$'", '$1', '$01', '$<n>', '$']) {
+			const directory = `d${command}e`;
+			const written = directory.replaceAll('$', '%24');
+			assert.equal(await rebaseStylesheet(sheet, { stylepath: `/${directory}/s.css`, virtualPath: '/p/index.html' }), `.a{background:url(../${written}/i.png)}`, command);
+			assert.equal(await rebaseStylesheet(sheet, { stylepath: `https://cdn.test/${directory}/s.css`, virtualPath: '/p/index.html' }), `.a{background:url(${new URL('i.png', `https://cdn.test/${written}/s.css`).href})}`, command);
+		}
+	});
+
+	test('the stylesheet URL on another host: path, query and fragment alike', QUICK, async () => {
+		assert.equal(
+			await rebaseStylesheet(".a{background:url(i.png)}.b{fill:url(#g)}.c{x:url(?q)}", { stylepath: "https://cdn.test/a$'b/s.css?v=$&", virtualPath: '/p/index.html' }),
+			".a{background:url(https://cdn.test/a%24'b/i.png)}.b{fill:url(https://cdn.test/a%24'b/s.css?v=%24&#g)}.c{x:url(https://cdn.test/a%24'b/s.css?q)}",
+		);
+		assert.equal(await rebaseStylesheet('.a{fill:url(#g)}', { stylepath: "https://cdn.test/s.css?v=$1#f$'", virtualPath: '/p/index.html' }), '.a{fill:url(https://cdn.test/s.css?v=%241#g)}');
+	});
+
+	test('the page path takes part too: the part it shares with the stylesheet is still the same part', QUICK, async () => {
+		assert.equal(await rebaseStylesheet(sheet, { stylepath: '/a$&/s.css', virtualPath: '/a$&/p/index.html' }), '.a{background:url(../i.png)}');
+		assert.equal(await rebaseStylesheet(sheet, { stylepath: '/b$&c/index.html.css', virtualPath: '/b$&c/index.html' }), sheet, 'an inline sheet is a file next to its page');
+	});
+
+	test('a path on the page host that starts with // and holds a $: it is not a URL, so it is rebased as a path, with the $ written as %24, and nobody is told of an error', QUICK, async () => {
+		const errors = [];
+		assert.equal(await rebaseStylesheet(sheet, { stylepath: '//c$d/x.css', virtualPath: '/index.html', onError: (error) => errors.push(error) }), '.a{background:url(c%24d/i.png)}');
+		assert.deepEqual(errors, []);
+	});
+
+	test('what it was for: seven $\' in a path no longer turn a kilobyte of css into gigabytes (it was a failed sheet, or 59 MB)', QUICK, async () => {
+		const directory = "$'".repeat(7);
+		const css = `a{b:${Array.from({ length: 10 }, () => 'url(x.png)').join(' ')} ${'a'.repeat(900)}}`;
+		const written = "%24'".repeat(7);
+		const errors = [];
+		assert.equal(
+			await rebaseStylesheet(css, { stylepath: `/${directory}/s.css`, virtualPath: '/p/index.html', onError: (error) => errors.push(error) }),
+			css.replaceAll('url(x.png)', `url(../${written}/x.png)`),
+		);
+		assert.equal(
+			await rebaseStylesheet(css, { stylepath: `https://cdn.test/${directory}/s.css`, virtualPath: '/p/index.html', onError: (error) => errors.push(error) }),
+			css.replaceAll('url(x.png)', `url(https://cdn.test/${written}/x.png)`),
+		);
+		assert.deepEqual(errors, []);
+	});
+
+	test('the size bound counts the %24 spelling, not the $: the number of bytes the result can have', QUICK, async () => {
+		// the result is `.a{b:url(https://cdn.test/a%24b/x)}`: 12 bytes of css and a url that adds 28 (the stylesheet URL in its %24 spelling)
+		const cdn = { stylepath: 'https://cdn.test/a$b/s.css', virtualPath: '/p/index.html' };
+		assert.equal(await rebaseStylesheet('.a{b:url(x)}', { ...cdn, maxBytes: 40 }), '.a{b:url(https://cdn.test/a%24b/x)}');
+		const error = await rebaseStylesheet('.a{b:url(x)}', { ...cdn, maxBytes: 39 }).catch((reason) => reason);
+		assert.ok(error instanceof RebaseTooLargeError);
+		assert.equal(error.bound, 40);
+		// on the page host: 12 bytes, plus the stylesheet's file `/a%24b/s.css` (12) and a ../ (3) for each of the two directory levels of the page's path (6)
+		const page = { stylepath: '/a$b/s.css', virtualPath: '/p/index.html' };
+		assert.equal(await rebaseStylesheet('.a{b:url(x)}', { ...page, maxBytes: 30 }), '.a{b:url(../a%24b/x)}');
+		const refused = await rebaseStylesheet('.a{b:url(x)}', { ...page, maxBytes: 29 }).catch((reason) => reason);
+		assert.ok(refused instanceof RebaseTooLargeError);
+		assert.equal(refused.bound, 30);
+	});
+
+	test('the declaration\'s own $ is not touched: it stays what the parity fixtures record, and the guard is what bounds it', QUICK, async () => {
+		assert.equal(await rebaseStylesheet('.a{background:url(i$&.png)}', { stylepath: '/s.css', virtualPath: '/index.html' }), '.a{background:url(iurl(i$&.png).png)}');
+		await assert.rejects(rebaseStylesheet(`.a{background:url(${'$&'.repeat(30)}x)}`, { stylepath: '/s.css', virtualPath: '/index.html', maxBytes: 1000 }), RebaseTooLargeError);
+	});
+
+	test('a host name with a $ cannot be written any other way, so the sheet is left out with a reason: also without onError, also for html passed in directly, also when it has no url()', QUICK, async () => {
+		const host = "a$'b.cdn.test";
+		assert.equal(new URL(`https://${host}/s.css`).host, host, 'the URL parser keeps it');
+		for (const virtualPath of ['/p/index.html', '']) {
+			for (const css of [sheet, '.a{color:red}']) {
+				const errors = [];
+				assert.equal(await rebaseStylesheet(css, { stylepath: `https://${host}/s.css`, virtualPath, onError: (error) => errors.push(error) }), '');
+				assert.equal(errors.length, 1);
+				assert.match(errors[0].message, /host name .*"\$"/);
+				assert.equal(await rebaseStylesheet(css, { stylepath: `https://${host}/s.css`, virtualPath }), '', 'onError is optional');
+			}
+		}
+	});
+
+	test('only the HOST is refused: a $ anywhere else in the URL of a stylesheet, user info included, is rebased', QUICK, async () => {
+		assert.equal(await rebaseStylesheet(sheet, { stylepath: 'https://u$er@cdn.test/s$.css?a=$#b$', virtualPath: '/p/index.html' }), '.a{background:url(https://u%24er@cdn.test/i.png)}');
+	});
+
+	test('property: whatever $, quote and ampersand a path holds, the result is linear in the sheet and holds no template command of its own', SLOW, async () => {
+		const piece = fc.constantFrom('a', 'b', '$', "'", '&', '`', '1', '$$', '$&', "$'", '-', '.', '%24');
+		const segment = fc.array(piece, { minLength: 1, maxLength: 6 }).map((parts) => parts.join('').replace(/^\.+$/, 'x'));
+		const directory = fc.array(segment, { maxLength: 4 }).map((parts) => (parts.length === 0 ? '/' : `/${parts.join('/')}/`));
+		await fc.assert(
+			fc.asyncProperty(directory, directory, fc.integer({ min: 1, max: 6 }), fc.constantFrom('page', 'cdn'), async (sheetDirectory, pageDirectory, count, where) => {
+				const stylepath = where === 'page' ? `${sheetDirectory}s.css` : `https://cdn.test${sheetDirectory}s.css`;
+				const css = `.a{b:${Array.from({ length: count }, () => 'url(x.png)').join(' ')} ${'z'.repeat(200)}}`;
+				const result = await rebaseStylesheet(css, { stylepath, virtualPath: `${pageDirectory}p.html` });
+				const added = 3 * (stylepath.length + pageDirectory.length) + 20;
+				assert.ok(result.length <= css.length + count * added, `${css.length} -> ${result.length} for ${stylepath} seen from ${pageDirectory}`);
+				const urls = [...result.matchAll(/url\(([^)]*)\)/g)].map((match) => match[1]);
+				assert.equal(urls.length, count);
+				for (const rewritten of urls) {
+					assert.ok(!rewritten.includes('$'), rewritten);
+				}
+			}),
+			{ ...CFG, numRuns: Math.min(CFG.numRuns, 300) },
+		);
 	});
 });
 

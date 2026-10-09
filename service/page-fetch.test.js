@@ -7,7 +7,9 @@ import net from 'node:net';
 import dns from 'node:dns';
 import zlib from 'node:zlib';
 import { generateKeyPairSync, sign } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { getEventListeners } from 'node:events';
+import { promisify } from 'node:util';
 import { FETCH_ERROR_CODES, FetchRefusedError, LIMITS, buildUserAgent, createPageFetcher, createProxyRequest } from './page-fetch.js';
 import { createSsrfProxy } from './ssrf-proxy.js';
 import { isAllowedUrl } from './lib.js';
@@ -17,6 +19,8 @@ import { isAllowedUrl } from './lib.js';
 // ---------------------------------------------------------------------------
 
 const MiB = 1024 * 1024;
+
+const execFileAsync = promisify(execFile);
 
 /** Every `code` a test saw on a FetchRefusedError; the last test checks that the documented taxonomy and this set agree. */
 const codesSeen = new Set();
@@ -193,8 +197,8 @@ describe('what the transport is asked for', () => {
 		for (const call of calls) {
 			assert.ok(call.urlObject instanceof URL);
 			assert.ok(call.signal instanceof AbortSignal);
-			assert.deepEqual(Object.keys(call.init).sort(), ['headers', 'signal']);
-			assert.deepEqual(Object.keys(call.headers).sort(), ['accept', 'user-agent']);
+			assert.deepEqual(Object.keys(call.init).sort((a, b) => a.localeCompare(b)), ['headers', 'signal']);
+			assert.deepEqual(Object.keys(call.headers).sort((a, b) => a.localeCompare(b)), ['accept', 'user-agent']);
 		}
 		assert.deepEqual(
 			calls.map((call) => call.url),
@@ -231,7 +235,7 @@ describe('what comes back', () => {
 			'http://a.test/new/': page('<h1>Hello</h1>', { status: 203 }),
 		});
 		const result = await fetchText('http://a.test/old', { kind: 'html' });
-		assert.deepEqual(Object.keys(result).sort(), ['contentType', 'finalUrl', 'hops', 'status', 'text']);
+		assert.deepEqual(Object.keys(result).sort((a, b) => a.localeCompare(b)), ['contentType', 'finalUrl', 'hops', 'status', 'text']);
 		assert.ok(result.finalUrl instanceof URL);
 		assert.equal(result.finalUrl.href, 'http://a.test/new/');
 		assert.equal(result.status, 203);
@@ -1632,7 +1636,7 @@ describe('negative matrix: the real policy proxy, a loopback origin and the real
 				await fresh.fetchText(world.at('spy-b.test'), { kind: 'css' });
 				await refused(fresh.fetchText(world.at('spy-private.test'), { kind: 'css' }), 'PROXY_REFUSED');
 				assert.deepEqual(looked, []);
-				assert.deepEqual([...world.lookups].sort(), ['spy-a.test', 'spy-b.test', 'spy-private.test']);
+				assert.deepEqual([...world.lookups].sort((a, b) => a.localeCompare(b)), ['spy-a.test', 'spy-b.test', 'spy-private.test']);
 			} finally {
 				dns.lookup = original;
 			}
@@ -1909,24 +1913,42 @@ describe('TLS verification stays on (it is Chrome that runs with --ignore-certif
 		}
 	});
 
-	test('NODE_TLS_REJECT_UNAUTHORIZED=0 in the environment does not switch verification off for this client', { timeout: 10_000 }, async () => {
+	test('NODE_TLS_REJECT_UNAUTHORIZED=0 in the environment does not switch verification off for this client', { timeout: 20_000 }, async () => {
 		world.landOn = secure.address().port;
-		const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-		process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // NOSONAR javascript:S4830 - this IS the test: a client that pins rejectUnauthorized must stay strict even when the environment asks otherwise
-		try {
-			await refused(world.fetcher(world.strictPort).fetchText(toSecure(), { kind: 'css' }), 'NETWORK');
-		} finally {
-			if (previous === undefined) {
-				delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-			} else {
-				process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous;
+		const ours = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+		// The variable is given to a CHILD process only, which runs this client against the server above: this process never switches
+		// verification off, for the client or for anything else it runs. The child's environment is the variable and nothing else.
+		const script = `
+			import https from 'node:https';
+			import { createPageFetcher, createProxyRequest } from ${JSON.stringify(new URL('./page-fetch.js', import.meta.url).href)};
+			const fetcher = createPageFetcher({ request: createProxyRequest({ proxyPort: ${world.strictPort} }), userAgent: 'wpcc-test/1' });
+			const outcome = {};
+			try {
+				await fetcher.fetchText(${JSON.stringify(toSecure())}, { kind: 'css' });
+				outcome.fetched = true;
+			} catch (error) {
+				Object.assign(outcome, { fetched: false, code: error.code, message: error.message });
 			}
-		}
+			await fetcher.close();
+			outcome.control = await new Promise((resolve) => {
+				const request = https.get({ host: '127.0.0.1', port: ${secure.address().port}, path: '/', servername: 'secure.test' }, (response) => {
+					response.resume();
+					response.on('end', () => resolve(response.statusCode));
+				});
+				request.on('error', (error) => resolve(error.code));
+			});
+			console.log(JSON.stringify(outcome));`;
+		const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script], { timeout: 15_000, encoding: 'utf8', env: { NODE_TLS_REJECT_UNAUTHORIZED: '0' } }); // NOSONAR javascript:S4830 - this IS the test: a client that pins rejectUnauthorized must stay strict even when the environment asks otherwise, and only a child process is given the variable
+		const outcome = JSON.parse(stdout);
+		assert.equal(outcome.control, 200, 'the control: a client that leaves it unset does trust the certificate in that environment, so the variable is in force there');
+		assert.deepEqual([outcome.fetched, outcome.code], [false, 'NETWORK']);
+		assert.match(outcome.message, /DEPTH_ZERO_SELF_SIGNED_CERT/);
+		assert.equal(process.env.NODE_TLS_REJECT_UNAUTHORIZED, ours, 'and this process was never given it');
 	});
 });
 
 // Meaningless when only some tests were selected (--test-name-pattern): the codes of the skipped ones are missing.
 const filtered = process.execArgv.some((argument) => argument.startsWith('--test-name-pattern') || argument.startsWith('--test-only'));
 test('every code of the taxonomy is produced by at least one test above, and no test saw a code that is not documented', { timeout: 5000, skip: filtered }, () => {
-	assert.deepEqual([...codesSeen].sort(), [...FETCH_ERROR_CODES].sort());
+	assert.deepEqual([...codesSeen].sort((a, b) => a.localeCompare(b)), [...FETCH_ERROR_CODES].sort((a, b) => a.localeCompare(b)));
 });

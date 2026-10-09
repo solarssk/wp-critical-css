@@ -77,13 +77,19 @@ export const LOAD_DEADLINE_MS = 60_000;
  * - rewriteWork    what rewriting the url()s of all the stylesheets together
  *                  may cost, see MAX_REWRITE_WORK in rebase.js
  *
- * The byte limits are sized for the documented 1 GiB container with a tmpfs
- * /tmp (docker-compose.example.yml): at most 10 MiB of page and 8 MiB of css
- * make a layout copy of 18 MiB when the page has one head tag, and 40 MiB leaves
- * room for a few more. Memory holds the page, the css and the copy (36 MiB of
- * strings at most for a legitimate page, twice that if they are not Latin-1),
- * and each of the two viewports that render at the same time writes its own
- * copy to the tmpfs, which is charged to the same 1 GiB: 80 MiB at the ceiling.
+ * What the byte limits are for, and what they are not. They keep realistic pages far inside the
+ * container and bound what the fetch and rebase layer holds: the heaviest real page measured (the
+ * maintainer's own WordPress/Elementor site) is 515 KiB of html and 1.05 MiB of css. The layout copy of
+ * a page with one head tag is its html plus its css (at most 10 MiB and 8 MiB, so 18 MiB), and 40 MiB
+ * leaves room for a few more head tags. They are NOT a memory guarantee for rendering. Measured in a
+ * 1 GiB container (Node's V8 heap limit there is 560 MiB, and a trivial page already takes the container
+ * to about 550 MiB): 7.9 MiB of dense css exhausted the Node heap and restarted the container, without
+ * swap even 3.95 MiB did, and 1.975 MiB was fine; a 9 MiB html page crashed the Chrome renderer ("Page
+ * crashed!", the service stayed up), and 2 MiB was fine without swap. The rendering stage (penthouse
+ * and Chrome) is the same code as in 0.2.8, so this limit is not new; it was not re-measured on 0.2.8.
+ * A page over a limit now fails early and cleanly, here; one under them can still be too much for
+ * 1 GiB, and each of the two viewports that render at the same time also writes its own copy of the
+ * page to /tmp (a tmpfs in the documented compose file, charged to the same memory).
  */
 export const LOAD_LIMITS = Object.freeze({
 	maxSheets: LIMITS.maxSheets,
@@ -384,6 +390,20 @@ async function loadSheets(context, sheets, { docUrl, virtualPath, base }) {
 const disposed = new WeakSet();
 
 /**
+ * LOAD_LIMITS with the caller's overrides on top, every value checked: a NaN, a negative number or an undefined (a key that is
+ * present but empty) would switch its check off, because `x > NaN` is false. A limit of 0 or of Infinity is a limit like any other.
+ */
+function checkedLimits(limits) {
+	const effective = { ...LOAD_LIMITS, ...limits };
+	for (const [name, value] of Object.entries(effective)) {
+		if (typeof value !== 'number' || !(value >= 0)) {
+			throw new TypeError(`loadDocument: limits.${name} must be a non-negative number, got ${logSafe(value)}`);
+		}
+	}
+	return effective;
+}
+
+/**
  * Fetches the page (or takes it as given), discovers and fetches its
  * stylesheets, and returns what penthouse needs.
  *
@@ -426,13 +446,7 @@ export async function loadDocument({ url, html, fetcher, limits, log = console, 
 	if (url !== undefined && typeof isPageHostAllowed !== 'function') {
 		throw new TypeError('loadDocument: `isPageHostAllowed` is required with `url`; pass () => true to allow any host');
 	}
-	const effective = { ...LOAD_LIMITS, ...limits };
-	for (const [name, value] of Object.entries(effective)) {
-		// A NaN, a negative number or an undefined (a key that is present but empty) would switch its check off: `x > NaN` is false.
-		if (typeof value !== 'number' || !(value >= 0)) {
-			throw new TypeError(`loadDocument: limits.${name} must be a non-negative number, got ${logSafe(value)}`);
-		}
-	}
+	const effective = checkedLimits(limits);
 	// One deadline for the whole load, combined with the caller's own signal; the fetcher aborts a request in flight when either fires.
 	const deadline = AbortSignal.timeout(effective.loadMs);
 	const context = { fetcher, log, limits: effective, deadline, signal: signal ? AbortSignal.any([signal, deadline]) : deadline };
@@ -471,12 +485,15 @@ export async function loadDocument({ url, html, fetcher, limits, log = console, 
 }
 
 /**
- * critical's minifier settings, frozen: level 1 with everything, level 2 with
- * only the five rules that remove duplicates and empty blocks and merge
- * media blocks (the others, like merging adjacent rules, would change the
- * critical css that sites already run on).
+ * The minifier settings. The optimisation levels are critical's, frozen so that the critical css sites already run on does not
+ * change: level 1 with everything, level 2 with only the five rules that remove duplicates and empty blocks and merge media blocks
+ * (the others, like merging adjacent rules, would change it). `inline: false` is the one setting that is not critical's, and it
+ * is a control, not a style: by default clean-css follows a local `@import` in the css it is given, reads the file it names
+ * (resolved against the working directory of this process) and puts its text into the result. The css here is the page's, so the
+ * minifier must never read a file at all; an `@import` stays in the css exactly as written.
  */
 const CLEAN_CSS_OPTIONS = Object.freeze({
+	inline: false,
 	level: Object.freeze({
 		1: Object.freeze({ all: true }),
 		2: Object.freeze({ all: false, removeDuplicateFontRules: true, removeDuplicateMediaBlocks: true, removeDuplicateRules: true, removeEmpty: true, mergeMedia: true }),
