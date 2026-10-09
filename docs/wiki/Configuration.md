@@ -49,3 +49,7 @@ Define these in `wp-config.php`, above the line that says to stop editing. Only 
 | `POST` | `/generate` | service | Queue one URL for rendering. Body `{"url": "..."}`, header `X-WPCC-Secret`. Answers `202` (`queued` or `already queued`), `400` (URL missing or not on `ALLOWED_HOSTNAME`), `403` (wrong secret) or `503` (queue full, retry after 30 seconds). |
 | `POST` | `/sweep` | service | Start a sitemap sweep now. Header `X-WPCC-Secret`. Answers `202` immediately and works in the background; `403` for a wrong secret. |
 | `POST` | `/wp-json/wpcc/v1/critical-css` | WordPress plugin | Where the service delivers CSS. Authenticated by the shared secret, size-capped and rate-limited. Anyone on the internet can reach it like any WordPress REST route, so see [Security Overview](Security-Overview). |
+
+## Limits are not settings
+
+The sizes, counts and times the service holds a page and its stylesheets to (10 MiB for the page, 2 MiB for a stylesheet, 100 stylesheets, 5 redirects, 60 seconds for the whole load, ...) are fixed in the code. No environment variable changes them; they are listed under [How a page is loaded](How-It-Works#how-a-page-is-loaded).

@@ -79,7 +79,8 @@ Two independent triggers feed the same queue - editing a post regenerates just t
 | 🗺️ | **Sitemap sweep** | A daily cron job inside the container walks the sitemap, so pages nobody edited that day still stay covered. |
 | 💉 | **Inline + defer** | Critical CSS is inlined in `<style id="wpcc-critical-css">`; the theme's regular stylesheets defer via the standard `media="print"` swap. |
 | 🏠 | **Homepage handled separately** | The homepage isn't a single post, so its critical CSS is stored as site options instead of postmeta. |
-| 🔒 | **SSRF-hardened by default** | Every fetch this service makes - page renders, the sitemap, sub-sitemaps, redirects - is blocked from reaching private/reserved addresses. |
+| 🔒 | **SSRF-hardened by default** | Every fetch this service makes - the page, its stylesheets, the sitemap, sub-sitemaps, redirects, and everything Chrome loads - is blocked from reaching private/reserved addresses. |
+| 🧱 | **Bounded page loading** | The page and its stylesheets are fetched once per job by the service's own code, with caps on size, redirects, stylesheet count and time, and a stylesheet of your own site that cannot be loaded fails the job instead of shipping incomplete CSS. |
 | 🔑 | **One shared secret** | `WPCC_SHARED_SECRET` gates both the service's HTTP endpoints and the plugin's REST receiver, compared in constant time. |
 | 🚦 | **Bounded queue, no silent drops** | The in-memory queue is capped (`MAX_QUEUE_LENGTH`); once full, `POST /generate` returns `503` with `Retry-After` instead of pretending the request was accepted. |
 | 🐳 | **Container-first** | Ships as a Trivy-scanned, SBOM'd image to GHCR and Docker Hub. No PHP dependencies on the WordPress side at all. |
@@ -89,7 +90,7 @@ Two independent triggers feed the same queue - editing a post regenerates just t
 | | Layer | Technologies |
 |---|-------|---------------|
 | 🟢 | **Service runtime** | Node.js 24 (ESM), Express 5, node-cron 4 |
-| 🌐 | **Rendering** | Puppeteer + [`critical`](https://www.npmjs.com/package/critical) (via its `penthouse-esm` dependency) |
+| 🌐 | **Rendering** | Puppeteer + [`penthouse-esm`](https://www.npmjs.com/package/penthouse-esm), called directly. Loading the page and its stylesheets is the service's own code on `undici`, `parse5`, `postcss` and `clean-css` |
 | 🐘 | **WordPress plugin** | PHP 7.4+, WordPress 6.0+ - REST receiver, `save_post` hook, WP-Cron trigger |
 | 🐳 | **Container** | `ghcr.io/puppeteer/puppeteer` base, pinned by digest, with Chrome pinned to a recent Stable build (checked daily) - published to GHCR and mirrored to Docker Hub |
 | 🛡️ | **CI/CD security** | CodeQL, Semgrep, Trivy (CRITICAL gate + weekly re-scan of the published image), SonarCloud, gitleaks, workflow linting (actionlint, zizmor), OpenSSF Scorecard, SBOM + signed build provenance |
@@ -100,7 +101,7 @@ Two independent triggers feed the same queue - editing a post regenerates just t
 |-----|--------|
 | 📖 [Wiki](https://github.com/solarssk/wp-critical-css/wiki) | Operator guides: getting started, every setting, how it works, troubleshooting, upgrading (source: [`docs/wiki/`](docs/wiki/)) |
 | 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System flow, request sequence, data flow, design decisions |
-| 🚀 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Full setup, verification, releases, rollback |
+| 🚀 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Full setup, verification, upgrading from 0.2.8, releases, rollback |
 | 🛡️ [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) | Threat model, CI/CD security controls, conscious exclusions |
 | 🐛 [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 | 📋 [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
@@ -118,7 +119,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough. In short:
 
 | Path | Role |
 |------|------|
-| [`service/`](service/) | The generator - `server.js`, `lib.js`, `ssrf-chromium.js`, `package.json`, `Dockerfile` |
+| [`service/`](service/) | The generator - `server.js`, `lib.js`, the page-loading layer (`page-fetch.js`, `stylesheets.js`, `rebase.js`, `critical-css.js`), the SSRF guards (`ssrf-chromium.js`, `ssrf-proxy.js`), `package.json`, `Dockerfile` |
 | [`wordpress-plugin/wp-critical-css/`](wordpress-plugin/wp-critical-css/) | The installable plugin - `wp-critical-css.php` plus `includes/wpcc-trigger.php`, `wpcc-receiver.php`, `wpcc-inject.php`, `wpcc-shared.php` |
 | [`wordpress-plugin/wp-critical-css-tests/`](wordpress-plugin/wp-critical-css-tests/) | PHPUnit + PHPCS tooling for the plugin (dev-only, not shipped) |
 | [`docs/wiki/`](docs/wiki/) | The only source of the GitHub Wiki - published by `publish-wiki.yml`, checked against the code by the `wiki-docs` CI job (`scripts/check-wiki-docs.mjs`) |

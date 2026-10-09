@@ -115,7 +115,7 @@ On a real post/page that's been processed, view source and check for:
 
 ## Optional: network-level egress filtering
 
-The service renders your site with headless Chrome and guards what that Chrome can reach in code: request interception, and a local proxy (`service/ssrf-proxy.js`) that is Chrome's only way onto the network, resolves each name itself (sharing one lookup between concurrent requests and reusing the answer for a few seconds) and refuses private and reserved addresses. A network rule is the independent second line for whatever those miss (a bug in the classifier or the proxy, a future Chrome feature that bypasses the proxy switches, any other process in the container): make private, link-local (cloud metadata), carrier-grade-NAT, multicast and other reserved addresses unreachable from the container, whatever Chrome tries. `docker-compose.egress.example.yml` does that with a small helper container (`egress-guard`) that installs firewall rules in the service's network namespace, using the same address ranges as the code-level check, so the two layers agree. It is a second layer on top of the code-level checks, not a replacement for them.
+The service renders your site with headless Chrome and guards what that Chrome can reach in code: request interception, and a local proxy (`service/ssrf-proxy.js`) that is Chrome's only way onto the network, resolves each name itself (sharing one lookup between concurrent requests and reusing the answer for a few seconds) and refuses private and reserved addresses. The service's own fetches of the page and its stylesheets (`service/page-fetch.js`) go through the same proxy. A network rule is the independent second line for whatever those miss (a bug in the classifier or the proxy, a future Chrome feature that bypasses the proxy switches, any other process in the container): make private, link-local (cloud metadata), carrier-grade-NAT, multicast and other reserved addresses unreachable from the container, whatever Chrome tries. `docker-compose.egress.example.yml` does that with a small helper container (`egress-guard`) that installs firewall rules in the service's network namespace, using the same address ranges as the code-level check, so the two layers agree. It is a second layer on top of the code-level checks, not a replacement for them.
 
 ### Steps
 
@@ -184,6 +184,88 @@ docker exec critical-css-service node -e "fetch('http://169.254.169.254/',{signa
 - Compose only. Plain `docker run`, Swarm, Kubernetes and rootless Docker or Podman are untested (on Kubernetes use a `NetworkPolicy` with an `ipBlock` `except` list instead).
 - Do not combine it with `network_mode: host`: the rules would land in the host's namespace.
 - The guard image (`registry.k8s.io/build-image/distroless-iptables`, ~11-13 MB compressed per platform, amd64 and arm64) is pinned by tag and digest; bump it by taking a new digest from `docker buildx imagetools inspect`. The repository's Dependabot `docker` entry covers only `/service`, so this pin has to be bumped by hand.
+
+## Upgrading from 0.2.8
+
+The first release after 0.2.8 no longer uses the `critical` npm package. The service loads the page and its stylesheets with its own code (`service/page-fetch.js`, `stylesheets.js`, `rebase.js`, `critical-css.js`) and calls `penthouse-esm`, the Chrome-based extraction `critical` was built on, directly. There is nothing new to configure: no variable, no port, the same image layout and endpoints. For an ordinary page the critical CSS is the same as before: `service/fixtures/parity/` records 254 cases of what `critical@8.0.0` did with a page and its stylesheets, the unit tests replay them, and 53 further cases there are the places where the new code deliberately behaves differently. This section lists every difference an operator can notice. The common thread: where the old code quietly used whatever it got (an error page as the page, a missing stylesheet as nothing), the service now stops and says why, and it puts bounds on what a page or a server can cost.
+
+**Before you upgrade**
+
+- If a firewall or bot filter in front of your site decides by User-Agent, allow the new one. Every request the service makes for a page or a stylesheet now carries `Mozilla/5.0 (compatible; wp-critical-css/<version>; +https://github.com/solarssk/wp-critical-css)`, where it used to carry its HTTP client's default. The requests Chrome makes while rendering are unchanged.
+- `/tmp` must be writable (the example compose file mounts a tmpfs there). It always had to be: each render writes a copy of the page there and removes it afterwards.
+
+**After you upgrade,** run a sweep ([section 6](#6-backfill-existing-content)) and read `docker logs critical-css-service` for lines that start with `[critical-css] failed for` or `[critical-css] skipping`: they mark the pages that now behave differently. The [Wiki's Troubleshooting page](https://github.com/solarssk/wp-critical-css/wiki/Troubleshooting) explains each message.
+
+### Jobs that now fail
+
+A failed job is logged as `[critical-css] failed for "<url>": "wpcc: <message>"`, delivers nothing to WordPress, and is not retried by the service: the next `save_post` webhook or the nightly sweep queues the URL again. The message carries a code in brackets.
+
+- **The page answers with anything but a 2xx status** (a 503 maintenance page, a bot-challenge page, a 404): `the page could not be loaded (STATUS)`. Before, the error page was processed as if it were the page and its CSS was delivered.
+- **The page is not `text/html` or `application/xhtml+xml`, or has no `Content-Type` header** (WordPress always sends one): `(CONTENT_TYPE)`.
+- **The page, or a redirect on the way to it, goes to a host name other than `ALLOWED_HOSTNAME`** (for example `example.com` redirecting to `www.example.com`): `(HOST_NOT_ALLOWED)`. The comparison is on the host name only, `http` and `https` both pass, and every redirect target is checked. Set `ALLOWED_HOSTNAME` to the name your pages are really served on. The redirects of a stylesheet may leave the host (a CDN is normal); each hop is still checked.
+- **More than 5 redirects, or a loop:** `(TOO_MANY_REDIRECTS)` or `(REDIRECT_LOOP)`. Before, a chain of 11 was still followed, and a chain of 25 or a loop ended in an empty result without an error (both are recorded cases in the parity fixtures).
+- **A stylesheet on the page's own host cannot be loaded** (a 404 or 5xx answer, a refused connection, a timeout, a redirect that goes nowhere, a body over 2 MiB, or a response served as `text/html` or `application/xhtml+xml`): `a stylesheet on the page's own host could not be loaded, so no critical CSS is made without its rules (CODE)`, the code being the reason (`STATUS`, `NETWORK`, `TIMEOUT`, `TOO_LARGE`, `CONTENT_TYPE`, `PROXY_REFUSED`, ...). Before, such a sheet was dropped silently, or the error page was used as if it were CSS. Critical CSS that silently lacks the owner's own rules is worse than none. CSS that a misconfigured server labels as HTML is refused too, where `critical` used it.
+- **More than 100 stylesheets** (`TOO_MANY_STYLESHEETS`). Inline `<style>` elements and `data:` links count as well as linked ones, and the count is made before anything is fetched. Exactly 100 still work.
+- **A stylesheet or the whole set is too large** (`CSS_TOO_LARGE`): an inline `<style>` element or a decoded `data:` link over 2 MiB, or all stylesheets together over 8 MiB after their `url()`s are rewritten (rewriting makes a sheet on another host longer). The 8 MiB budget fails the job whichever host the stylesheet is on.
+- **The `url()`s of the stylesheets would be too expensive to rewrite** (`CSS_TOO_LARGE`, message `the stylesheets are too expensive to process`). See "The work limit" below.
+- **Loading takes longer than 60 seconds in total** (`LOAD_DEADLINE`), or **the copy of the page that Chrome renders would be over 40 MiB** (`LAYOUT_TOO_LARGE`: the stylesheets are injected after every `<head>` start tag, so only a page with several of them and a lot of CSS gets there).
+- **The markup nests elements deeper than 512 levels, or is so misnested that parsing it would take unbounded time** (`HTML_TOO_DEEP`, `HTML_TOO_COMPLEX`).
+- **A `data:` stylesheet link without a comma** (`DATA_URI_MALFORMED`). This failed before too.
+
+"The page's own host" means host name and port, ignoring the scheme and a default port, of the LAST URL requested for that stylesheet (after its redirects) compared with the FINAL URL of the page. A stylesheet that redirects from a CDN to your host counts as yours; one that moves from your host to a CDN counts as the CDN's. A different sub-domain (`cdn.example.com`) or port is another host.
+
+### Skipped, with one warning
+
+- **A stylesheet on another host that cannot be loaded** (a CDN, a font service, a third-party widget, for any of the reasons above, except that the 8 MiB budget and the 60-second loading limit still fail the job): left out of the CSS, with `[critical-css] skipping a stylesheet that could not be loaded from another host (CODE): ...`. Before, it was dropped without a word.
+- **A stylesheet link whose scheme is not `http:` or `https:`** (`ftp:`, `file:`, `javascript:`) or that is not a valid URL: never requested, left out, with `[critical-css] skipping the stylesheet link "...": ...`.
+- **A `<link>` whose `href` is blank** after trimming: skipped without a request and without a word. Before, `href=" "` resolved to the page itself, which was fetched as a stylesheet and parsed to nothing.
+- **A stylesheet that postcss cannot process** (a syntax error): still left out, now with an info line, `[critical-css] the stylesheet "<path>" could not be processed and is left out of the critical CSS`.
+
+### How the service asks
+
+- Every request is a plain `GET`. `critical` sent `HEAD` requests first, to probe the page, the stylesheets and `<base>` candidates, and decided from the answers; that is gone.
+- No request is retried. `critical`'s HTTP client retried a failing request twice by default; this service makes one attempt. One transient 5xx or network error on a stylesheet of your own host now fails that job, and the next webhook or sweep queues it again.
+- Stylesheets are fetched one after the other, in document order, as before, so the load on your site stays one request at a time.
+- The page and its stylesheets are fetched once per job, and both viewports are rendered from that one copy. `critical` fetched them once per viewport, so your site saw twice the requests and the two renders could even be given different markup.
+- Every request goes through the service's local policy proxy (`service/ssrf-proxy.js`), the same one Chrome uses, and is checked before it is sent and again at each redirect hop: only `http:` and `https:`, no credentials in the URL, no private or reserved IP address in any spelling, and for the page the allowed host name. TLS certificates are verified.
+- A link written without a scheme (`//cdn.example/a.css`) is requested with the scheme of the page. `critical` asked over `https` first and fell back to `http`.
+- Compressed responses (gzip, deflate, brotli, zstd) are decoded as before; the size limits count decoded bytes. The body is read as UTF-8 whatever the `Content-Type` charset says, as before.
+
+### Limits
+
+As the service used `critical`, none of these limits existed: a hostile or broken page, or a stalled server, could exhaust the memory or the CPU of the service or hold its single worker for ever. They are fixed in the code (`LIMITS` in `service/page-fetch.js`, `LOAD_LIMITS` in `service/critical-css.js`), not settings, and nothing is truncated silently: exceeding one fails the job (or skips a stylesheet on another host) with a message.
+
+| What | Limit |
+|---|---|
+| The page (html) | 10 MiB |
+| One stylesheet, linked, inline or a decoded `data:` link | 2 MiB |
+| All stylesheets together, after `url()` rewriting | 8 MiB |
+| Stylesheets per page, linked, inline and `data:` together | 100 |
+| Redirects per request | 5 |
+| One request | 30 s in total, 15 s without receiving a byte |
+| Loading the page and all its stylesheets | 60 s |
+| The copy of the page that Chrome renders | 40 MiB |
+| Element nesting in the page | 512 levels |
+| Rewriting the `url()`s of one page | 1,000,000,000 units of work (see below) |
+
+The byte limits are sized for the documented 1 GiB container with a tmpfs `/tmp`. For scale, a real WordPress/Elementor homepage measured while choosing them is 515 KiB of html and 23 stylesheets (13 inline, 10 linked) of 1.05 MiB in all, the largest, an inline one, 360 KiB. Penthouse's own 60-second limit per rendered viewport is unchanged.
+
+**The work limit.** `postcss-url`, which rewrites the `url()`s, can take super-linear time on some text, so the service estimates the work in one linear pass before it runs and refuses a page that would cost too much. For every declaration that contains `url(` (or `AlphaImageLoader(`) the estimate is the number of such references in it, times the length of its value in characters, times the square of (the longest run of blanks in the value, spaces, tabs and line breaks, plus one). The sum over all declarations of all the stylesheets of the page may be at most 1,000,000,000. A real page is nowhere near: the WordPress/Elementor homepage above comes to 152,060. What reaches the limit is a long value with a long run of blanks in it, for example a `data:` URI of several hundred KB that is pretty-printed over many lines with deep indentation (500,000 characters, one reference and a run of 40 blanks is 840,500,000, and a second `url()` in the same declaration is over). If a job fails with `too expensive to process`, minify that CSS (no indentation, no wrapped lines inside the value) or serve the image as a file. The work the limit lets through blocks the service's event loop for under a second per page.
+
+### The CSS itself
+
+Unchanged: which stylesheets a page has (`<link rel="stylesheet">`, `<link rel="preload" as="style">` and `<style>`, in document order, de-duplicated; `media="print"` sheets dropped unless their `onload` mentions `media`; other `media` values wrapped in an `@media` block; `<noscript>` content ignored), how `url()`s are rewritten (still `postcss-url`, so its quirks stay), the options penthouse is given, the project's media-query pruning and the minifier settings. A page with no CSS at all is still not rendered. What can differ:
+
+- **`<base href>` follows the HTML standard**: the first `<base>` that has an `href`, wherever the attribute stands, decides what relative links mean, and a relative base is resolved against the page. An unparsable one, and one that is a `data:` or `javascript:` URL, is ignored. `critical` read it with a regular expression, threw on a relative one, and probed other directories with `HEAD` when a sheet was not found under the base. The service never guesses: a sheet that is not where the standard says is a failure like any other.
+- **`data:` links** are decoded as before, but the scheme and the `;base64` token are case-insensitive (`DATA:text/css,...` works; `critical` failed the job on it). A malformed percent escape is decoded leniently. The text of a `<style>` element is always CSS, never read as a `data:` URI.
+- **A stylesheet path that contains `://`** is a normal path on your host and is rebased normally; `critical` emptied such a sheet.
+- **A `/*# sourceMappingURL=... */` comment** is dropped while the URLs of a stylesheet are rewritten, because the service never reads or writes a source map. The delivered critical CSS is not affected (the minifier removes that comment anyway).
+- **One newline fewer between rules** for each stylesheet that `critical` turned into an empty element of the join and the service leaves out (a blank `href`; an off-host stylesheet that answered with an HTML error page or ended in a redirect loop). Only a blank line between two rules is affected, never a rule.
+- **Literal injection into the layout copy.** The CSS is put into the copy of the page that Chrome lays out literally; `critical` used it as a replacement template, so `$&`, `$1`, `$$` and similar sequences in a site's CSS were expanded and corrupted that copy. Only sites whose CSS contains such sequences are affected, and only in the layout copy, not in what is delivered.
+
+### Logs and error codes
+
+Every line this part writes starts with `[critical-css]`. Anything a page or a server controls (a link, a host name, a redirect target, a content type, an error text) appears in quotes and JSON-escaped, and is cut at 200 characters before escaping, so it cannot forge a log line or flood the log. The codes: `PAGE_FAILED`, `STYLESHEET_FAILED`, `TOO_MANY_STYLESHEETS`, `CSS_TOO_LARGE`, `LAYOUT_TOO_LARGE`, `LOAD_DEADLINE` (`DocumentLoadError`, `service/critical-css.js`); `INVALID_URL`, `SCHEME`, `USERINFO`, `PRIVATE_LITERAL`, `HOST_NOT_ALLOWED`, `BAD_REDIRECT`, `REDIRECT_LOOP`, `TOO_MANY_REDIRECTS`, `STATUS`, `CONTENT_TYPE`, `TOO_LARGE`, `PROXY_REFUSED`, `TIMEOUT`, `ABORTED`, `NETWORK` (the reason inside a `PAGE_FAILED` or `STYLESHEET_FAILED` message, `service/page-fetch.js`); `HTML_TOO_DEEP`, `HTML_TOO_COMPLEX`, `DATA_URI_MALFORMED` (the markup errors, `service/stylesheets.js`). Two more exist in the code, `UNRESOLVABLE_LINK` (a stylesheet link that is not a complete URL, on a page passed in as html with no page URL to resolve it against) and `ABORTED` (the caller's cancellation); the service's own `/generate` flow produces neither.
 
 ## Releases
 

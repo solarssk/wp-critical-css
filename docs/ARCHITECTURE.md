@@ -12,6 +12,7 @@ flowchart LR
 
     subgraph gen["critical-css-service (Node + headless Chrome)"]
         QUEUE["single-worker queue"]
+        LOAD["load the page + its stylesheets\nonce, via the local policy proxy"]
         RENDER["Puppeteer render\nmobile + desktop viewports"]
     end
 
@@ -19,7 +20,7 @@ flowchart LR
 
     TR -- "POST /generate\nX-WPCC-Secret" --> QUEUE
     SWEEP -- "sitemap_index.xml" --> QUEUE
-    QUEUE --> RENDER
+    QUEUE --> LOAD --> RENDER
     RENDER -- "POST /critical-css\nX-WPCC-Secret" --> RC
     RC --> PM[("postmeta\n_wpcc_critical_css_mobile\n_wpcc_critical_css_desktop")]
     PM --> IJ
@@ -47,10 +48,13 @@ this is what keeps memory/CPU bounded on modest hardware.
 sequenceDiagram
     participant WP as WordPress
     participant Gen as critical-css-service
+    participant Web as Your site
     participant Chrome as Headless Chrome
 
     WP->>Gen: POST /generate {url}\nX-WPCC-Secret
     Gen->>Gen: isValidSecret() + isAllowedUrl()
+    Gen->>Web: GET the page, then each stylesheet (once, via the local policy proxy)
+    Web-->>Gen: html + css
     par mobile viewport
         Gen->>Chrome: render (412x915)
         Chrome-->>Gen: critical CSS
@@ -67,6 +71,27 @@ sequenceDiagram
 endpoint safe to expose on an internal Docker network - see
 [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for the threat model behind
 each.
+
+## Loading the page
+
+The service does not hand a URL to a library and wait: it loads the page and its stylesheets itself, once per job, and renders both viewports from that one copy. `generateCriticalCss()` (`service/critical-css.js`) is the single call that does it, for `server.js` and for the container smoke test (`service/scripts/check-render.mjs`) alike. Four modules, one job each:
+
+| Module | Job |
+|---|---|
+| `service/page-fetch.js` | The only server-side HTTP for a page and its stylesheets. Policy per hop (scheme, credentials, private IP literals, the page's host pin), manual redirects, status and content-type checks, caps that count decoded bytes, deadlines, stable error codes. The client (`undici`) reaches the network only through the local policy proxy. |
+| `service/stylesheets.js` | Which stylesheets a page has: `parse5` with a depth guard and a work bound, an iterative walk, `<base href>`, `data:` links, media wrapping. Pure: no I/O. |
+| `service/rebase.js` | Rewrites the `url()`s of a stylesheet so it still works inline (`postcss-url`), after a size guard and a work guard. Pure. |
+| `service/critical-css.js` | The failure policy, the budgets, the layout copy that penthouse renders, `renderViewport()` and `generateCriticalCss()`. |
+
+In order:
+
+1. Fetch the page. Anything but a 2xx answer, a content type that is not HTML or XHTML, or a redirect off `ALLOWED_HOSTNAME` fails the job.
+2. Parse it and discover its stylesheets (`<link rel="stylesheet">`, `<link rel="preload" as="style">`, `<style>`, `data:` links) the way the `critical` package did, in document order.
+3. Fetch the stylesheets one after the other. One that cannot be loaded fails the job when it is on the page's own host, because critical CSS that silently lacks the owner's own rules is worse than none, and is skipped with a warning when it is on another host (a CDN, a font service).
+4. Rewrite each stylesheet's `url()`s, join the sheets, and write a copy of the page with the CSS injected to a private temporary directory (`mkdtemp`, removed in a `finally`, one per viewport).
+5. Penthouse lays that copy out in the guarded Chrome for each viewport, the project's media-query pruning (`stripInapplicableMediaQueries()`) runs over its output, and `clean-css` minifies it.
+
+What a stylesheet reference can be is a URL to fetch, never a file to read: nothing a page says reaches the local file system. The limits (sizes, stylesheet count, redirects, time, markup depth, rewrite work) and the error codes are constants in these modules and are listed for operators in [DEPLOYMENT.md](DEPLOYMENT.md#upgrading-from-028). `service/fixtures/parity/` records 254 cases of what the replaced `critical@8.0.0` did, the unit tests replay them, and 53 further cases (its README lists them) are the deliberate differences.
 
 ## Data flow
 
@@ -105,17 +130,29 @@ each.
   `service/server.js`), so the elevated capability the real Chrome sandbox
   would otherwise need is never used - confirmed empirically, and
   `docker-compose.example.yml`/`docs/SECURITY-CONTROLS.md` cross-reference
-  this same tradeoff. `critical` (via `penthouse`) does expose a way to
-  pass custom launch args despite not surfacing one directly: its
-  `puppeteer.getBrowser` option accepts a function that supplies an
+  this same tradeoff. `penthouse` does not take launch args directly, but
+  its `puppeteer.getBrowser` option accepts a function that supplies an
   already-launched browser instance instead of letting penthouse start its
   own - `getSsrfSafeBrowser()` uses this to call `puppeteer.launch()`
   itself with `PUPPETEER_LAUNCH_ARGS` (and to wire up this project's own
-  SSRF-guarded request interception on every page it hands out). Those
+  SSRF-guarded request interception on every page it hands out);
+  `generateCriticalCss()` refuses to run the real penthouse without it, so a
+  forgotten launcher can never mean an unguarded Chrome. Those
   launch args also point Chrome at a small proxy the service runs on
   `127.0.0.1` (`service/ssrf-proxy.js`), which is Chrome's only way onto the
   network: it resolves each name once, refuses private/reserved addresses and
   connects to the address it validated (see `docs/SECURITY-CONTROLS.md`).
+- **No `critical` package: the service owns the page-loading layer.**
+  `critical` fetched the page and its stylesheets with its own HTTP client,
+  so the SSRF policy had to be bolted on through that client's hooks, it
+  fetched everything once per viewport, and its dependency tree (a glob
+  stack the service never called) kept the required audit check red on an
+  advisory with no fix. The service now loads the page itself, through the
+  same local policy proxy Chrome uses, and calls `penthouse-esm` directly.
+  The behaviour it replaced is pinned by the parity fixtures
+  (`service/fixtures/parity/`); where it differs on purpose the fixtures say
+  so. Page loading is the one place that has to stay first-party: do not
+  add another HTTP client or a library that fetches on its own for it.
 
 ## Rollback
 
