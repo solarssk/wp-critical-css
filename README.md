@@ -90,7 +90,7 @@ Two independent triggers feed the same queue - editing a post regenerates just t
 | | Layer | Technologies |
 |---|-------|---------------|
 | 🟢 | **Service runtime** | Node.js 24 (ESM), Express 5, node-cron 4 |
-| 🌐 | **Rendering** | Puppeteer + [`penthouse-esm`](https://www.npmjs.com/package/penthouse-esm), called directly. Loading the page and its stylesheets is the service's own code on `undici`, `parse5`, `postcss` and `clean-css` |
+| 🌐 | **Rendering** | Puppeteer + [`penthouse-esm`](https://www.npmjs.com/package/penthouse-esm), called directly. Loading the page and its stylesheets is the service's own code on `undici`, `parse5`, `postcss`, `postcss-url` and `clean-css` |
 | 🐘 | **WordPress plugin** | PHP 7.4+, WordPress 6.0+ - REST receiver, `save_post` hook, WP-Cron trigger |
 | 🐳 | **Container** | `ghcr.io/puppeteer/puppeteer` base, pinned by digest, with Chrome pinned to a recent Stable build (checked daily) - published to GHCR and mirrored to Docker Hub |
 | 🛡️ | **CI/CD security** | CodeQL, Semgrep, Trivy (CRITICAL gate + weekly re-scan of the published image), SonarCloud, gitleaks, workflow linting (actionlint, zizmor), OpenSSF Scorecard, SBOM + signed build provenance |
@@ -101,7 +101,7 @@ Two independent triggers feed the same queue - editing a post regenerates just t
 |-----|--------|
 | 📖 [Wiki](https://github.com/solarssk/wp-critical-css/wiki) | Operator guides: getting started, every setting, how it works, troubleshooting, upgrading (source: [`docs/wiki/`](docs/wiki/)) |
 | 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System flow, request sequence, data flow, design decisions |
-| 🚀 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Full setup, verification, upgrading from 0.2.8, releases, rollback |
+| 🚀 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Full setup, verification, memory sizing, upgrading from 0.2.8, releases, rollback |
 | 🛡️ [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) | Threat model, CI/CD security controls, conscious exclusions |
 | 🐛 [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 | 📋 [CHANGELOG.md](CHANGELOG.md) | What changed in each release |

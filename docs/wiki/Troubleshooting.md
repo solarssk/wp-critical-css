@@ -78,8 +78,11 @@ The service could not load the page or one of its stylesheets, or the page broke
 | `loading the page and its stylesheets took longer than 60000 ms` | The page and all its stylesheets together took over 60 seconds. | Check how slow your site is for the container. |
 | `page markup nests elements deeper than 512 levels`, `too misnested to parse in bounded time` | The page's HTML is far outside what a browser builds. | Fix the markup. |
 | `malformed data: URI in a stylesheet link` | A `<link href="data:...">` stylesheet without a comma, so without a payload. | Fix or remove the link. |
+| `Page crashed!` (no `wpcc:` and no code in brackets) | Chrome's renderer ran out of memory laying the page out. The page was loaded fine, and the service stays up. | See [Out of memory](#out-of-memory). |
 
-The page and the stylesheets are fetched before Chrome starts, so these are different from a render problem. If the log shows `failed for` with none of these, the render itself failed: penthouse gave up after its 60 seconds, or Chrome could not start.
+The page and the stylesheets are fetched before Chrome starts, so these are different from a render problem. If the log shows `failed for` with none of these, the render itself failed: penthouse gave up after its 60 seconds, Chrome could not start, or Chrome ran out of memory (`Page crashed!`, above).
+
+A job can also end with no `failed for` line at all. If the log has `generating for "<url>"`, then no `delivered for` and no `failed for` for that URL, and then `listening on :3939` again, the service itself ran out of memory and restarted: see [Out of memory](#out-of-memory).
 
 ### The proxy refuses a host name
 
@@ -89,6 +92,23 @@ The service refuses any host name that resolves to a private or reserved address
 - **A site that resolves to a private address from inside the container** (a split-horizon DNS, an `/etc/hosts` entry pointing at an internal IP) is refused on purpose. The service must render your public site through its public address.
 - **A name that does not resolve at all** is refused too, but without a `[ssrf-proxy]` line.
 
+## Out of memory
+
+The limits on pages and stylesheets keep loading bounded and fail an oversize page early, with a message. They are **not a guarantee that a page fits in memory** when Chrome lays it out. The example compose file gives the container 1 GiB (`mem_limit: 1g`), and a very large page that is inside every limit can be more than that. It shows up in one of two ways:
+
+| What the log shows | What happened |
+|---|---|
+| `[critical-css] failed for "<url>": "Page crashed!"` | Chrome's renderer ran out of memory. The service stays up and keeps its queue. `docker inspect -f '{{.State.OOMKilled}}' critical-css-service` prints `true`. |
+| `generating for "<url>"`, then neither `delivered for` nor `failed for` for it, then `[critical-css] listening on :3939` again, sometimes after a block of V8 text ending in `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory` | The service itself ran out of memory and the container restarted. Everything waiting in the queue is gone, and `docker inspect -f '{{.RestartCount}}' critical-css-service` has gone up. The next sweep queues the same page again, so it will happen again. |
+
+What to do:
+
+1. **Find the page.** It is the URL on the last `generating for` line before the restart, or on the `failed for` line.
+2. **Make it smaller if you can.** Look at what makes it big: a plugin that prints a very large amount of CSS inline, or images embedded in the markup as `data:` text.
+3. **Or give the container more memory.** Raise `mem_limit` in your compose file, recreate the container and queue the page again. Do this for a site with more than about 2 MiB of CSS in all, or pages with more than about 2 MiB of HTML. A bigger limit moves the point where this happens; it does not remove it.
+
+Measured in the 1 GiB container (Node's heap limit there is 560 MiB, and a trivial page already takes about 550 MiB): 1.975 MiB of dense CSS rendered; 3.95 MiB restarted the service without swap, and 7.9 MiB (four stylesheets, each under the 2 MiB limit) restarted it with swap available; 2 MiB of HTML rendered, 3 MiB gave `Page crashed!` without swap, and 9 MiB gave it with swap available. The numbers are indicative: they come from an amd64 image running emulated on Docker Desktop, mostly without swap, and the test CSS was built to be dense (the heaviest real page measured is 515 KiB of HTML and 1.05 MiB of CSS). The [deployment guide](https://github.com/solarssk/wp-critical-css/blob/main/docs/DEPLOYMENT.md#memory-and-very-large-pages) has the full table.
+
 ## Lines that are not failures
 
 Some things are left out of the critical CSS without failing the job:
@@ -97,7 +117,7 @@ Some things are left out of the critical CSS without failing the job:
 |---|---|
 | `skipping a stylesheet that could not be loaded from another host (CODE)` | A stylesheet on a CDN, a font service or a third-party widget could not be loaded. The critical CSS is made without it. Nothing to fix on your side unless that stylesheet matters above the fold. |
 | `skipping the stylesheet link "..."` | The link's scheme is not `http:` or `https:` (`ftp:`, `file:`, ...), or it is not a valid URL. It is never requested. |
-| `the stylesheet "<path>" could not be processed and is left out of the critical CSS` | The stylesheet has a syntax error that the CSS rewriting could not get past. It contributes nothing. |
+| `the stylesheet "<path>" could not be processed and is left out of the critical CSS: <reason>` | The stylesheet has a syntax error that the CSS rewriting could not get past (the reason says which). It contributes nothing. |
 | `the page unloaded itself while the 412x915 layout was being measured` | The page navigated away while Chrome measured it, so that viewport has no critical CSS. |
 
 ## The page looks different, or flashes, before the full stylesheet loads

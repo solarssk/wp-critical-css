@@ -185,6 +185,36 @@ docker exec critical-css-service node -e "fetch('http://169.254.169.254/',{signa
 - Do not combine it with `network_mode: host`: the rules would land in the host's namespace.
 - The guard image (`registry.k8s.io/build-image/distroless-iptables`, ~11-13 MB compressed per platform, amd64 and arm64) is pinned by tag and digest; bump it by taking a new digest from `docker buildx imagetools inspect`. The repository's Dependabot `docker` entry covers only `/service`, so this pin has to be bumped by hand.
 
+## Memory and very large pages
+
+The service holds a page and its CSS in memory, Chrome lays a copy of it out, and the example compose file gives the container `mem_limit: 1g`. The limits on page and stylesheet sizes (see [Limits](#limits)) keep loading bounded and fail an oversize page early with a message. **They are not a memory guarantee for rendering a page.** They keep a realistic page far inside the container: the heaviest real page measured, a WordPress/Elementor homepage, is 515 KiB of HTML and 1.05 MiB of CSS in 23 stylesheets, and a trivial page already takes the container to about 550 MiB. A page inside every limit can still be too much, and then the job is lost without a delivery. The rendering stage (penthouse and Chrome) is the same code as in 0.2.8, so this limit is not new; it was not re-measured on 0.2.8, which had no size limits at all.
+
+Measured with the service image built locally for this release, in a 1 GiB container (Node's V8 heap limit there is 560 MiB). The test CSS was dense on purpose, many distinct small rules per byte, split into stylesheets that are each under the 2 MiB limit; the test HTML was one page of the size given:
+
+| The page | What happened |
+|---|---|
+| 1.975 MiB of dense CSS (one stylesheet) | Rendered and delivered, without swap (the container peaked at about 870 MiB). |
+| 3.95 MiB (two stylesheets) | Without swap the service restarted. With swap: not measured. |
+| 5.9 MiB (three) | Delivered with swap (the container used its 1,024 MiB and about 500 MiB of swap). Without swap the service restarted. |
+| 7.9 MiB (four) | With swap available, Node ran out of heap after about 12 seconds and the service restarted. |
+| 1 and 2 MiB of HTML | Rendered and delivered, without swap. |
+| 3 MiB of HTML | Without swap, Chrome's renderer crashed: `Page crashed!`. |
+| 5 MiB of HTML | Delivered, with swap. |
+| 9 MiB of HTML | `Page crashed!`, with swap available. |
+
+The numbers are indicative, not a rule. They come from the amd64 image running emulated on an arm64 Docker Desktop host, mostly without swap (the rows say where swap was available); a native Linux host, another swap setting or another kernel puts the line somewhere else. The test CSS was built to be dense; the heaviest real CSS measured is 1.05 MiB.
+
+### The two signatures
+
+- **`Page crashed!`.** Chrome's renderer ran out of memory while laying the page out. The job fails with `[critical-css] failed for "<url>": "Page crashed!"` (no `wpcc:` prefix and no code in brackets: this is Chrome's message, not the page loader's), the service stays up and keeps its queue, and `docker inspect -f '{{.State.OOMKilled}}' critical-css-service` prints `true`, because the kernel's out-of-memory killer stopped a Chrome process inside the container, not the service.
+- **The service restarts.** The log has `generating for "<url>"` and then no `delivered for` and no `failed for` for that URL, followed by `[critical-css] listening on :3939` again (the example compose file restarts the container). When Node ran out of heap, a V8 report ends the log before the restart: `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`; `docker inspect -f '{{.RestartCount}} {{.State.OOMKilled}}' critical-css-service` shows the restart count up and `OOMKilled` `false`. Without swap the process was sometimes stopped before Node could say anything, and the restart is the only trace. Everything that was waiting in the queue is gone with it (the queue is not persisted), and the next sweep queues the same page again, so the same page repeats it.
+
+### What to do
+
+1. Find the page: the last `generating for` line before the restart, or the `failed for` line.
+2. Make it smaller if you can. Look at what makes it big, for example a plugin that prints a very large amount of CSS inline, or images embedded in the markup as `data:` text.
+3. Or give the container more memory: raise `mem_limit` in your compose file (the example has `1g`; `2g` is a reasonable next step, though no other value was measured), recreate the container and queue the page again. Do this for a site with more than about 2 MiB of CSS in all, or pages with more than about 2 MiB of HTML. A bigger limit moves the point where this happens; it does not remove it. Node sizes its heap from the container's limit, so the heap grows with it (not measured here).
+
 ## Upgrading from 0.2.8
 
 The first release after 0.2.8 no longer uses the `critical` npm package. The service loads the page and its stylesheets with its own code (`service/page-fetch.js`, `stylesheets.js`, `rebase.js`, `critical-css.js`) and calls `penthouse-esm`, the Chrome-based extraction `critical` was built on, directly. There is nothing new to configure: no variable, no port, the same image layout and endpoints. For an ordinary page the critical CSS is the same as before: `service/fixtures/parity/` records 254 cases of what `critical@8.0.0` did with a page and its stylesheets, the unit tests replay them, and 53 further cases there are the places where the new code deliberately behaves differently. This section lists every difference an operator can notice. The common thread: where the old code quietly used whatever it got (an error page as the page, a missing stylesheet as nothing), the service now stops and says why, and it puts bounds on what a page or a server can cost.
@@ -193,6 +223,7 @@ The first release after 0.2.8 no longer uses the `critical` npm package. The ser
 
 - If a firewall or bot filter in front of your site decides by User-Agent, allow the new one. Every request the service makes for a page or a stylesheet now carries `Mozilla/5.0 (compatible; wp-critical-css/<version>; +https://github.com/solarssk/wp-critical-css)`, where it used to carry its HTTP client's default. The requests Chrome makes while rendering are unchanged.
 - `/tmp` must be writable (the example compose file mounts a tmpfs there). It always had to be: each render writes a copy of the page there and removes it afterwards.
+- Know how big your largest pages are. A page far over the limits below now fails early, with a message. A page inside them can still be more than the example compose file's 1 GiB container can lay out, which is a different failure with a different log; see [Memory and very large pages](#memory-and-very-large-pages) for the numbers, the two signatures and `mem_limit`.
 
 **After you upgrade,** run a sweep ([section 6](#6-backfill-existing-content)) and read `docker logs critical-css-service` for lines that start with `[critical-css] failed for` or `[critical-css] skipping`: they mark the pages that now behave differently. The [Wiki's Troubleshooting page](https://github.com/solarssk/wp-critical-css/wiki/Troubleshooting) explains each message.
 
@@ -219,7 +250,7 @@ A failed job is logged as `[critical-css] failed for "<url>": "wpcc: <message>"`
 - **A stylesheet on another host that cannot be loaded** (a CDN, a font service, a third-party widget, for any of the reasons above, except that the 8 MiB budget and the 60-second loading limit still fail the job): left out of the CSS, with `[critical-css] skipping a stylesheet that could not be loaded from another host (CODE): ...`. Before, it was dropped without a word.
 - **A stylesheet link whose scheme is not `http:` or `https:`** (`ftp:`, `file:`, `javascript:`) or that is not a valid URL: never requested, left out, with `[critical-css] skipping the stylesheet link "...": ...`.
 - **A `<link>` whose `href` is blank** after trimming: skipped without a request and without a word. Before, `href=" "` resolved to the page itself, which was fetched as a stylesheet and parsed to nothing.
-- **A stylesheet that postcss cannot process** (a syntax error): still left out, now with an info line, `[critical-css] the stylesheet "<path>" could not be processed and is left out of the critical CSS`.
+- **A stylesheet that postcss cannot process** (a syntax error): still left out, now with an info line, `[critical-css] the stylesheet "<path>" could not be processed and is left out of the critical CSS: <reason>`.
 
 ### How the service asks
 
@@ -229,7 +260,7 @@ A failed job is logged as `[critical-css] failed for "<url>": "wpcc: <message>"`
 - The page and its stylesheets are fetched once per job, and both viewports are rendered from that one copy. `critical` fetched them once per viewport, so your site saw twice the requests and the two renders could even be given different markup.
 - Every request goes through the service's local policy proxy (`service/ssrf-proxy.js`), the same one Chrome uses, and is checked before it is sent and again at each redirect hop: only `http:` and `https:`, no credentials in the URL, no private or reserved IP address in any spelling, and for the page the allowed host name. TLS certificates are verified.
 - A link written without a scheme (`//cdn.example/a.css`) is requested with the scheme of the page. `critical` asked over `https` first and fell back to `http`.
-- Compressed responses (gzip, deflate, brotli, zstd) are decoded as before; the size limits count decoded bytes. The body is read as UTF-8 whatever the `Content-Type` charset says, as before.
+- Compressed responses (gzip, deflate, brotli, zstd) are decoded as before; the size limits count decoded bytes. The body is read as UTF-8 whatever the `Content-Type` charset says, as before. What the service advertises differs over plain `http:`: `Accept-Encoding: gzip, deflate`, where `critical`'s client sent `gzip, deflate, br, zstd` (over `https:` it sends `br, gzip, deflate, zstd`, the same four in another order). An origin reached over plain `http:` therefore answers with gzip, deflate or no compression where it may have used brotli or zstd before; the decoded text is the same.
 
 ### Limits
 
@@ -248,7 +279,7 @@ As the service used `critical`, none of these limits existed: a hostile or broke
 | Element nesting in the page | 512 levels |
 | Rewriting the `url()`s of one page | 1,000,000,000 units of work (see below) |
 
-The byte limits are sized for the documented 1 GiB container with a tmpfs `/tmp`. For scale, a real WordPress/Elementor homepage measured while choosing them is 515 KiB of html and 23 stylesheets (13 inline, 10 linked) of 1.05 MiB in all, the largest, an inline one, 360 KiB. Penthouse's own 60-second limit per rendered viewport is unchanged.
+The byte limits keep realistic pages far inside the container and bound what the loading and the `url()` rewriting hold. They are **not a memory guarantee for rendering**: Chrome and penthouse need memory for a page that the limits do not count, and dense CSS or a very large page inside every limit can still run the 1 GiB container out of memory, which restarts the service or crashes Chrome's renderer ([Memory and very large pages](#memory-and-very-large-pages)). For scale, a real WordPress/Elementor homepage measured while choosing them is 515 KiB of html and 23 stylesheets (13 inline, 10 linked) of 1.05 MiB in all, the largest, an inline one, 360 KiB. Penthouse's own 60-second limit per rendered viewport is unchanged.
 
 **The work limit.** `postcss-url`, which rewrites the `url()`s, can take super-linear time on some text, so the service estimates the work in one linear pass before it runs and refuses a page that would cost too much. For every declaration that contains `url(` (or `AlphaImageLoader(`) the estimate is the number of such references in it, times the length of its value in characters, times the square of (the longest run of blanks in the value, spaces, tabs and line breaks, plus one). The sum over all declarations of all the stylesheets of the page may be at most 1,000,000,000. A real page is nowhere near: the WordPress/Elementor homepage above comes to 152,060. What reaches the limit is a long value with a long run of blanks in it, for example a `data:` URI of several hundred KB that is pretty-printed over many lines with deep indentation (500,000 characters, one reference and a run of 40 blanks is 840,500,000, and a second `url()` in the same declaration is over). If a job fails with `too expensive to process`, minify that CSS (no indentation, no wrapped lines inside the value) or serve the image as a file. The work the limit lets through blocks the service's event loop for under a second per page.
 
@@ -260,8 +291,17 @@ Unchanged: which stylesheets a page has (`<link rel="stylesheet">`, `<link rel="
 - **`data:` links** are decoded as before, but the scheme and the `;base64` token are case-insensitive (`DATA:text/css,...` works; `critical` failed the job on it). A malformed percent escape is decoded leniently. The text of a `<style>` element is always CSS, never read as a `data:` URI.
 - **A stylesheet path that contains `://`** is a normal path on your host and is rebased normally; `critical` emptied such a sheet.
 - **A `/*# sourceMappingURL=... */` comment** is dropped while the URLs of a stylesheet are rewritten, because the service never reads or writes a source map. The delivered critical CSS is not affected (the minifier removes that comment anyway).
+- **A `$` in a stylesheet's path appears as `%24`** in the `url()`s rewritten from it (the path on your host, or the whole URL for a stylesheet on another one). It is the same URL, but `postcss-url` builds the new text with `String#replace`, where `$&`, `` $` `` and `$'` are commands that can multiply the size of the result, so the character is written as `%24` before it gets there. A `$` in the declaration itself behaves as before. A stylesheet on another host whose name contains a `$` (no real host name does) has no safe spelling and is left out, like one that postcss cannot process.
+- **An unresolvable `url()` in a stylesheet on another host** (one the URL parser refuses, such as `url(http:[)`) is kept exactly as written, and the rest of the sheet is rewritten as usual. `critical`'s rewriter threw on it, which left the whole sheet out as one that postcss could not process. The service's rewriter never throws and never rejects, so one odd reference can no longer cost the sheet, let alone the process.
+- **No file is read while minifying.** `clean-css` is told not to inline `@import` (`inline: false`). It used to replace a local `@import url(sub/a.css)` with the text of that file when the file existed relative to the service's working directory (`/app` in the image), and to drop the rule without a word when it did not. The rule now stays in the minified CSS as written. The plugin strips every `@import` when it stores the CSS and again when it outputs it (`wpcc_strip_import_statements()` in `includes/wpcc-shared.php`, reached through `wpcc_sanitize_css()` from the receiver and from the injector), so the page itself is unaffected; only the CSS the service sends to WordPress differs.
 - **One newline fewer between rules** for each stylesheet that `critical` turned into an empty element of the join and the service leaves out (a blank `href`; an off-host stylesheet that answered with an HTML error page or ended in a redirect loop). Only a blank line between two rules is affected, never a rule.
 - **Literal injection into the layout copy.** The CSS is put into the copy of the page that Chrome lays out literally; `critical` used it as a replacement template, so `$&`, `$1`, `$$` and similar sequences in a site's CSS were expanded and corrupted that copy. Only sites whose CSS contains such sequences are affected, and only in the layout copy, not in what is delivered.
+
+### Known limitations of the page loader
+
+- **Memory.** The limits above bound loading, not what Chrome and penthouse need to render: see [Memory and very large pages](#memory-and-very-large-pages).
+- **A tag with thousands of attributes is slow to parse.** The HTML parser (`parse5`) takes time that grows with the square of the number of attributes on one tag, and none of the bounds above covers it. Measured: 16,000 attributes on one tag (about 100 KB of markup) block the service for 0.3 s, 32,000 for 1.2 s and 64,000 (437 KB) for about 5 s (5.1 s and 5.6 s in two measurements). While it runs the service answers nothing, `/health` included. `critical` used the same parser and had the same weakness, and this release does not change it. Only a page on your own host (`ALLOWED_HOSTNAME`) can reach it, and a real tag has a few dozen attributes.
+- **CSS with `@media` rules nested thousands of levels deep fails the job.** The library inside penthouse that prunes media queries (`css-tree`) overflows the stack, the log shows `failed for "<url>": "Maximum call stack size exceeded"`, and the service stays up. Measured: 500 levels were fine, 2,000 and 5,000 failed. `css-tree` inside penthouse is the same code as in 0.2.8, so this limit is not new; it was not re-measured on 0.2.8.
 
 ### Logs and error codes
 
