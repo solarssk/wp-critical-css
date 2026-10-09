@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fc from 'fast-check';
 import postcss from 'postcss';
-import { RebaseTooLargeError, rebaseStylesheet, stylesheetPath, virtualPathOf } from './rebase.js';
+import { MAX_REWRITE_WORK, RebaseTooLargeError, RebaseTooMuchWorkError, rebaseStylesheet, stylesheetPath, virtualPathOf } from './rebase.js';
 import { MalformedDataUriError, RefusedStylesheetUrl, documentBaseUrl, parseDocument, resolveStylesheetUrl, wrapInMedia } from './stylesheets.js';
 
 // Same switches as lib.property.test.js: a fixed seed so a required CI check can never turn red on a fresh random draw.
@@ -257,7 +257,7 @@ describe('rebaseStylesheet: a sheet that rebasing could make too large is refuse
 		const twenty = `a{b:${Array.from({ length: 20 }, () => "url($')").join(' ')}}`; // 164 bytes
 		const manyAmpersands = `a{b:url(${'$&'.repeat(3000)})}`; // 6 KB here: 18 MB of result; the bound is far beyond every float
 		for (const css of [twenty, manyAmpersands]) {
-			const error = await rebaseStylesheet(css, { ...place, maxBytes: 16 * 1024 * 1024 }).catch((reason) => reason);
+			const error = await rebaseStylesheet(css, { ...place, maxBytes: 8 * 1024 * 1024 }).catch((reason) => reason);
 			assert.ok(error instanceof RebaseTooLargeError, css.slice(0, 40));
 			assert.ok(error.bound > 150 * 1024 * 1024, String(error.bound));
 		}
@@ -304,11 +304,11 @@ describe('rebaseStylesheet: a sheet that rebasing could make too large is refuse
 		}
 	});
 
-	test('the numbers that matter, scaled down: urls inside every cap behind a 4,000-character path are over the 16 MiB budget by far', QUICK, async () => {
+	test('the numbers that matter, scaled down: urls inside every cap behind a 4,000-character path are over the 8 MiB budget by far', QUICK, async () => {
 		const unit = 'a{b:url(x)}';
-		const css = unit.repeat(Math.floor((256 * 1024) / unit.length)); // 256 KiB; the same shape at 5 MiB is 4.5 GB
+		const css = unit.repeat(Math.floor((256 * 1024) / unit.length)); // 256 KiB; the same shape at 2 MiB, the most a sheet may be, is 760 MB
 		const place = { stylepath: `https://cdn.test/${'d'.repeat(4000)}/s.css`, virtualPath: '/index.html' };
-		const error = await rebaseStylesheet(css, { ...place, maxBytes: 16 * 1024 * 1024 }).catch((reason) => reason);
+		const error = await rebaseStylesheet(css, { ...place, maxBytes: 8 * 1024 * 1024 }).catch((reason) => reason);
 		assert.ok(error instanceof RebaseTooLargeError);
 		assert.ok(error.bound > 90 * 1024 * 1024, String(error.bound));
 	});
@@ -327,6 +327,121 @@ describe('rebaseStylesheet: a sheet that rebasing could make too large is refuse
 		assert.equal(await rebaseStylesheet('a{b:url(x)}.x{', { stylepath: 'https://cdn.test/s.css', virtualPath: '/p/index.html', maxBytes: 0, onError: (error) => errors.push(error) }), '');
 		assert.equal(errors.length, 1);
 		assert.ok(!(errors[0] instanceof RebaseTooLargeError));
+	});
+});
+
+describe('rebaseStylesheet: a sheet whose rewriting could keep the process busy for too long is refused before anything is rewritten', () => {
+	const place = { stylepath: '/css/s.css', virtualPath: '/p/index.html' };
+	const cdn = { stylepath: 'https://cdn.test/css/s.css', virtualPath: '/p/index.html' };
+	const NO_BREAK_SPACE = String.fromCodePoint(0xa0);
+	const NEXT_LINE = String.fromCodePoint(0x85);
+	const ZERO_WIDTH_SPACE = String.fromCodePoint(0x200b);
+
+	/** The work the sheet is estimated at, as the guard reports it (exactly once per sheet it looked at). */
+	async function workOf(css, where = place, options = {}) {
+		const told = [];
+		await rebaseStylesheet(css, { ...where, ...options, onWork: (work) => told.push(work) }).catch(() => {});
+		assert.equal(told.length, 1, `${told.length} reports for ${css.slice(0, 40)}`);
+		return told[0];
+	}
+
+	// The expectations are worked out by hand from the rule: for each declaration with n >= 1 of `url(` and `AlphaImageLoader(`,
+	// n * (characters of the value) * (the longest run of whitespace in it + 1) ** 2, added up over the sheet.
+	const ESTIMATES = [
+		['one url', 'a{b:url(x)}', 6],
+		['a url with a longer value', 'a{b:url(img/a.png)}', 14],
+		['two urls in one declaration: a run of one blank between them', 'a{b:url(x) url(y)}', 2 * 13 * 4],
+		['blanks inside the parentheses are a run of two', 'a{b:url(  x)}', 8 * 9],
+		['the legacy filter', "a{filter:AlphaImageLoader(src='x')}", 25],
+		['a url and the legacy filter in one declaration', "a{b:url(x) AlphaImageLoader(src='y')}", 2 * 32 * 4],
+		['declarations add up', 'a{b:url(x)}c{d:url(yy)}', 6 + 7],
+		['inside an at-rule', '@media print{a{b:url(x)}}', 6],
+		['in a string, where it counts as well', 'a{content:"url(x)"}', 8],
+		['the longest run counts, not their sum', 'a{b:url(x  y   z)}', 13 * 16],
+		['a run of mixed whitespace', 'a{b:url(\n\t x)}', 9 * 16],
+		['a no-break space is whitespace to \\s', `a{b:url(${NO_BREAK_SPACE.repeat(3)}x)}`, 9 * 16],
+		['a next-line character and a zero-width space are not', `a{b:url(x${NEXT_LINE}${NEXT_LINE}y${ZERO_WIDTH_SPACE}${ZERO_WIDTH_SPACE}z)}`, 12],
+		['a declaration without a reference costs nothing, however long or blank', `a{content:"x${' '.repeat(50)}y"}b{color:red}`, 0],
+		['URL( in capitals is not a reference', 'a{b:URL(x) ALPHAIMAGELOADER(src=y)}', 0],
+		['a url( in a comment or a selector is not in a declaration', '/* url(x) */a[href="url(x)"]{color:red}', 0],
+		['an empty sheet', '', 0],
+	];
+	for (const [name, css, expected] of ESTIMATES) {
+		test(`the estimate: ${name}`, QUICK, async () => {
+			assert.equal(await workOf(css), expected);
+			assert.equal(await workOf(css, cdn), expected, 'it does not depend on where the sheet lives');
+		});
+	}
+
+	test('it is told once for every sheet that was looked at, refused or not, and for no other', QUICK, async () => {
+		assert.equal(await workOf('a{b:url(x)}', place, { maxWork: 5 }), 6, 'refused for its work');
+		assert.equal(await workOf('a{b:url(x)}', place, { maxBytes: -1 }), 6, 'refused for its size');
+		const told = [];
+		const onWork = (work) => told.push(work);
+		assert.equal(await rebaseStylesheet('a{b:url(x', { ...place, onWork, onError: () => {} }), '', 'postcss cannot parse it: nobody looked at its references');
+		assert.equal(await rebaseStylesheet('a{b:url(x)}', { stylepath: '.css', virtualPath: '', onWork }), 'a{b:url(x)}', 'an inline sheet without a page is not looked at either');
+		assert.deepEqual(told, []);
+	});
+
+	test('the limit is on the work: exactly the limit passes, one unit more is refused, and the error carries both numbers', QUICK, async () => {
+		const css = 'a{b:url(x)}';
+		assert.equal(await rebaseStylesheet(css, { ...place, maxWork: 6 }), 'a{b:url(../css/x)}');
+		const error = await rebaseStylesheet(css, { ...place, maxWork: 5 }).catch((reason) => reason);
+		assert.ok(error instanceof RebaseTooMuchWorkError);
+		assert.ok(error instanceof Error);
+		assert.ok(!(error instanceof RebaseTooLargeError));
+		assert.deepEqual([error.name, error.work, error.maxWork], ['RebaseTooMuchWorkError', 6, 5]);
+		assert.equal(error.message, 'wpcc: rewriting the url()s of the stylesheet would take about 6 units of work, over the 5 it may take');
+		// nothing to rewrite costs nothing, so even a limit of 0 lets it through; anything with a reference does not
+		assert.equal(await rebaseStylesheet('a{color:red}', { ...place, maxWork: 0 }), 'a{color:red}');
+		await assert.rejects(rebaseStylesheet(css, { ...place, maxWork: 0 }), RebaseTooMuchWorkError);
+	});
+
+	test('it is refused before postcss-url has looked at a single reference: a reference that postcss-url would trip over is never reached', QUICK, async () => {
+		const css = '.a{background:url(/\\[)}'; // cannot be resolved against a stylesheet URL on another host: with room to work it is an empty sheet
+		const errors = [];
+		await assert.rejects(rebaseStylesheet(css, { ...cdn, maxWork: 0, onError: (error) => errors.push(error) }), RebaseTooMuchWorkError);
+		assert.deepEqual(errors, []);
+		assert.equal(await rebaseStylesheet(css, { ...cdn, onError: (error) => errors.push(error) }), '', 'the control: the same sheet is processed, and fails there');
+		assert.equal(errors.length, 1);
+	});
+
+	test('a sheet that is over both limits is refused for its size: that is the one that asks for gigabytes', QUICK, async () => {
+		await assert.rejects(rebaseStylesheet('a{b:url(x)}', { ...place, maxBytes: -1, maxWork: -1 }), RebaseTooLargeError);
+	});
+
+	test('the default limit is MAX_REWRITE_WORK, and it is the one the real css stays far below', QUICK, async () => {
+		assert.equal(MAX_REWRITE_WORK, 1_000_000_000);
+		// 997 blanks inside a url() is 998,992,012 units of work, 998 blanks 1,001,993,004: the limit lies between them
+		const inside = (blanks) => `a{b:url(${' '.repeat(blanks)}x)}`;
+		assert.equal(await workOf(inside(997)), 998_992_012);
+		assert.equal(await workOf(inside(998)), 1_001_993_004);
+		assert.equal(await rebaseStylesheet(inside(997), place), `a{b:url(${' '.repeat(997)}../css/x)}`);
+		await assert.rejects(rebaseStylesheet(inside(998), place), RebaseTooMuchWorkError);
+	});
+
+	test('what it is for: css written to make the matching of postcss-url backtrack is refused outright', QUICK, async () => {
+		// a string that holds `url(` and a long run of blanks but no `)`: the regular expression tries every way to divide the run between three quantifiers
+		const blanks = `a{content:"url(${' '.repeat(5000)}"}`;
+		const error = await rebaseStylesheet(blanks, place).catch((reason) => reason);
+		assert.ok(error instanceof RebaseTooMuchWorkError);
+		assert.ok(error.work > 1.2e11, String(error.work));
+		// the same text a hundred times over in one declaration: a start that never matches scans on to the end, from every start
+		const starts = `a{content:"${'url(a '.repeat(20_000)}"}`;
+		await assert.rejects(rebaseStylesheet(starts, place), RebaseTooMuchWorkError);
+		// the same, but each start with a short run of blanks
+		const blankStarts = `a{content:"${`url(${' '.repeat(30)}a `.repeat(1000)}"}`;
+		await assert.rejects(rebaseStylesheet(blankStarts, place), RebaseTooMuchWorkError);
+	});
+
+	test('and css that is large but plain is not: inline data of 600 KB, wrapped or not, in a font and a mask, passes and comes back as it was', QUICK, async () => {
+		const payload = 'QUJD'.repeat(150_000); // 600,000 characters of base64
+		const wrapped = payload.replaceAll(/.{76}/g, '$&\n');
+		for (const data of [payload, wrapped]) {
+			const css = `@font-face{font-family:F;src:url(data:font/woff2;base64,${data}) format("woff2")}.a{-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'></svg>")}`;
+			assert.ok((await workOf(css)) < 1e8, 'far from the limit');
+			assert.equal(await rebaseStylesheet(css, place), css);
+		}
 	});
 });
 

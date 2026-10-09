@@ -93,10 +93,75 @@ export class RebaseTooLargeError extends Error {
 }
 
 /**
+ * rebaseStylesheet() refused a sheet because rewriting its references could keep the process busy for too long. `work`
+ * is the estimate (see MAX_REWRITE_WORK for the unit), `maxWork` what was allowed.
+ */
+export class RebaseTooMuchWorkError extends Error {
+	constructor(work, maxWork) {
+		super(`wpcc: rewriting the url()s of the stylesheet would take about ${work} units of work, over the ${maxWork} it may take`);
+		this.name = 'RebaseTooMuchWorkError';
+		this.work = work;
+		this.maxWork = maxWork;
+	}
+}
+
+/**
+ * How much work rewriting the references of one document may cost, in the unit of rewriteWork(). A unit took between a tenth
+ * and half a nanosecond on the maintainer's laptop (every shape that was timed), so this is about half a second of a
+ * blocked event loop at the most.
+ *
+ * Measured, not guessed. Over 896 real stylesheets (the 22 sheets of warsawtravelers.pl, linked and inline; the critical CSS of
+ * six public WordPress sites and their 129 inline <style> elements; the parity fixtures) the declaration that costs most is a
+ * 2,442-character SVG `mask-image` with two url()s, 19,536 units, and the sheet that costs most is a 200 KB fixture, 286,744;
+ * the whole page of warsawtravelers.pl, 22 sheets, is 149,216. The extreme legitimate case is much heavier than any of them: a
+ * 2 MiB sheet that is one declaration with four base64 fonts, wrapped at 76 characters, is 3.4e7. 1e9 is 30 times that and
+ * more than 6,000 times the whole real page, and what it keeps out is css arranged to make postcss-url's regular expression
+ * backtrack (see rewriteWork()), which no real sheet is.
+ */
+export const MAX_REWRITE_WORK = 1_000_000_000;
+
+/** The longest run of whitespace in `text`, whitespace being what `\s` means to the regular expressions of postcss-url. */
+function longestWhitespaceRun(text) {
+	let longest = 0;
+	for (const [run] of text.matchAll(/\s+/g)) {
+		longest = Math.max(longest, run.length);
+	}
+	return longest;
+}
+
+/**
+ * An upper bound on the work postcss-url does for one declaration value that holds `rewrites` rewritable references.
+ * postcss-url finds them with
+ *
+ *     /(url\(\s*['"]?)([^"')]+)(["']?\s*\))/g
+ *
+ * and, for each one it finds, writes the new reference into the value with `value.replace(old, new)` (the whole value is
+ * copied). Two things make that expensive, and both are linear to bound before anything runs:
+ *
+ * - every `url(` that does NOT match (it stands in a string, its quote is not the one that closes it ...) makes the engine
+ *   scan on to the end of the value and back, from every such start: `rewrites * length`; and the rewriting of the ones that
+ *   do match copies the value once each, the same product (about 90 s for one 1 MiB declaration made of `url(x)`s);
+ * - `\s*`, `[^"')]+` and the `\s*` after it all accept whitespace, so on a run of whitespace the engine tries every way of
+ *   dividing it between the three, at every position it backtracks to: `(longest run + 1) ** 2` times as much (a
+ *   string `"url(` followed by 2,000 blanks takes 1.4 s, by 8,000 more than a minute: it is cubic in the run).
+ *
+ * So `rewrites * length * (longest run + 1) ** 2`. It never underestimates (every shape that was timed came out between
+ * 0.1 and 0.5 ns per unit), and it is pessimistic on purpose for css whose references all match, which cost far less than
+ * that. Real css is nowhere near it: a declaration with a reference has 1 to 4 of them and a run of at most 2 blanks.
+ *
+ * @param {string} value the declaration's value, as postcss-url will see it
+ * @param {number} rewrites the number of `url(` and `AlphaImageLoader(` in it, more than 0
+ */
+function rewriteWork(value, rewrites) {
+	return rewrites * value.length * (longestWhitespaceRun(value) + 1) ** 2;
+}
+
+/**
  * A postcss plugin that runs BEFORE postcss-url and refuses the sheet when an upper bound on the size it could grow to
- * is over `maxBytes`. It looks at each declaration the way postcss-url will (its `decl.value`), so it needs no guess at
- * what postcss-url finds in the raw text, and it has done no rewriting yet when it decides. For a declaration with
- * `rewrites` rewritable references and `size` bytes the bound is
+ * is over `maxBytes`, or the work of rewriting it (see rewriteWork()) over `maxWork`. It looks at each declaration the
+ * way postcss-url will (its `decl.value`), so it needs no guess at what postcss-url finds in the raw text, and it has
+ * done no rewriting yet when it decides; it reads the sheet once, in time linear in its size. For a declaration with
+ * `rewrites` rewritable references and `size` bytes the size bound is
  *
  *     (size + rewrites * growth) * 2 ** dollars
  *
@@ -112,21 +177,30 @@ export class RebaseTooLargeError extends Error {
  * What the bound leaves out: the percent-encoding of the references themselves (a byte that is encoded becomes three), so
  * the result can exceed it, by at most twice the size of the sheet times the factor above; the caller's check on the real
  * result covers that.
+ *
+ * The size bound is checked first (a sheet that asks for gigabytes is refused as that, whatever else it costs), then the
+ * work; `onWork` is told the work of every sheet that got this far, refused or not.
  */
-function sizeGuard({ sheetBytes, maxBytes, growth }) {
+function costGuard({ sheetBytes, maxBytes, growth, maxWork, onWork }) {
 	return {
-		postcssPlugin: 'wpcc-rebase-size-guard',
+		postcssPlugin: 'wpcc-rebase-cost-guard',
 		Once(root) {
 			let bound = sheetBytes;
+			let work = 0;
 			root.walkDecls((decl) => {
 				const rewrites = REWRITE_MARKERS.reduce((sum, marker) => sum + countOccurrences(decl.value, marker), 0);
 				if (rewrites > 0) {
 					const size = Buffer.byteLength(decl.value);
 					bound += (size + rewrites * growth) * 2 ** countOccurrences(decl.value, '$') - size;
+					work += rewriteWork(decl.value, rewrites);
 				}
 			});
+			onWork?.(work);
 			if (bound > maxBytes) {
 				throw new RebaseTooLargeError(bound, maxBytes);
+			}
+			if (work > maxWork) {
+				throw new RebaseTooMuchWorkError(work, maxWork);
 			}
 		},
 	};
@@ -156,30 +230,38 @@ function sizeGuard({ sheetBytes, maxBytes, growth }) {
  *   stylesheet on another host (a `#fragment` or `?query` reference becomes that URL plus itself), the way from the
  *   page's directory to the stylesheet's file on the page's host (one `../`, 3 bytes, per directory level of the page,
  *   then the path of the stylesheet, a `?query` reference pointing at the file itself). The page chooses that path, so
- *   a sheet well inside every size limit can ask postcss for gigabytes (5 MiB of `a{b:url(x)}` behind a 600-character
- *   path ran a node process with a 1.5 GB heap out of memory; behind 4,000 characters it needed 4.5 GB). A sheet whose
- *   worst case, worked out before anything is rewritten, is over `maxBytes` is refused (see sizeGuard() for the
+ *   a sheet well inside every size limit can ask postcss for gigabytes (2 MiB of `a{b:url(x)}`, the most a sheet may be,
+ *   behind a 4,000-character path comes to 760 MB of css, and postcss holds more than one copy of it). A sheet whose
+ *   worst case, worked out before anything is rewritten, is over `maxBytes` is refused (see costGuard() for the
  *   arithmetic). The bound errs on the safe side: it can refuse a sheet that would just have fit, by a few dozen bytes
  *   per reference, never one that fits with room to spare.
+ * @param {number} [options.maxWork] the most work rewriting the references may take, MAX_REWRITE_WORK by default. A sheet
+ *   whose work, worked out before anything is rewritten like the size bound, is over it is refused: unlike a size, the
+ *   cost of postcss-url's regular expression does not follow from the size of the sheet but from how its text is
+ *   arranged, and a few kilobytes can keep the process busy for days (see rewriteWork()).
+ * @param {(work: number) => void} [options.onWork] told the work of the sheet, refused or not, once it has been worked out
+ *   (not for a sheet that is not looked at: an inline one without a page, or one postcss cannot parse), so a caller
+ *   with a budget for a whole document can pass what is left of it as `maxWork` for the next sheet
  * @returns {Promise<string>} the rebased css; the EMPTY string when postcss could not process the sheet - a
  *   syntax error anywhere in it, an unclosed block, a url that cannot be resolved - exactly as critical dropped
  *   the content of such a sheet but kept the (empty) sheet, which still counts as an element in the join
- * @throws {RebaseTooLargeError} the one thing that is not an empty sheet: a sheet over `maxBytes` is not a bad sheet, it is a budget that is gone
+ * @throws {RebaseTooLargeError | RebaseTooMuchWorkError} the two things that are not an empty sheet: a sheet over `maxBytes` or
+ *   over `maxWork` is not a bad sheet, it is a budget that is gone
  */
-export async function rebaseStylesheet(css, { stylepath, virtualPath, onError, maxBytes = Number.POSITIVE_INFINITY }) {
+export async function rebaseStylesheet(css, { stylepath, virtualPath, onError, onWork, maxBytes = Number.POSITIVE_INFINITY, maxWork = MAX_REWRITE_WORK }) {
 	const remote = URL.canParse(stylepath);
 	if (!remote && !virtualPath) {
 		return css;
 	}
 	const from = fromPathOf(stylepath);
 	const to = toPathOf(virtualPath);
-	// The most a rewrite can add to a reference: see sizeGuard() and the `maxBytes` option. ASCII both, being the pathname and the href of URLs.
+	// The most a rewrite can add to a reference: see costGuard() and the `maxBytes` option. ASCII both, being the pathname and the href of URLs.
 	const growth = remote ? Buffer.byteLength(stylepath) : Buffer.byteLength(from) + 3 * countOccurrences(to, '/');
 	try {
-		const result = await postcss([sizeGuard({ sheetBytes: Buffer.byteLength(css), maxBytes, growth }), postcssUrl({ url: remote ? absolutizeAgainst(stylepath) : 'rebase' })]).process(css, { from: remote ? new URL(from).pathname : from, to, map: false });
+		const result = await postcss([costGuard({ sheetBytes: Buffer.byteLength(css), maxBytes, growth, maxWork, onWork }), postcssUrl({ url: remote ? absolutizeAgainst(stylepath) : 'rebase' })]).process(css, { from: remote ? new URL(from).pathname : from, to, map: false });
 		return result.css;
 	} catch (error) {
-		if (error instanceof RebaseTooLargeError) {
+		if (error instanceof RebaseTooLargeError || error instanceof RebaseTooMuchWorkError) {
 			throw error;
 		}
 		onError?.(error);

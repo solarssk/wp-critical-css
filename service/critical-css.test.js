@@ -1,19 +1,22 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
+import http from 'node:http';
+import net from 'node:net';
 import { Worker } from 'node:worker_threads';
 import fc from 'fast-check';
 import { PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE } from 'penthouse-esm';
 import postcss from 'postcss';
 import { DocumentLoadError, LOAD_DEADLINE_MS, LOAD_ERROR_CODES, LOAD_LIMITS, buildLayoutHtml, loadDocument, renderViewport } from './critical-css.js';
 import { SERVED_WIDTH_RANGES, isAllowedUrl, stripInapplicableMediaQueries } from './lib.js';
-import { FETCH_ERROR_CODES, FetchRefusedError, LIMITS, createPageFetcher } from './page-fetch.js';
-import { RebaseTooLargeError } from './rebase.js';
+import { FETCH_ERROR_CODES, FetchRefusedError, LIMITS, createPageFetcher, createProxyRequest } from './page-fetch.js';
+import { MAX_REWRITE_WORK, RebaseTooLargeError, RebaseTooMuchWorkError } from './rebase.js';
+import { createSsrfProxy } from './ssrf-proxy.js';
 import { HtmlTooDeepError, MalformedDataUriError } from './stylesheets.js';
 
 // Same switches as the other property tests: a fixed seed so a required CI check can never turn red on a fresh random draw.
@@ -401,7 +404,7 @@ describe('loadDocument: arguments', () => {
 	});
 
 	test('a limit that is not a non-negative number is refused, not taken as "no limit" (a NaN or an undefined would switch its check off)', QUICK, async () => {
-		for (const limits of [{ maxSheets: Number.NaN }, { totalCssBytes: -1 }, { cssBytes: undefined }, { loadMs: '60000' }, { layoutBytes: null }, { maxSheets: Infinity - Infinity }]) {
+		for (const limits of [{ maxSheets: Number.NaN }, { totalCssBytes: -1 }, { cssBytes: undefined }, { loadMs: '60000' }, { layoutBytes: null }, { maxSheets: Infinity - Infinity }, { rewriteWork: Number.NaN }, { rewriteWork: -1 }]) {
 			await assert.rejects(loadDocument({ html: markup(), limits }), { name: 'TypeError', message: /^loadDocument: limits\.\w+ must be a non-negative number/ }, JSON.stringify(limits));
 		}
 		await failsWith(loadDocument({ html: markup('<style>.a{}</style>'), limits: { layoutBytes: 0 } }), 'LAYOUT_TOO_LARGE'); // 0 is a limit like any other
@@ -697,7 +700,7 @@ describe('loadDocument: the css budget', () => {
 			const twenty = `a{b:${Array.from({ length: 20 }, () => "url($')").join(' ')}}`; // 164 bytes; rebased by postcss-url: 152 MB
 			for (const href of ['/t.css', 'http://cdn.test/t.css']) {
 				const { load } = loaderFor(siteWith([[href, twenty]]));
-				const error = await failsWith(load('http://a.test/'), 'CSS_TOO_LARGE'); // the default 16 MiB budget
+				const error = await failsWith(load('http://a.test/'), 'CSS_TOO_LARGE'); // the default 8 MiB budget
 				assert.ok(error.cause instanceof RebaseTooLargeError, href);
 				assert.ok(error.cause.bound > 150 * 1024 * 1024, `${href}: ${error.cause.bound}`);
 			}
@@ -720,15 +723,65 @@ describe('loadDocument: the css budget', () => {
 	});
 
 	test('the defaults are the documented ones, and the budget is a setting of the load', QUICK, () => {
-		assert.deepEqual({ ...LOAD_LIMITS }, { maxSheets: 100, totalCssBytes: 16 * 1024 * 1024, cssBytes: 5 * 1024 * 1024, loadMs: 60_000, layoutBytes: 128 * 1024 * 1024 });
+		assert.deepEqual({ ...LOAD_LIMITS }, { maxSheets: 100, totalCssBytes: 8 * 1024 * 1024, cssBytes: 2 * 1024 * 1024, loadMs: 60_000, layoutBytes: 40 * 1024 * 1024, rewriteWork: 1_000_000_000 });
 		assert.ok(Object.isFrozen(LOAD_LIMITS));
 		assert.equal(LOAD_LIMITS.maxSheets, LIMITS.maxSheets);
 		assert.equal(LOAD_LIMITS.totalCssBytes, LIMITS.totalCssBytes);
 		assert.equal(LOAD_LIMITS.cssBytes, LIMITS.cssBytes);
+		assert.equal(LOAD_LIMITS.rewriteWork, MAX_REWRITE_WORK);
 		assert.equal(LOAD_LIMITS.loadMs, LOAD_DEADLINE_MS);
 		assert.equal(LOAD_DEADLINE_MS, 60_000);
 		assert.ok(Object.isFrozen(LOAD_ERROR_CODES));
 		assert.equal(new Set(LOAD_ERROR_CODES).size, LOAD_ERROR_CODES.length, 'no duplicate codes');
+	});
+});
+
+describe('loadDocument: the work of rewriting the references', () => {
+	// An inline sheet is rebased as if it were a file next to the page, so a <style> is the cheapest sheet to spend the budget on.
+	// `.sN{b:url(x)}`: the value `url(x)` is 6 units of work (rebase.js, rewriteWork()).
+	const inline = (count) => Array.from({ length: count }, (_, index) => `<style>.s${index}{b:url(x)}</style>`).join('');
+	const linked = (names) => Object.fromEntries(names.map((name) => [`http://a.test/${name}.css`, cssSheet(`.${name}{b:url(x)}`)]));
+	const pageOf = (names) => ({ 'http://a.test/': htmlPage(markup(names.map((name) => link(`/${name}.css`)).join(''))), ...linked(names) });
+
+	test('the budget is for the whole page: sheets that fit one by one are refused together, at the first that does not fit', QUICK, async () => {
+		const { load } = loaderFor({ 'http://a.test/': htmlPage(markup(inline(3))) });
+		assert.equal((await load('http://a.test/', { limits: { rewriteWork: 18 } })).cssString.split('\n').length, 3);
+		const error = await failsWith(load('http://a.test/', { limits: { rewriteWork: 17 } }), 'CSS_TOO_LARGE');
+		assert.ok(error.cause instanceof RebaseTooMuchWorkError);
+		assert.deepEqual([error.cause.work, error.cause.maxWork], [6, 5], 'the third sheet needed 6, and 17 - 6 - 6 were left');
+		assert.equal(error.message, 'wpcc: the stylesheets are too expensive to process: rewriting their url()s would take about 6 units of work, over the 5 that are left of the 17 a page may use (the css has a declaration with very many url()s or a very long run of blanks)');
+	});
+
+	test('the sheet that does not fit ends the load: the ones after it are not even fetched', QUICK, async () => {
+		const { load, calls } = loaderFor(pageOf(['a', 'b', 'c']));
+		await failsWith(load('http://a.test/', { limits: { rewriteWork: 11 } }), 'CSS_TOO_LARGE');
+		assert.deepEqual(calls.map((call) => call.url), ['http://a.test/', 'http://a.test/a.css', 'http://a.test/b.css']);
+	});
+
+	test('a sheet nobody looked at spends nothing: one that postcss cannot parse, one left out, css with no reference in it', QUICK, async () => {
+		const { load } = loaderFor({
+			'http://a.test/': htmlPage(markup(`${link('/bad.css')}${link('http://cdn.test/gone.css')}${link('/plain.css')}${link('/ok.css')}`)),
+			'http://a.test/bad.css': cssSheet('.a{b:url(x)'),
+			'http://a.test/plain.css': cssSheet('.p{color:red}'),
+			'http://a.test/ok.css': cssSheet('.o{b:url(x)}'),
+		});
+		const doc = await load('http://a.test/', { limits: { rewriteWork: 6 } });
+		assert.equal(doc.cssString, '\n.p{color:red}\n.o{b:url(x)}', 'the one sheet that costs 6 fits a budget of 6');
+	});
+
+	test('with no limit given it is MAX_REWRITE_WORK; a limit of 0 still lets css with nothing to rewrite through', QUICK, async () => {
+		const hostile = `<style>.a{content:"url(${' '.repeat(5000)}"}</style>`;
+		const refused = await failsWith(loaderFor({ 'http://a.test/': htmlPage(markup(hostile)) }).load('http://a.test/'), 'CSS_TOO_LARGE');
+		assert.equal(refused.cause.maxWork, MAX_REWRITE_WORK);
+		assert.ok(refused.cause.work > MAX_REWRITE_WORK, String(refused.cause.work));
+		const plain = loaderFor({ 'http://a.test/': htmlPage(markup('<style>.a{color:red}</style>')) });
+		assert.equal((await plain.load('http://a.test/', { limits: { rewriteWork: 0 } })).cssString, '.a{color:red}');
+	});
+
+	test('a sheet on another host is rebased against its own URL and costs the same: the budget does not care where it lives', QUICK, async () => {
+		const { load } = loaderFor({ 'http://a.test/': htmlPage(markup(link('http://cdn.test/c.css'))), 'http://cdn.test/c.css': cssSheet('.c{b:url(x)}') });
+		assert.equal((await load('http://a.test/', { limits: { rewriteWork: 6 } })).cssString, '.c{b:url(http://cdn.test/x)}');
+		await failsWith(load('http://a.test/', { limits: { rewriteWork: 5 } }), 'CSS_TOO_LARGE');
 	});
 });
 
@@ -875,6 +928,21 @@ describe('loadDocument: a stylesheet that cannot be loaded', () => {
 		});
 		assert.equal((await toCdn.load('https://a.test/dir/page/')).cssString, '');
 		assert.equal(toCdn.log.warnings.length, 1);
+	});
+
+	test('the page\'s host is the one of the FINAL page URL: after a redirect to another port of the same hostname, a stylesheet there is the page\'s own', QUICK, async () => {
+		const { load } = loaderFor({
+			'http://a.test/': redirect('http://a.test:8080/home'),
+			'http://a.test:8080/home': htmlPage(markup(`${link('/gone.css')}<style>.kept{color:red}</style>`)),
+		});
+		await failsWith(load('http://a.test/'), 'STYLESHEET_FAILED', 'STATUS'); // /gone.css is on a.test:8080, the page's own host, not on a.test
+		const sameHostnameOnly = loaderFor({
+			'http://a.test/': redirect('http://a.test:8080/home'),
+			'http://a.test:8080/home': htmlPage(markup(`${link('http://a.test/gone.css')}<style>.kept{color:red}</style>`)),
+		});
+		const doc = await sameHostnameOnly.load('http://a.test/');
+		assert.equal(doc.cssString, '.kept{color:red}', 'the same hostname on the port the page was NOT served from is another host: skipped');
+		assert.equal(sameHostnameOnly.log.warnings.length, 1);
 	});
 
 	test('a stylesheet redirected to a scheme that is not fetched fails or is skipped by the host the redirect named', QUICK, async () => {
@@ -1034,6 +1102,105 @@ describe('loadDocument: a stylesheet postcss cannot process', () => {
 	});
 });
 
+describe('loadDocument over the real thing: fetcher, undici client and policy proxy, against a loopback origin', () => {
+	// Nothing is faked but the DNS answers and the last hop: names resolve to public addresses (injected lookup) and the proxy's dial is
+	// redirected (injected connect) to a loopback origin, so a request really goes client -> CONNECT tunnel -> proxy -> origin.
+	// The origin switches on host and path and answers fixed text; nothing of a request is ever reflected.
+	const NAMES = { 'site.test': '93.184.216.34', 'cdn.test': '93.184.216.35', 'other.test': '93.184.216.36', 'rebind.test': '127.0.0.1' };
+	let origin;
+	let proxy;
+	let fetcher;
+	let originPort;
+	const seen = [];
+	const tunnels = []; // what the client asked the proxy for: CONNECT host:port
+
+	const serve = (req, res) => {
+		const { host } = req.headers;
+		const route = `${host?.split(':')[0]}${req.url}`;
+		seen.push({ route, agent: req.headers['user-agent'], method: req.method });
+		const send = (status, type, body, extra = {}) => {
+			res.writeHead(status, { 'content-type': type, ...extra });
+			res.end(body);
+		};
+		switch (route) {
+			case 'site.test/':
+				return send(302, 'text/plain', 'moved', { location: '/blog/' });
+			case 'site.test/blog/':
+				return send(200, 'text/html; charset=UTF-8', markup(`${link('/css/a.css')}${link(`http://cdn.test:${originPort}/c.css`)}${link(`http://rebind.test:${originPort}/never.css`)}<style>.inline{background:url(i.png)}</style>`));
+			case 'site.test/css/a.css':
+				return send(200, 'text/css', '.a{background:url(img/a.png)}');
+			case 'cdn.test/c.css':
+				return send(200, 'text/css', '.c{background:url(img/c.png)}');
+			case 'site.test/broken/':
+				return send(200, 'text/html', markup(`${link('/css/gone.css')}`));
+			case 'site.test/leaving/':
+				return send(302, 'text/plain', 'moved', { location: `http://other.test:${originPort}/` });
+			case 'other.test/':
+				return send(200, 'text/html', markup());
+			default:
+				return send(404, 'text/plain', 'Not Found');
+		}
+	};
+
+	before(async () => {
+		origin = http.createServer(serve);
+		await new Promise((resolve) => origin.listen(0, '127.0.0.1', resolve));
+		originPort = origin.address().port;
+		const lookup = async (name) => {
+			if (!Object.hasOwn(NAMES, name)) {
+				throw Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' });
+			}
+			return [{ address: NAMES[name], family: 4 }];
+		};
+		const connect = () => net.connect({ host: '127.0.0.1', port: originPort });
+		const proxyLog = { warn() {}, info() {}, error() {} };
+		proxy = createSsrfProxy({ lookup, connect, logger: proxyLog }); // production policy: the classifier of lib.js decides what is private
+		const proxyPort = await proxy.listen();
+		proxy.server.on('connect', (request) => tunnels.push(request.url));
+		fetcher = createPageFetcher({ request: createProxyRequest({ proxyPort }) });
+	}, { timeout: 15_000 });
+
+	after(async () => {
+		await fetcher?.close();
+		await proxy?.close();
+		origin?.closeAllConnections();
+		await new Promise((resolve) => origin.close(resolve));
+	}, { timeout: 15_000 });
+
+	const loadFrom = (path, options = {}) => loadDocument({ url: `http://site.test:${originPort}${path}`, fetcher, isPageHostAllowed: (url) => url.hostname === 'site.test', log: recordingLog(), ...options });
+
+	test('a page behind a redirect, a stylesheet of its own host, one on a CDN, an inline one, and one the proxy refuses: loaded, rebased and joined', { timeout: 20_000 }, async () => {
+		seen.length = 0;
+		tunnels.length = 0;
+		const log = recordingLog();
+		const doc = await loadFrom('/', { log });
+		assert.deepEqual([...new Set(tunnels)].sort((a, b) => a.localeCompare(b)), ['cdn.test', 'rebind.test', 'site.test'].map((name) => `${name}:${originPort}`), 'every request, the refused one included, went to the proxy as a CONNECT by name');
+		assert.equal(doc.docUrl.href, `http://site.test:${originPort}/blog/`);
+		assert.equal(doc.virtualPath, '/blog/index.html');
+		assert.equal(
+			doc.cssString,
+			['.a{background:url(../css/img/a.png)}', `.c{background:url(http://cdn.test:${originPort}/img/c.png)}`, '.inline{background:url(i.png)}'].join('\n'),
+			'the sheet of the page host relative to the page, the CDN one absolute, the inline one as it is; the refused one is not there',
+		);
+		assert.deepEqual(
+			seen.map((entry) => entry.route),
+			['site.test/', 'site.test/blog/', 'site.test/css/a.css', 'cdn.test/c.css'],
+			'one request each, in document order; the stylesheet that resolves to a private address never reached the origin',
+		);
+		assert.ok(seen.every((entry) => entry.method === 'GET' && /^Mozilla\/5\.0 \(compatible; wp-critical-css/.test(entry.agent)));
+		assert.equal(log.warnings.length, 1);
+		assert.match(log.warnings[0], /^\[critical-css\] skipping a stylesheet that could not be loaded from another host \(PROXY_REFUSED\): /);
+		assert.equal(doc.layoutHtml, doc.html.replace('<head>', `<head><style>${doc.cssString}</style>`));
+	});
+
+	test('a stylesheet of the page\'s own host that is not there fails the job, and the host pin stops a page that leaves the host', { timeout: 20_000 }, async () => {
+		const missing = await failsWith(loadFrom('/broken/'), 'STYLESHEET_FAILED', 'STATUS');
+		assert.match(missing.message, /HTTP 404/);
+		await failsWith(loadFrom('/leaving/'), 'PAGE_FAILED', 'HOST_NOT_ALLOWED');
+		await failsWith(loadFrom('/nowhere/'), 'PAGE_FAILED', 'STATUS');
+	});
+});
+
 // ---------------------------------------------------------------------------
 // part 3: renderViewport, with a fake penthouse (no Chrome)
 // ---------------------------------------------------------------------------
@@ -1147,24 +1314,26 @@ describe('renderViewport', () => {
 		const plugin = {
 			postcssPlugin: 'wpcc-test-append',
 			Once(root, { result }) {
-				seen.push({ css: root.toString(), from: Object.hasOwn(result.opts, 'from') ? result.opts.from : 'no from option' });
+				seen.push({ css: root.toString(), from: Object.hasOwn(result.opts, 'from') ? result.opts.from : 'no from option', map: result.opts.map });
 				root.append(postcss.parse('b{color:#ff0000;margin:0px}'));
 			},
 		};
 		const css = await renderViewport(await docWith(), { dimension: MOBILE, postcssPlugins: [plugin], penthouseImpl: fakePenthouse('a { color : #00ff00 }') });
-		assert.deepEqual(seen, [{ css: 'a { color : #00ff00 }', from: undefined }], 'the plugin saw penthouse\'s output as it was, and postcss was told there is no file');
+		assert.deepEqual(seen, [{ css: 'a { color : #00ff00 }', from: undefined, map: false }], 'the plugin saw penthouse\'s output as it was, and postcss was told there is no file and no source map to follow');
 		assert.equal(css, 'a{color:#0f0}b{color:red;margin:0}', 'and the minifier saw the plugin\'s output');
 	});
 
-	test('with no plugins postcss is not run at all: css it would refuse still reaches the minifier; with a plugin it is refused', QUICK, async () => {
-		// postcss parses even for zero plugins when it must look for a source map: this comment names an inline map it cannot decode.
+	test('postcss never follows a source map: css that names one it cannot decode reaches the minifier with and without a plugin', QUICK, async () => {
+		// With its defaults postcss decodes an inline map named by the css, and refuses css whose map it cannot read. This service reads and writes none.
 		const unusable = 'a{color:red}/*# sourceMappingURL=data:application/json;base64,e30= */';
 		await assert.rejects(async () => postcss().process(unusable, { from: undefined }), /version/, 'control: postcss itself refuses this, even with no plugin');
-		assert.equal(await renderViewport(await docWith(), { dimension: MOBILE, penthouseImpl: fakePenthouse(unusable) }), 'a{color:red}');
-		assert.equal(await renderViewport(await docWith(), { dimension: MOBILE, penthouseImpl: fakePenthouse('a{color:red') }), 'a{color:red}');
+		assert.equal((await postcss().process(unusable, { from: undefined, map: false })).css, 'a{color:red}', 'control: with map: false it does not');
 		const noop = { postcssPlugin: 'noop', Once() {} };
+		assert.equal(await renderViewport(await docWith(), { dimension: MOBILE, penthouseImpl: fakePenthouse(unusable) }), 'a{color:red}');
+		assert.equal(await renderViewport(await docWith(), { dimension: MOBILE, postcssPlugins: [noop], penthouseImpl: fakePenthouse(unusable) }), 'a{color:red}');
+		// css that does not parse is another matter: with no plugins postcss is not run at all, so it reaches the minifier; with one it is refused
+		assert.equal(await renderViewport(await docWith(), { dimension: MOBILE, penthouseImpl: fakePenthouse('a{color:red') }), 'a{color:red}');
 		await assert.rejects(renderViewport(await docWith(), { dimension: MOBILE, postcssPlugins: [noop], penthouseImpl: fakePenthouse('a{color:red') }), { name: 'CssSyntaxError' });
-		await assert.rejects(renderViewport(await docWith(), { dimension: MOBILE, postcssPlugins: [noop], penthouseImpl: fakePenthouse(unusable) }), /version/);
 	});
 
 	test('the project\'s own plugin works through it: media blocks that can never apply to the served range are gone', QUICK, async () => {
@@ -1281,6 +1450,84 @@ describe('renderViewport', () => {
 		await renderViewport(doc, { dimension: MOBILE, penthouseImpl });
 		assert.equal(penthouseImpl.calls[0].content, doc.layoutHtml);
 		assert.ok(doc.layoutHtml.startsWith(`${BYTE_ORDER_MARK}<!doctype html><head><style>.price::after{content:"$& $1 $$ $\` $'"}</style><style>`));
+	});
+
+	test('the real penthouse is never started without a browser launcher: a forgotten one is a TypeError, not a Chrome with none of the guards', QUICK, async () => {
+		// Were the check missing, the real penthouse would go looking for a Chrome of its own. Pointing puppeteer at a path that does not exist makes
+		// that fail at once instead of starting a browser, so a regression is a failing test and never a browser on the machine that runs it.
+		const previous = process.env.PUPPETEER_EXECUTABLE_PATH;
+		process.env.PUPPETEER_EXECUTABLE_PATH = path.join(scratch, 'no-such-chrome');
+		try {
+			const doc = await docWith();
+			for (const penthouse of [undefined, {}, { timeout: 5 }, { puppeteer: {} }, { puppeteer: { getBrowser: 'yes' } }, { puppeteer: { getBrowser: null } }, { puppeteer: null }]) {
+				for (const penthouseImpl of [undefined, null, 'not a function']) {
+					await assert.rejects(renderViewport(doc, { dimension: MOBILE, penthouse, penthouseImpl }), { name: 'TypeError', message: /penthouse\.puppeteer\.getBrowser/ }, JSON.stringify([penthouse, penthouseImpl]));
+				}
+			}
+			assert.deepEqual(await leftovers(), [], 'nothing was written either');
+			// a document with no css, or a disposed one, does not excuse the missing launcher: the mistake is in the call
+			await assert.rejects(renderViewport(await loadDocument({ html: markup() }), { dimension: MOBILE }), { name: 'TypeError', message: /getBrowser/ });
+			doc.dispose();
+			await assert.rejects(renderViewport(doc, { dimension: MOBILE }), { name: 'TypeError', message: /getBrowser/ });
+		} finally {
+			if (previous === undefined) {
+				delete process.env.PUPPETEER_EXECUTABLE_PATH;
+			} else {
+				process.env.PUPPETEER_EXECUTABLE_PATH = previous;
+			}
+		}
+	});
+
+	test('a fake penthouse needs no launcher: that check is only for the real one', QUICK, async () => {
+		const penthouseImpl = fakePenthouse();
+		assert.equal(await renderViewport(await docWith(), { dimension: MOBILE, penthouseImpl }), '.hero{color:red}');
+		assert.equal(penthouseImpl.calls.length, 1);
+	});
+
+	test('the layout copy is handed over as a proper file: URL whatever characters the temp directory has', QUICK, async () => {
+		const weird = path.join(scratch, 'wpcc dir #1 %41 ?x-');
+		await mkdir(weird);
+		const previous = process.env.TMPDIR;
+		process.env.TMPDIR = weird;
+		try {
+			const doc = await loadDocument({ html: markup('<style>.a{color:red}</style>') });
+			let seenPath;
+			await renderViewport(doc, {
+				dimension: MOBILE,
+				penthouseImpl: async (options) => {
+					seenPath = fileURLToPath(options.url);
+					return '';
+				},
+			});
+			assert.equal(path.dirname(path.dirname(seenPath)), weird, seenPath);
+			assert.equal(path.basename(seenPath), 'page.html');
+			assert.deepEqual(await readdir(weird), [], 'and the directory made inside it is gone');
+		} finally {
+			if (previous === undefined) {
+				delete process.env.TMPDIR;
+			} else {
+				process.env.TMPDIR = previous;
+			}
+			await rm(weird, { recursive: true, force: true });
+		}
+	});
+
+	test('a disposed document is refused whether or not it has css', QUICK, async () => {
+		for (const html of [markup(), markup('<style>.a{color:red}</style>')]) {
+			const doc = await loadDocument({ html });
+			doc.dispose();
+			await assert.rejects(renderViewport(doc, { dimension: MOBILE, penthouseImpl: async () => 'x' }), { name: 'TypeError', message: /disposed/ });
+		}
+	});
+
+	test('with no log passed the warnings go to console.warn, from loading and from rendering', QUICK, async (t) => {
+		const warn = t.mock.method(console, 'warn', () => {});
+		await loadDocument({ html: markup('<link rel="stylesheet" href="ftp://x.test/s.css"><style>.a{}</style>') });
+		assert.equal(warn.mock.callCount(), 1);
+		assert.match(warn.mock.calls[0].arguments[0], /^\[critical-css\] skipping the stylesheet link/);
+		await renderViewport(await docWith(), { dimension: MOBILE, penthouseImpl: async () => Promise.reject(new Error(PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE)) });
+		assert.equal(warn.mock.callCount(), 2);
+		assert.match(warn.mock.calls[1].arguments[0], /^\[critical-css\] the page unloaded itself/);
 	});
 });
 
@@ -1511,6 +1758,63 @@ describe('nothing a page controls reaches a log line or a failure message unesca
 				assert.ok(log.warnings.every((line) => !UNSAFE_IN_LOG.test(line)), code);
 			}
 		}
+	});
+});
+
+describe('what a page controls is cut before it reaches a message: a link of megabytes is not a log line of megabytes', () => {
+	// 200 characters of page text escaped (six characters at most each) plus the words around them
+	const SHOWN_AT_MOST = 1_500;
+
+	test('a stylesheet link with a scheme, or no URL at all, as long as the page likes: the warning and the failure stay short', QUICK, async () => {
+		const longScheme = `${'x'.repeat(300_000)}:rest`;
+		const log = recordingLog();
+		await loadDocument({ html: markup(`<link rel="stylesheet" href="${longScheme}"><style>.kept{color:red}</style>`), log });
+		assert.equal(log.warnings.length, 1);
+		assert.ok(log.warnings[0].length < SHOWN_AT_MOST, `${log.warnings[0].length} characters`);
+		assert.ok(!log.warnings[0].includes('x'.repeat(250)));
+		assert.match(log.warnings[0], /^\[critical-css\] skipping the stylesheet link "x{200}": only http: and https: are fetched, not "x{200}"$/);
+		const unparsable = `http://exa mple/${'y'.repeat(300_000)}`;
+		const error = await failsWith(loadDocument({ html: markup(`<link rel="stylesheet" href="${unparsable}">`) }), 'UNRESOLVABLE_LINK');
+		assert.ok(error.message.length < SHOWN_AT_MOST && !error.message.includes('y'.repeat(250)), `${error.message.length} characters`);
+	});
+
+	test('what a fetcher says about a failed stylesheet or page is cut as well, whoever wrote the fetcher', QUICK, async () => {
+		const long = new FetchRefusedError('NETWORK', `wpcc: ${'z'.repeat(300_000)}`, { url: 'https://cdn.test/s.css' });
+		const longHere = new FetchRefusedError('NETWORK', `wpcc: ${'z'.repeat(300_000)}`, { url: 'https://a.test/s.css' });
+		const fetcherFailing = (failure) => ({ fetchText: async (_url, options) => (options.kind === 'html' ? { finalUrl: new URL('https://a.test/'), text: markup(link('https://cdn.test/s.css') + link('/s.css')) } : Promise.reject(failure)) });
+		const cdn = recordingLog();
+		await loadDocument({ url: 'https://a.test/', fetcher: fetcherFailing(long), isPageHostAllowed: () => true, log: cdn }).catch(() => {});
+		// the error names the CDN as the host of the failure (its `url`), so both stylesheets are skipped, with a warning each
+		assert.equal(cdn.warnings.length, 2);
+		for (const warning of cdn.warnings) {
+			assert.ok(warning.length < SHOWN_AT_MOST, `${warning.length} characters`);
+		}
+		const own = await failsWith(loadDocument({ url: 'https://a.test/', fetcher: fetcherFailing(longHere), isPageHostAllowed: () => true, log: recordingLog() }), 'STYLESHEET_FAILED');
+		assert.ok(own.message.length < SHOWN_AT_MOST && !own.message.includes('z'.repeat(350)), `${own.message.length} characters`);
+		assert.ok(own.cause.message.length > 300_000, 'the error itself is untouched');
+		const page = await failsWith(loadDocument({ url: 'https://a.test/', fetcher: { fetchText: async () => Promise.reject(long) }, isPageHostAllowed: () => true }), 'PAGE_FAILED');
+		assert.ok(page.message.length < SHOWN_AT_MOST && page.message.endsWith(`: ${'z'.repeat(300)}`), page.message.slice(-40));
+	});
+
+	test('the budget message that quotes a fetcher is cut too (the sheet that was cut short at the budget)', QUICK, async () => {
+		const failure = new FetchRefusedError('TOO_LARGE', `wpcc: ${'q'.repeat(300_000)}`, { url: 'https://a.test/s.css' });
+		const fetcher = { fetchText: async (_url, options) => (options.kind === 'html' ? { finalUrl: new URL('https://a.test/'), text: markup(link('/s.css')) } : Promise.reject(failure)) };
+		const error = await failsWith(loadDocument({ url: 'https://a.test/', fetcher, isPageHostAllowed: () => true, limits: { totalCssBytes: 100 } }), 'CSS_TOO_LARGE');
+		assert.ok(error.message.length < SHOWN_AT_MOST, `${error.message.length} characters`);
+	});
+
+	test('the "could not be processed" line cuts the sheet\'s path and what postcss said about it', QUICK, async () => {
+		const path = `/${'p'.repeat(100_000)}.css`;
+		const log = recordingLog();
+		const { load } = loaderFor({ 'http://a.test/': htmlPage(markup(link(path))), [`http://a.test${path}`]: cssSheet('.a{color:red') });
+		await load('http://a.test/', { log });
+		assert.equal(log.infos.length, 1);
+		assert.ok(log.infos[0].length < SHOWN_AT_MOST, `${log.infos[0].length} characters`);
+		assert.match(log.infos[0], /^\[critical-css\] the stylesheet "\/p{199}" could not be processed and is left out of the critical CSS: "\/p{199}"$/, 'both are cut at the same length');
+		const words = recordingLog();
+		const word = 'w'.repeat(100_000);
+		await loaderFor({ 'http://a.test/': htmlPage(markup(link('/s.css'))), 'http://a.test/s.css': cssSheet(`${word} {`) }).load('http://a.test/', { log: words });
+		assert.ok(words.infos[0].length < SHOWN_AT_MOST, `${words.infos[0].length} characters`);
 	});
 });
 

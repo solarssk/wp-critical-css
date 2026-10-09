@@ -168,8 +168,8 @@ describe('createPageFetcher: arguments', () => {
 	test('the limits are frozen and have the documented values', { timeout: 5000 }, () => {
 		assert.deepEqual({ ...LIMITS }, {
 			htmlBytes: 10 * MiB,
-			cssBytes: 5 * MiB,
-			totalCssBytes: 16 * MiB,
+			cssBytes: 2 * MiB,
+			totalCssBytes: 8 * MiB,
 			maxSheets: 100,
 			maxRedirects: 5,
 			totalMs: 30_000,
@@ -658,10 +658,10 @@ describe('size caps', () => {
 		await refused(over.fetchText('http://a.test/', { kind: 'html' }), 'TOO_LARGE', { url: 'http://a.test/' });
 	});
 
-	test('a stylesheet may be exactly 5 MiB and not a byte more', { timeout: 20_000 }, async () => {
-		const exact = fetcherFor({ 'http://a.test/s.css': sheet(bytes(5 * MiB)) });
-		assert.equal((await exact.fetchText('http://a.test/s.css', { kind: 'css' })).text.length, 5 * MiB);
-		const over = fetcherFor({ 'http://a.test/s.css': sheet(bytes(5 * MiB + 1)) });
+	test('a stylesheet may be exactly 2 MiB and not a byte more', { timeout: 20_000 }, async () => {
+		const exact = fetcherFor({ 'http://a.test/s.css': sheet(bytes(2 * MiB)) });
+		assert.equal((await exact.fetchText('http://a.test/s.css', { kind: 'css' })).text.length, 2 * MiB);
+		const over = fetcherFor({ 'http://a.test/s.css': sheet(bytes(2 * MiB + 1)) });
 		await refused(over.fetchText('http://a.test/s.css', { kind: 'css' }), 'TOO_LARGE');
 	});
 
@@ -961,6 +961,85 @@ describe('transport failures are NETWORK, with the innermost cause in the messag
 		const own = new FetchRefusedError('PROXY_REFUSED', 'wpcc: the policy proxy refused it', { url: 'http://a.test/' });
 		const error = await refused(failing(own).fetchText('http://a.test/', { kind: 'css' }), 'PROXY_REFUSED');
 		assert.equal(error, own);
+	});
+});
+
+describe('a refusal quotes page-controlled text cut to a fixed length: a link of megabytes is not a message of megabytes', () => {
+	// A hostile page chooses every part of a URL, a server chooses its Location and Content-Type, a transport its error. The
+	// MESSAGE of a refusal is what ends up in a log line; the exact URL stays on the error as `url`, which nobody prints.
+	const LONG = 'a'.repeat(300_000);
+	// 200 characters of page text escaped (six characters at most each) plus the words and quotes around them
+	const AT_MOST = 1_400;
+	const longPath = `http://a.test/${LONG}`;
+
+	/** Awaits the refusal, checks that its message stayed short, shows none of the long run, and returns it. */
+	async function boundedRefusal(promise, code, { keepsUrl = true } = {}) {
+		const error = await refused(promise, code);
+		assert.ok(error.message.length < AT_MOST, `${error.message.length} characters: ${error.message.slice(0, 120)}`);
+		assert.ok(!error.message.includes('a'.repeat(250)), 'more than the shown length of the long text is in the message');
+		if (keepsUrl) {
+			assert.ok(error.url.length > 90_000, `the exact URL is still on the error, for the callers that compare hosts (${error.url.length} characters)`);
+		}
+		return error;
+	}
+
+	test('every message that quotes a URL, a host, a Location, a media type or the transport\'s words', { timeout: 20_000 }, async () => {
+		const longScheme = `${'x'.repeat(100_000)}:rest`;
+		const longHost = `http://${'h'.repeat(100_000)}.test/`;
+		const redirectsTo = (location) => ({ [longPath]: redirect(location) });
+		const cases = [
+			['SCHEME (a redirect to a scheme as long as the page likes)', fetcherFor({ 'http://a.test/r': redirect(longScheme) }), 'http://a.test/r', 'SCHEME', { keepsUrl: false }],
+			['PRIVATE_LITERAL', fetcherFor({}, { isBlockedLiteral: () => true }), longHost, 'PRIVATE_LITERAL'],
+			['HOST_NOT_ALLOWED', fetcherFor({}), longHost, 'HOST_NOT_ALLOWED', { fetchOptions: { isUrlAllowed: () => false } }],
+			['STATUS', fetcherFor({}), longPath, 'STATUS'],
+			['CONTENT_TYPE (the URL and the type)', fetcherFor({ [longPath]: { status: 200, headers: { 'content-type': `application/${LONG}` }, body: 'x' } }), longPath, 'CONTENT_TYPE', { fetchOptions: { kind: 'html' } }],
+			['TOO_LARGE on the announced size', fetcherFor({ [longPath]: { status: 200, headers: { 'content-type': 'text/css', 'content-length': '999' }, body: 'x' } }, { limits: { cssBytes: 10 } }), longPath, 'TOO_LARGE'],
+			['TOO_LARGE while streaming', fetcherFor({ [longPath]: sheet('x'.repeat(20)) }, { limits: { cssBytes: 10 } }), longPath, 'TOO_LARGE'],
+			['BAD_REDIRECT (no Location)', fetcherFor({ [longPath]: { status: 302, headers: {}, body: '' } }), longPath, 'BAD_REDIRECT'],
+			['BAD_REDIRECT (a Location that is no URL)', fetcherFor(redirectsTo(`http://[${LONG}`)), longPath, 'BAD_REDIRECT'],
+			['REDIRECT_LOOP', fetcherFor({ [longPath]: redirect(`/${LONG}2`), [`http://a.test/${LONG}2`]: redirect(`/${LONG}`) }), longPath, 'REDIRECT_LOOP'],
+			['TOO_MANY_REDIRECTS', fetcherFor({ [longPath]: redirect(`/${LONG}2`), [`http://a.test/${LONG}2`]: redirect(`/${LONG}3`) }, { limits: { maxRedirects: 1 } }), longPath, 'TOO_MANY_REDIRECTS'],
+			['NETWORK (the transport\'s own words)', fetcherFor({ [longPath]: () => Promise.reject(new Error(LONG)) }), longPath, 'NETWORK'],
+			['NETWORK (a rejection that is a very long string)', fetcherFor({ [longPath]: () => Promise.reject(LONG) }), longPath, 'NETWORK'],
+		];
+		for (const [label, { fetchText }, target, code, { keepsUrl = true, fetchOptions = {} } = {}] of cases) {
+			await boundedRefusal(fetchText(target, { kind: 'css', ...fetchOptions }), code, { keepsUrl }).catch((error) => {
+				error.message = `${label}: ${error.message}`;
+				throw error;
+			});
+		}
+	});
+
+	test('the deadline and the abort name the URL the same way', { timeout: 10_000 }, async () => {
+		const never = (_url, { signal }) => pause(60_000, signal);
+		const slow = fetcherFor({ [longPath]: never }, { limits: { totalMs: 50, idleMs: 60_000 } });
+		await boundedRefusal(slow.fetchText(longPath, { kind: 'css' }), 'TIMEOUT');
+		const idle = fetcherFor({ [longPath]: never }, { limits: { totalMs: 60_000, idleMs: 50 } });
+		await boundedRefusal(idle.fetchText(longPath, { kind: 'css' }), 'TIMEOUT');
+		const controller = new AbortController();
+		const aborted = fetcherFor({ [longPath]: never });
+		const pending = boundedRefusal(aborted.fetchText(longPath, { kind: 'css', signal: controller.signal }), 'ABORTED');
+		controller.abort();
+		await pending;
+	});
+
+	test('the cut comes before the escaping, so what is left is escaped whole; text that needs six characters per character is still bounded', { timeout: 5000 }, async () => {
+		const escapes = '\u0001'.repeat(5000);
+		const { fetchText } = fetcherFor({ 'http://a.test/r': redirect(`ftp://x/${encodeURIComponent(escapes)}`) });
+		const error = await boundedRefusal(fetchText('http://a.test/r', { kind: 'css' }), 'SCHEME', { keepsUrl: false });
+		assert.match(error.message, /^wpcc: refusing a "ftp:" URL, only http: and https: are fetched$/, 'the scheme is short and quoted whole');
+		const odd = await boundedRefusal(fetcherFor({}).fetchText(escapes, { kind: 'css' }), 'INVALID_URL', { keepsUrl: false });
+		assert.equal(odd.message, `wpcc: not a URL: "${'\\u0001'.repeat(200)}"`, '200 characters, each escaped');
+	});
+
+	test('a short text is shown whole, a text of exactly the shown length too, and one character more is cut', { timeout: 5000 }, async () => {
+		const exact = 'b'.repeat(200);
+		const error = await refused(fetcherFor({}).fetchText(exact, { kind: 'css' }), 'INVALID_URL');
+		assert.equal(error.message, `wpcc: not a URL: "${exact}"`);
+		const over = await refused(fetcherFor({}).fetchText(`${exact}c`, { kind: 'css' }), 'INVALID_URL');
+		assert.equal(over.message, `wpcc: not a URL: "${exact}"`);
+		const type = await refused(fetcherFor({ 'http://a.test/s': { status: 200, headers: { 'content-type': 'text/html' }, body: 'x' } }).fetchText('http://a.test/s', { kind: 'css' }), 'CONTENT_TYPE');
+		assert.equal(type.message, 'wpcc: "http://a.test/s" is "text/html", not a stylesheet');
 	});
 });
 
@@ -1573,6 +1652,15 @@ describe('negative matrix: the real policy proxy, a loopback origin and the real
 			const error = await refused(strict.fetchText(world.at('rebind.test', '/ok.css?x=1#frag'), { kind: 'css' }), 'PROXY_REFUSED', { url: world.at('rebind.test', '/ok.css?x=1') });
 			assert.ok(error.cause instanceof Error);
 			assert.match(error.message, /^wpcc: the policy proxy refused "http:\/\/rebind\.test:\d+\/ok\.css\?x=1"$/);
+		});
+
+		test('a URL of the page\'s choosing is cut in the message of that refusal too, and kept whole on the error', { timeout: 10_000 }, async () => {
+			world.reset();
+			const host = `${'h'.repeat(3000)}.test`; // a name nobody resolves: the proxy fails closed
+			const error = await refused(strict.fetchText(world.at(host, `/${'p'.repeat(3000)}.css`), { kind: 'css' }), 'PROXY_REFUSED');
+			assert.ok(error.message.length < 1400, `${error.message.length} characters`);
+			assert.ok(error.url.includes(host) && error.url.endsWith(`${'p'.repeat(3000)}.css`));
+			assert.ok(error.message.startsWith('wpcc: the policy proxy refused "http://hhhhhhhhhh'));
 		});
 
 		test('when the proxy is not there nothing is fetched: NETWORK, never a direct connection', { timeout: 10_000 }, async () => {

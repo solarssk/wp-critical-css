@@ -38,7 +38,7 @@ import penthouse, { PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE } from 'penthou
 import postcss from 'postcss';
 import { logSafe } from './lib.js';
 import { FetchRefusedError, LIMITS } from './page-fetch.js';
-import { RebaseTooLargeError, rebaseStylesheet, stylesheetPath, virtualPathOf } from './rebase.js';
+import { MAX_REWRITE_WORK, RebaseTooLargeError, RebaseTooMuchWorkError, rebaseStylesheet, stylesheetPath, virtualPathOf } from './rebase.js';
 import { RefusedStylesheetUrl, documentBaseUrl, parseDocument, resolveStylesheetUrl, wrapInMedia } from './stylesheets.js';
 
 const MiB = 1024 * 1024;
@@ -54,24 +54,37 @@ export const LOAD_DEADLINE_MS = 60_000;
 
 /**
  * The limits loadDocument() enforces itself, because it is the one that sees
- * all the sheets (the rest of LIMITS belongs to the fetcher). `loadMs` and
- * `layoutBytes` exist here only; every value can be lowered or raised through
- * loadDocument's `limits`, which is how the tests reach the boundaries without
- * moving megabytes around.
+ * all the sheets (the rest of LIMITS belongs to the fetcher). `loadMs`,
+ * `layoutBytes` and `rewriteWork` exist here only. Every value can be changed
+ * through loadDocument's `limits`, which is how the tests reach the boundaries
+ * without moving megabytes around - with one exception that only works one way:
+ * `cssBytes` can be LOWERED there, never raised, because the fetcher caps every
+ * stylesheet at its own LIMITS.cssBytes whatever is asked of it.
  *
  * - maxSheets      stylesheets per page, linked and inline together, counted
  *                  after de-duplication and before anything is fetched
  * - totalCssBytes  the joined, rebased css of all of them
- * - cssBytes       one fetched stylesheet (the fetcher caps it the same way)
+ * - cssBytes       one fetched stylesheet (the fetcher's own cap is the ceiling)
  * - loadMs         LOAD_DEADLINE_MS
  * - layoutBytes    the layout copy of the page, see buildLayoutHtml()
+ * - rewriteWork    what rewriting the url()s of all the stylesheets together
+ *                  may cost, see MAX_REWRITE_WORK in rebase.js
+ *
+ * The byte limits are sized for the documented 1 GiB container with a tmpfs
+ * /tmp (docker-compose.example.yml): at most 10 MiB of page and 8 MiB of css
+ * make a layout copy of 18 MiB when the page has one head tag, and 40 MiB leaves
+ * room for a few more. Memory holds the page, the css and the copy (36 MiB of
+ * strings at most for a legitimate page, twice that if they are not Latin-1),
+ * and each of the two viewports that render at the same time writes its own
+ * copy to the tmpfs, which is charged to the same 1 GiB: 80 MiB at the ceiling.
  */
 export const LOAD_LIMITS = Object.freeze({
 	maxSheets: LIMITS.maxSheets,
 	totalCssBytes: LIMITS.totalCssBytes,
 	cssBytes: LIMITS.cssBytes,
 	loadMs: LOAD_DEADLINE_MS,
-	layoutBytes: 128 * MiB,
+	layoutBytes: 40 * MiB,
+	rewriteWork: MAX_REWRITE_WORK,
 });
 
 /**
@@ -83,7 +96,8 @@ export const LOAD_LIMITS = Object.freeze({
  * - UNRESOLVABLE_LINK      a stylesheet link is not a complete URL and there is no page URL to resolve it against
  * - TOO_MANY_STYLESHEETS   more stylesheets than LOAD_LIMITS.maxSheets
  * - CSS_TOO_LARGE          the stylesheets together are over LOAD_LIMITS.totalCssBytes, or rebasing their url()s could take them
- *                          over (rebaseStylesheet()'s `maxBytes`; then `cause` is its RebaseTooLargeError)
+ *                          over (rebaseStylesheet()'s `maxBytes`; then `cause` is its RebaseTooLargeError), or rebasing them would
+ *                          cost more than LOAD_LIMITS.rewriteWork (`cause` is its RebaseTooMuchWorkError)
  * - LAYOUT_TOO_LARGE       the layout copy would be over LOAD_LIMITS.layoutBytes
  * - LOAD_DEADLINE          loading took longer than LOAD_LIMITS.loadMs
  * - ABORTED                the caller's AbortSignal fired
@@ -110,11 +124,19 @@ export class DocumentLoadError extends Error {
 // What a stylesheet that is left out of the join comes back as; a Symbol, so no css can be mistaken for it.
 const SKIPPED = Symbol('skipped stylesheet');
 
-// Page-controlled text in a log line is cut here, before logSafe() escapes it.
+// Page-controlled text in a log line or a failure message is cut here, before logSafe() escapes it: a link of 5 MiB must not
+// become a log line of 5 MiB. Escaping makes a character up to six long, so a shown value is at most about 1,200 characters.
 const SHOWN_HREF_LENGTH = 200;
 
-/** A message of the page-fetch module without its own `wpcc: ` prefix, for embedding in ours. */
-const detailOf = (error) => error.message.replace(/^wpcc: /, '');
+// A message of the page-fetch module is embedded in ours: those bound what they quote themselves, this is the ceiling for
+// whatever a fetcher that is not ours puts in an error.
+const SHOWN_DETAIL_LENGTH = 300;
+
+/** `text` for a message, cut and escaped. */
+const shown = (text) => logSafe(String(text).slice(0, SHOWN_HREF_LENGTH));
+
+/** A message of the page-fetch module without its own `wpcc: ` prefix, for embedding in ours; cut at SHOWN_DETAIL_LENGTH. */
+const detailOf = (error) => error.message.replace(/^wpcc: /, '').slice(0, SHOWN_DETAIL_LENGTH);
 
 /**
  * Every log line of this module goes through here, so the prefix is uniform and
@@ -213,11 +235,11 @@ export function buildLayoutHtml(html, cssString, maxBytes = LOAD_LIMITS.layoutBy
  * was for critical.
  */
 function refuseLink(context, refused, base) {
-	const href = logSafe(refused.href.slice(0, SHOWN_HREF_LENGTH));
+	const href = shown(refused.href);
 	if (refused.reason === 'unparsable' && base === null) {
 		throw new DocumentLoadError('UNRESOLVABLE_LINK', `wpcc: cannot resolve the stylesheet link ${href}: it is not a complete URL and there is no page URL to resolve it against`);
 	}
-	const why = refused.reason === 'scheme' ? `only http: and https: are fetched, not ${logSafe(refused.scheme)}` : 'it is not a valid URL';
+	const why = refused.reason === 'scheme' ? `only http: and https: are fetched, not ${shown(refused.scheme)}` : 'it is not a valid URL';
 	report(context.log, 'warn', `skipping the stylesheet link ${href}: ${why}`);
 	return SKIPPED;
 }
@@ -280,6 +302,20 @@ function fetchWith(context, url, options) {
 }
 
 /**
+ * What a refusal of rebaseStylesheet() means for the job. Both are budgets that ran out, not bad sheets, so they fail the
+ * job with the same code as the byte limit; whatever else it throws is not ours to interpret (the caller's logger failing).
+ */
+function rebaseFailure(context, error) {
+	if (error instanceof RebaseTooLargeError) {
+		return new DocumentLoadError('CSS_TOO_LARGE', `wpcc: the stylesheets are over the ${context.limits.totalCssBytes}-byte limit for all of them together, counting what rebasing their url()s can add`, { cause: error });
+	}
+	if (error instanceof RebaseTooMuchWorkError) {
+		return new DocumentLoadError('CSS_TOO_LARGE', `wpcc: the stylesheets are too expensive to process: rewriting their url()s would take about ${error.work} units of work, over the ${error.maxWork} that are left of the ${context.limits.rewriteWork} a page may use (the css has a declaration with very many url()s or a very long run of blanks)`, { cause: error });
+	}
+	return error;
+}
+
+/**
  * The stylesheets one after the other, in document order: sequential on
  * purpose (bounded memory, and the load on the owner's own site stays what
  * `critical` made it, one request at a time). Returns the rebased css of
@@ -289,6 +325,11 @@ function fetchWith(context, url, options) {
 async function loadSheets(context, sheets, { docUrl, virtualPath, base }) {
 	const parts = [];
 	let used = 0;
+	// What rewriting the url()s may still cost, for the whole page: every sheet is told what is left and reports what it took.
+	let workLeft = context.limits.rewriteWork;
+	const spend = (work) => {
+		workLeft -= work;
+	};
 	for (const sheet of sheets) {
 		const remaining = context.limits.totalCssBytes - used;
 		const source = await sheetSource(context, sheet, { docUrl, virtualPath, base, remaining }); // NOSONAR javascript:S9382 - sequential by design, and each fetch is capped by what the earlier ones left of the budget
@@ -296,16 +337,17 @@ async function loadSheets(context, sheets, { docUrl, virtualPath, base }) {
 			continue;
 		}
 		// The media wrapper goes on BEFORE rebasing, so a syntax error inside the sheet empties the wrapped sheet, as it did for critical.
-		const onError = (error) => report(context.log, 'info', `the stylesheet ${logSafe(source.stylepath)} could not be processed and is left out of the critical CSS: ${logSafe(error.message)}`);
+		const onError = (error) => report(context.log, 'info', `the stylesheet ${shown(source.stylepath)} could not be processed and is left out of the critical CSS: ${shown(error.message)}`);
 		let rebased;
 		try {
 			// `maxBytes`: rebasing makes a sheet longer by its number of url()s times the length of the stylesheet's path, which the page chooses, and
 			// a sheet inside every cap could take gigabytes to get there. rebaseStylesheet() refuses it on a worst case, before anything is rewritten;
-			// the check on the real result below stays the one that decides.
-			rebased = await rebaseStylesheet(wrapInMedia(source.css, sheet.media), { stylepath: source.stylepath, virtualPath, onError, maxBytes: remaining }); // NOSONAR javascript:S9382 - see above
+			// the check on the real result below stays the one that decides. `maxWork` is the same for time: the cost of postcss-url's matching is
+			// a matter of how the css is arranged, not of its size, and one declaration can keep the whole service busy for minutes.
+			rebased = await rebaseStylesheet(wrapInMedia(source.css, sheet.media), { stylepath: source.stylepath, virtualPath, onError, maxBytes: remaining, maxWork: workLeft, onWork: spend }); // NOSONAR javascript:S9382 - see above
 		} catch (error) {
 			// Any other trouble with a sheet is an empty sheet, not an error; what can still come out is the caller's own logger failing.
-			throw error instanceof RebaseTooLargeError ? new DocumentLoadError('CSS_TOO_LARGE', `wpcc: the stylesheets are over the ${context.limits.totalCssBytes}-byte limit for all of them together, counting what rebasing their url()s can add`, { cause: error }) : error;
+			throw rebaseFailure(context, error);
 		}
 		// Counted after rebasing: a sheet on another host grows when its relative urls become absolute.
 		used += Buffer.byteLength(rebased);
@@ -438,12 +480,20 @@ const CLEAN_CSS_OPTIONS = Object.freeze({
  * @param {object} [options.penthouse] options for penthouse beyond the ones this module sets (`cssString`, `url`,
  *   `width` and `height` are always ours): `timeout`, `blockJSRequests`, `puppeteer.getBrowser`, ...
  * @param {{ warn: Function }} [options.log] console by default
- * @param {Function} [options.penthouseImpl] the real penthouse; tests pass a fake
+ * @param {Function} [options.penthouseImpl] the penthouse to call, which is the real one unless a test passes a fake. The real
+ *   one is only ever called with a browser launcher (`penthouse.puppeteer.getBrowser`): without one it would start a Chrome of
+ *   its own, with none of the proxy switches, JavaScript-off switches or request guard that server.js's launcher carries, so a
+ *   missing launcher is a TypeError here instead of an unguarded browser. A fake is the caller's own business.
  * @returns {Promise<string>} the minified css; '' when the document has no css (penthouse is not called then, as in
  *   critical) or when the page unloaded itself while being laid out (penthouse says so by throwing
  *   PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE; critical returned '' and warned, so do we)
+ * @throws {TypeError} the document was disposed, or the real penthouse was asked for without a browser launcher
  */
-export async function renderViewport(doc, { dimension, postcssPlugins = [], penthouse: penthouseOptions, log = console, penthouseImpl = penthouse }) {
+export async function renderViewport(doc, { dimension, postcssPlugins = [], penthouse: penthouseOptions, log = console, penthouseImpl }) {
+	const injected = typeof penthouseImpl === 'function';
+	if (!injected && typeof penthouseOptions?.puppeteer?.getBrowser !== 'function') {
+		throw new TypeError('renderViewport: the real penthouse needs `penthouse.puppeteer.getBrowser`, the launcher of the guarded browser; without one it would start an unguarded Chrome');
+	}
 	if (disposed.has(doc)) {
 		throw new TypeError('renderViewport: the document was disposed');
 	}
@@ -457,7 +507,7 @@ export async function renderViewport(doc, { dimension, postcssPlugins = [], pent
 		let css;
 		try {
 			// critical's defaults first, which the caller's options may override as they could there; the rest is never the caller's.
-			css = await penthouseImpl({
+			css = await (injected ? penthouseImpl : penthouse)({
 				forceInclude: [],
 				maxEmbeddedBase64Length: 10240,
 				...penthouseOptions,
@@ -474,7 +524,9 @@ export async function renderViewport(doc, { dimension, postcssPlugins = [], pent
 			return '';
 		}
 		if (postcssPlugins.length > 0) {
-			css = (await postcss(postcssPlugins).process(css, { from: undefined })).css;
+			// `map: false` for the same reason as in rebaseStylesheet(): postcss would otherwise follow a sourceMappingURL comment in what
+			// penthouse returned (the page's own css) to an inline map it decodes, and refuse css whose map it cannot read; this service never reads or writes one.
+			css = (await postcss(postcssPlugins).process(css, { from: undefined, map: false })).css;
 		}
 		return new CleanCSS(CLEAN_CSS_OPTIONS).minify(css).styles;
 	} finally {

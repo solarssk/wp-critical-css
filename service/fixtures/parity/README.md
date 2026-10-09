@@ -410,12 +410,22 @@ invalidates its `expected.css`).
 
 ## Not covered by fixtures
 
-These need unit or integration tests of their own, the recorded data cannot replace them: the size caps (html 10 MiB, 5 MiB
-per sheet, 16 MiB in total) including the decoded-byte cap on a compression bomb; the 30 s total and 15 s idle deadlines; the
-User-Agent; the nesting-depth guard (511 / 512 / 513 levels); the rejection of an `application/xhtml+xml` stylesheet (only `text/html` is recorded); per hop, the refusal of a private literal address, userinfo and
-non-http(s) schemes; TLS verification; whether inline and `data:` sheets count towards the 100; the removal of the temp
-directory on every path; the local policy proxy; and the `<base href>` that critical's regex sees inside a comment or a script string
-(a parser does not).
+`critical` has no such control, or the data would be too large or too slow to keep in the repository, so the unit and integration
+tests of the new layer cover these instead (`service/*.test.js`, next to the modules):
+
+* the size caps (page 10 MiB, 2 MiB per stylesheet, 8 MiB for all of them, a layout copy of 40 MiB), the decoded-byte cap on a
+  compression bomb, and the other limits: 5 redirects, 30 s total and 15 s idle per request, 60 s for the whole load, the
+  nesting depth of the markup (511 / 512 / 513 levels) and the work limit for rewriting `url()`s (`page-fetch.test.js`,
+  `stylesheets.test.js`, `rebase.test.js`, `critical-css.test.js`);
+* the 100-stylesheet limit counts every sheet that discovery returns, inline `<style>` elements and decoded `data:` links as well as
+  linked ones (decided: yes). It is counted once the page is parsed, before anything is fetched, and the 100 / 101 boundary is a
+  test of `critical-css.test.js`, because the fixtures only record the linked case;
+* the User-Agent, the rejection of an `application/xhtml+xml` stylesheet (only `text/html` is recorded), per hop the refusal of
+  a private literal address, userinfo and non-http(s) schemes, TLS verification and the local policy proxy
+  (`page-fetch.test.js`; `critical-css.test.js` runs the whole load once over the real client and proxy);
+* the removal of the temp directory on every path, and that no path of the page ever names a file that is read or written
+  (`critical-css.test.js`, `rebase.test.js`);
+* the `<base href>` that critical's regex sees inside a comment or a script string, which a parser does not (`stylesheets.test.js`).
 
 ## Adding a case
 

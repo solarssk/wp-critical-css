@@ -46,11 +46,19 @@ const MiB = 1024 * 1024;
  * overall budget for a whole page passes a `signal`. `totalCssBytes` and
  * `maxSheets` are enforced by the caller (it sees all the sheets); they live
  * here so every limit of the network boundary is in one reviewed place.
+ *
+ * The byte limits are what the documented 1 GiB container can hold while it
+ * lays a page out (critical-css.js LOAD_LIMITS has the arithmetic). The
+ * maintainer's own WordPress/Elementor site, the heaviest page measured for them,
+ * is 527 KB of html and 22 stylesheets of 1.05 MiB in all, the largest 360 KB, so
+ * 10 MiB of html, 2 MiB for one stylesheet and 8 MiB for all of them leave a
+ * factor of 6 to 20. A body is counted DECODED, so a compression bomb is cut at
+ * the same numbers.
  */
 export const LIMITS = Object.freeze({
 	htmlBytes: 10 * MiB,
-	cssBytes: 5 * MiB,
-	totalCssBytes: 16 * MiB,
+	cssBytes: 2 * MiB,
+	totalCssBytes: 8 * MiB,
 	maxSheets: 100,
 	maxRedirects: 5,
 	totalMs: 30_000,
@@ -168,12 +176,21 @@ function refusal(code, message, url, extra) {
 	return new FetchRefusedError(code, `wpcc: ${message}`, { url: describeUrl(url), ...extra });
 }
 
+// Page-controlled text (a URL, a host name, a Location, a media type, the transport's words) in the MESSAGE of a refusal is
+// cut here, before logSafe() escapes it: a link of 5 MiB must not become an error message, and then a log line, of 5 MiB.
+// Escaping makes a character up to six long, so what is shown is at most about 1,200 characters. The exact URL stays on the
+// error as `url` (see refusal()): callers compare hosts with it, and nobody prints it.
+const SHOWN_LENGTH = 200;
+const shown = (text) => logSafe(String(text).slice(0, SHOWN_LENGTH));
+/** A URL as a message shows it: without credentials or fragment (describeUrl), cut and escaped. */
+const shownUrl = (url) => shown(describeUrl(url));
+
 function parseUrl(input) {
 	let url;
 	try {
 		url = new URL(input);
 	} catch {
-		throw new FetchRefusedError('INVALID_URL', `wpcc: not a URL: ${logSafe(String(input).slice(0, 200))}`);
+		throw new FetchRefusedError('INVALID_URL', `wpcc: not a URL: ${shown(input)}`);
 	}
 	url.hash = ''; // never sent, and two URLs differing only in it are the same resource for loop detection
 	return url;
@@ -188,16 +205,16 @@ function parseUrl(input) {
  */
 function checkTarget(url, { isBlockedLiteral, isUrlAllowed }) {
 	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-		throw refusal('SCHEME', `refusing a ${logSafe(url.protocol)} URL, only http: and https: are fetched`, url);
+		throw refusal('SCHEME', `refusing a ${shown(url.protocol)} URL, only http: and https: are fetched`, url);
 	}
 	if (url.username || url.password) {
 		throw refusal('USERINFO', 'refusing a URL that carries credentials', url);
 	}
 	if (isBlockedLiteral(url.hostname)) {
-		throw refusal('PRIVATE_LITERAL', `refusing the reserved or private address ${logSafe(url.hostname)}`, url);
+		throw refusal('PRIVATE_LITERAL', `refusing the reserved or private address ${shown(url.hostname)}`, url);
 	}
 	if (isUrlAllowed && !isUrlAllowed(url)) {
-		throw refusal('HOST_NOT_ALLOWED', `refusing ${logSafe(url.hostname)}: not an allowed host`, url);
+		throw refusal('HOST_NOT_ALLOWED', `refusing ${shown(url.hostname)}: not an allowed host`, url);
 	}
 }
 
@@ -258,7 +275,7 @@ async function readCapped(body, cap, guard, url) {
 	for await (const chunk of body) {
 		total += chunk.length;
 		if (total > cap) {
-			throw refusal('TOO_LARGE', `the response for ${logSafe(describeUrl(url))} is over the ${cap}-byte limit`, url);
+			throw refusal('TOO_LARGE', `the response for ${shownUrl(url)} is over the ${cap}-byte limit`, url);
 		}
 		chunks.push(chunk);
 		guard.touch();
@@ -278,14 +295,14 @@ function byteCap(requested, limit) {
 /** The redirect target, resolved against the URL that issued it (a relative Location is relative to THAT hop, as in a browser). */
 function redirectTarget(location, from) {
 	if (!location) {
-		throw refusal('BAD_REDIRECT', `${logSafe(describeUrl(from))} redirects without a Location`, from);
+		throw refusal('BAD_REDIRECT', `${shownUrl(from)} redirects without a Location`, from);
 	}
 	try {
 		const target = new URL(location, from);
 		target.hash = '';
 		return target;
 	} catch {
-		throw refusal('BAD_REDIRECT', `${logSafe(describeUrl(from))} redirects to an unusable Location ${logSafe(location.slice(0, 200))}`, from);
+		throw refusal('BAD_REDIRECT', `${shownUrl(from)} redirects to an unusable Location ${shown(location)}`, from);
 	}
 }
 
@@ -295,16 +312,16 @@ function redirectTarget(location, from) {
  */
 async function readAnswer({ response, responseHeaders, policy, cap, guard, url }) {
 	if (response.status < 200 || response.status > 299) {
-		throw refusal('STATUS', `${logSafe(describeUrl(url))} answered HTTP ${response.status}`, url, { status: response.status });
+		throw refusal('STATUS', `${shownUrl(url)} answered HTTP ${response.status}`, url, { status: response.status });
 	}
 	const contentType = (responseHeaders.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
 	if (!policy.typeFits(contentType)) {
-		throw refusal('CONTENT_TYPE', `${logSafe(describeUrl(url))} is ${logSafe(contentType || '(no content type)')}, not a ${policy.noun}`, url);
+		throw refusal('CONTENT_TYPE', `${shownUrl(url)} is ${shown(contentType || '(no content type)')}, not a ${policy.noun}`, url);
 	}
 	// Content-Length is the ENCODED size when the body is compressed, which says nothing about the decoded size the cap
 	// is about; only an unencoded body is refused on its header, before a byte is read. The streaming cap catches the rest.
 	if (Number(responseHeaders.get('content-length')) > cap && !responseHeaders.has('content-encoding')) {
-		throw refusal('TOO_LARGE', `${logSafe(describeUrl(url))} announces more than ${cap} bytes`, url);
+		throw refusal('TOO_LARGE', `${shownUrl(url)} announces more than ${cap} bytes`, url);
 	}
 	const body = await readCapped(response.body, cap, guard, url);
 	return { status: response.status, contentType, text: body.toString('utf8') };
@@ -316,20 +333,20 @@ async function readAnswer({ response, responseHeaders, policy, cap, guard, url }
  * network's. `url` is the one being requested when it happened.
  */
 function explainFailure(error, { guard, url, limits }) {
-	const shown = logSafe(describeUrl(url));
+	const where = shownUrl(url);
 	if (guard.reason === 'deadline') {
-		return refusal('TIMEOUT', `fetching ${shown} took longer than ${limits.totalMs} ms`, url, { cause: error });
+		return refusal('TIMEOUT', `fetching ${where} took longer than ${limits.totalMs} ms`, url, { cause: error });
 	}
 	if (guard.reason === 'idle') {
-		return refusal('TIMEOUT', `${shown} sent nothing for ${limits.idleMs} ms`, url, { cause: error });
+		return refusal('TIMEOUT', `${where} sent nothing for ${limits.idleMs} ms`, url, { cause: error });
 	}
 	if (guard.reason === 'aborted') {
-		return refusal('ABORTED', `fetching ${shown} was aborted`, url, { cause: error });
+		return refusal('ABORTED', `fetching ${where} was aborted`, url, { cause: error });
 	}
 	if (error instanceof FetchRefusedError) {
 		return error;
 	}
-	return refusal('NETWORK', `fetching ${shown} failed: ${logSafe(describeCause(error))}`, url, { cause: error });
+	return refusal('NETWORK', `fetching ${where} failed: ${shown(describeCause(error))}`, url, { cause: error });
 }
 
 /** One hop: asks `target`, then either says where it redirects to or checks and reads the answer. */
@@ -369,12 +386,12 @@ async function follow({ first, progress, request, headers, policy, cap, guard, m
 		}
 		const next = redirectTarget(answer.location, target);
 		if (visited.has(next.href)) {
-			throw refusal('REDIRECT_LOOP', `${logSafe(describeUrl(target))} redirects back to ${logSafe(describeUrl(next))}`, target);
+			throw refusal('REDIRECT_LOOP', `${shownUrl(target)} redirects back to ${shownUrl(next)}`, target);
 		}
 		target = next;
 	}
 	// The last redirect was answered but not followed: it is one more than allowed. `progress.url` is the URL that issued it.
-	throw refusal('TOO_MANY_REDIRECTS', `more than ${maxRedirects} redirects, the last one from ${logSafe(describeUrl(progress.url))}`, progress.url);
+	throw refusal('TOO_MANY_REDIRECTS', `more than ${maxRedirects} redirects, the last one from ${shownUrl(progress.url)}`, progress.url);
 }
 
 /**
@@ -483,7 +500,7 @@ export function createProxyRequest({ proxyPort, extraCa } = {}) {
 				.map((cause) => PROXY_STATUS_RE.exec(cause?.message)?.[1])
 				.find(Boolean);
 			if (proxyStatus === '403') {
-				throw new FetchRefusedError('PROXY_REFUSED', `wpcc: the policy proxy refused ${logSafe(describeUrl(url))}`, { url: describeUrl(url), cause: error });
+				throw new FetchRefusedError('PROXY_REFUSED', `wpcc: the policy proxy refused ${shownUrl(url)}`, { url: describeUrl(url), cause: error });
 			}
 			throw error;
 		}
