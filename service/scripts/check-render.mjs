@@ -66,7 +66,9 @@ try {
 } finally {
 	// penthouse closes the browser it was handed once its jobs are done; this is for a failure on the way there.
 	try {
-		await (await browserPromise)?.close();
+		if (browserPromise) {
+			await (await browserPromise).close();
+		}
 	} catch {
 		// the launch failed or the browser is gone already: nothing left to close
 	}

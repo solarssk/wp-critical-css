@@ -396,7 +396,7 @@ const disposed = new WeakSet();
 function checkedLimits(limits) {
 	const effective = { ...LOAD_LIMITS, ...limits };
 	for (const [name, value] of Object.entries(effective)) {
-		if (typeof value !== 'number' || !(value >= 0)) {
+		if (typeof value !== 'number' || Number.isNaN(value) || value < 0) {
 			throw new TypeError(`loadDocument: limits.${name} must be a non-negative number, got ${logSafe(value)}`);
 		}
 	}
