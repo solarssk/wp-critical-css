@@ -67,7 +67,7 @@ const CONNECT_AUTHORITY_RE = /^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+):(\d{1,5})$/;
 const noResolution = (_hostname, _options, callback) => callback(new Error('the proxy never lets a connect resolve a name'));
 
 // A name resolves in libuv's thread pool (getaddrinfo), which the rest of the
-// service shares (got's lookups, the receiver POST) and which a timeout does
+// service shares (the sitemap fetch's lookups, the receiver POST) and which a timeout does
 // NOT free: a lookup that is slow keeps its thread. So at most half of the
 // pool (UV_THREADPOOL_SIZE, 4 by default, 16 in the Dockerfile) may be busy
 // with this proxy's lookups at once; the others wait in a bounded queue (a
