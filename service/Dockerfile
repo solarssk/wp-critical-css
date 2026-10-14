@@ -83,6 +83,10 @@ ENV UV_THREADPOOL_SIZE=16
 #   libpcre2-8-0 - wget, grep and libglib2.0-0 (-> Chrome) depend on it
 #   liblzma5     - mapped into the running Chrome; libsystemd0/dpkg/libxml2
 #                  depend on it
+#   perl-base    - Essential: dpkg and the base system need it, so it can
+#                  never be purged, only patched (Trivy flagged 3 fixable
+#                  CRITICALs in 5.36.0-7+deb12u3 on the weekly re-scan of
+#                  2026-10-12; deb12u4 is in bookworm-security)
 #   ca-certificates, xz-utils, tzdata - base-system data/tooling; left
 #                  installed (no reason to purge them) and patched
 # After the purge below, `apt-get -s upgrade` in a freshly built image
@@ -91,7 +95,7 @@ ENV UV_THREADPOOL_SIZE=16
 # cached copy of this layer stops being complete the day Debian ships its
 # next fix: see APT_REFRESH below). If a future scan flags another package
 # that stays installed, add it here; if this list ever grows long, that
-# (not today's 8 names) is the point where a blanket security-only upgrade
+# (not today's 9 names) is the point where a blanket security-only upgrade
 # becomes the lower-maintenance choice.
 #
 # Second, purge everything that only exists to compile or fetch source.
@@ -161,7 +165,7 @@ RUN apt-get update \
 	&& apt-get install -y --no-install-recommends --only-upgrade \
 		ca-certificates libexpat1 liblzma5 \
 		libpcre2-8-0 libssl3 openssl \
-		tzdata xz-utils \
+		perl-base tzdata xz-utils \
 	&& apt-get purge -y --auto-remove \
 		libpq5 libpq-dev libexpat1-dev \
 		subversion libsvn1 libserf-1-1 libaprutil1 \
