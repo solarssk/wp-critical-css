@@ -500,6 +500,7 @@ describe('documentBaseUrl', () => {
 		['a data: base is ignored', 'data:text/css,.a%7B%7D', page, page.href],
 		['a DATA: base is ignored', 'DATA:text/css,.a%7B%7D', page, page.href],
 		['a javascript: base is ignored', 'javascript:void(0)', page, page.href],
+		['a vbscript: base is ignored', 'vbscript:msgbox(1)', page, page.href],
 		['other schemes are legal bases (relative links will be refused later)', 'ftp://x.test/d/', page, 'ftp://x.test/d/'],
 	];
 	for (const [name, baseHref, pageUrl, expected] of rows) {
@@ -886,12 +887,12 @@ describe('resolveStylesheetUrl and documentBaseUrl (property)', () => {
 			CFG,
 		);
 	});
-	test('documentBaseUrl never throws and never returns a data: or javascript: URL', QUICK, () => {
+	test('documentBaseUrl never throws and never returns a data:, javascript: or vbscript: URL', QUICK, () => {
 		fc.assert(
 			fc.property(fc.option(fc.oneof(fc.string({ unit: 'binary', maxLength: 60 }), fc.webUrl(), fc.webPath()), { nil: undefined }), base, (baseHref, pageUrl) => {
 				const result = documentBaseUrl(baseHref, pageUrl);
 				assert.ok(result === null || result instanceof URL);
-				assert.ok(result === null || !['data:', 'javascript:'].includes(result.protocol) || result === pageUrl);
+				assert.ok(result === null || !['data:', 'javascript:', 'vbscript:'].includes(result.protocol) || result === pageUrl);
 				if (baseHref === undefined) {
 					assert.equal(result, pageUrl);
 				}
