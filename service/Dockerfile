@@ -77,6 +77,9 @@ ENV UV_THREADPOOL_SIZE=16
 # package that's staying installed - verified with a real page render
 # afterward regardless, not just trusted on policy. Why each one stays:
 #   libexpat1    - libfontconfig1/libgbm1 (Chrome's rendering) depend on it
+#   libpng16-16  - libfreetype6/libcairo2 (-> Chrome's rendering) depend on it;
+#                  only libpng-dev is purged below (Trivy: CVE-2026-46675,
+#                  fixed in 1.6.39-2+deb12u6)
 #   libssl3      - libkrb5-3 (-> libgssapi-krb5-2 -> Chrome) Depends on it.
 #                  wget itself links GnuTLS, not OpenSSL.
 #   openssl      - ca-certificates Depends on it
@@ -95,7 +98,7 @@ ENV UV_THREADPOOL_SIZE=16
 # cached copy of this layer stops being complete the day Debian ships its
 # next fix: see APT_REFRESH below). If a future scan flags another package
 # that stays installed, add it here; if this list ever grows long, that
-# (not today's 9 names) is the point where a blanket security-only upgrade
+# (not today's 10 names) is the point where a blanket security-only upgrade
 # becomes the lower-maintenance choice.
 #
 # Second, purge everything that only exists to compile or fetch source.
@@ -164,7 +167,7 @@ ARG APT_REFRESH
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends --only-upgrade \
 		ca-certificates libexpat1 liblzma5 \
-		libpcre2-8-0 libssl3 openssl \
+		libpcre2-8-0 libpng16-16 libssl3 openssl \
 		perl-base tzdata xz-utils \
 	&& apt-get purge -y --auto-remove \
 		libpq5 libpq-dev libexpat1-dev \
