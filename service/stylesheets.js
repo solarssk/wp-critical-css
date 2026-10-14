@@ -416,7 +416,7 @@ export class RefusedStylesheetUrl {
  * The document base URL (HTML standard, "set the frozen base URL"): the
  * first <base href> resolved against the page's final URL; the page URL
  * itself when there is none, when it does not parse, or when it is a
- * `data:` or `javascript:` URL (those are never a base).
+ * `data:`, `javascript:` or `vbscript:` URL (script and data schemes are never a base).
  *
  * @param {string|undefined} baseHref `baseHref` of parseDocument
  * @param {URL|null} pageUrl the final URL of the page, null for html passed in directly (there is no page URL then)
@@ -424,7 +424,7 @@ export class RefusedStylesheetUrl {
  */
 export function documentBaseUrl(baseHref, pageUrl) {
 	const resolved = baseHref === undefined ? null : URL.parse(baseHref, pageUrl ?? undefined);
-	return resolved !== null && resolved.protocol !== 'data:' && resolved.protocol !== 'javascript:' ? resolved : pageUrl;
+	return resolved !== null && resolved.protocol !== 'data:' && resolved.protocol !== 'javascript:' && resolved.protocol !== 'vbscript:' ? resolved : pageUrl;
 }
 
 /**
