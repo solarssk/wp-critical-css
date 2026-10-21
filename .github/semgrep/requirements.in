@@ -13,3 +13,8 @@ semgrep==1.180.0
 # `pyjwt~=2.13.0` range (semgrep/semgrep#11925). Regenerating with pip-compile reverts it to
 # 2.13.0 until semgrep relaxes that range - see the --no-deps note in
 # .github/workflows/semgrep.yml before regenerating.
+# NOTE: requirements.txt also hand-pins mcp==1.30.0 (fixes GHSA-84m7-p3x7-pcfv, unbounded
+# session accumulation in the StreamableHTTP transport), outside semgrep's own `mcp==1.29.0`
+# pin. 1.30.0 declares the same dependencies as 1.29.0. Regenerating with pip-compile reverts
+# it until semgrep ships a release that pins mcp>=1.30.0 - see the --no-deps note in
+# .github/workflows/semgrep.yml before regenerating.

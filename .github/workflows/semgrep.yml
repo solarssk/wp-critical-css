@@ -48,6 +48,17 @@ jobs:
             exit 1
           fi
 
+      - name: Guard mcp security floor
+        # Same reasoning as the PyJWT guard above: requirements.txt hand-pins mcp above
+        # semgrep's own pin (1.29.0, which has GHSA-84m7-p3x7-pcfv), and a pip-compile
+        # regeneration silently restores it. A floor, so it can stay once semgrep catches up.
+        run: |
+          version=$(sed -n 's/^mcp==\([0-9.]*\).*/\1/p' .github/semgrep/requirements.txt)
+          if [ -z "$version" ] || [ "$(printf '%s\n1.30.0\n' "$version" | sort -V | head -n1)" != "1.30.0" ]; then
+            echo "::error file=.github/semgrep/requirements.txt::mcp is '${version:-missing}', expected >= 1.30.0. A pip-compile regeneration reverted the hand-pin: re-apply mcp==1.30.0 with its hashes, or update this floor once semgrep allows a newer mcp."
+            exit 1
+          fi
+
       - name: Install Semgrep
         # Fully hash-locked (.github/semgrep/requirements.txt, compiled via
         # pip-compile --generate-hashes from requirements.in) - --require-hashes
