@@ -347,14 +347,6 @@ jobs:
           done
           if [ ! -s /tmp/wpcc-delivery.json ]; then
             echo "::error::no CSS was delivered to the receiver within 90 s"
-            # The service logs only err.message ("fetch failed"); the cause
-            # (refused, unresolvable, timed out) is what tells a runner network
-            # problem from a service one, so ask the same question from inside
-            # the container.
-            docker ps --filter name=wpcc-e2e --format '{{.Names}} {{.Status}}' || true
-            docker exec wpcc-e2e getent hosts host.docker.internal || true
-            docker exec wpcc-e2e node -e "fetch('http://host.docker.internal:18081/receiver', { method: 'POST', body: '{}', signal: AbortSignal.timeout(5000) }).then((r) => console.log('receiver answered', r.status), (e) => console.log('receiver unreachable:', e.cause?.code, e.cause?.message ?? e.message))" || true
-            ss -ltn | grep 18081 || echo "nothing listens on 18081 on the runner"
             docker logs wpcc-e2e
             exit 1
           fi
