@@ -39,8 +39,20 @@ jobs:
         with:
           persist-credentials: false
 
+      # GITHUB_TOKEN cannot read classic branch protection. As in Admitto,
+      # mint a short-lived, repository-scoped App token instead of storing a PAT.
+      - name: Mint Scorecard read token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-administration: read
+          permission-contents: read
+
       - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
         with:
+          repo_token: ${{ steps.app-token.outputs.token }}
           results_file: results.sarif
           results_format: sarif
           publish_results: true

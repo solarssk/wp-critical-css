@@ -175,3 +175,11 @@ investigation behind each one.
   `minor-and-patch` PRs aren't severity-gated, so most such issues get
   fixed via routine dependency updates regardless of the audit-level
   threshold.
+
+### Scorecard authentication
+
+The Scorecard workflow reads classic branch protection with a short-lived GitHub App installation token, scoped to this repository and explicitly reduced to `Administration: read` and `Contents: read`. Its GitHub API writes (SARIF upload and result publication) retain the workflow's own `GITHUB_TOKEN` and OIDC permissions. Configure `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY` as repository secrets and install that App on this repository with those read permissions. This follows the existing Admitto workflow; no personal access token is required. Missing App configuration fails the Scorecard job rather than silently publishing an incomplete result.
+
+### Plugin build provenance
+
+From 0.2.11, the plugin publisher registers a signed SLSA provenance attestation for the zip with GitHub, verifies it against the zip digest, this workflow, its source commit/ref and a GitHub-hosted runner, then attaches the full Sigstore bundle (`.zip.attestation.json`) and its signed DSSE envelope (`.zip.intoto.jsonl`) to the release. A checkout at a different commit from the workflow revision is refused for provenance. Verification assets from a previous publication attempt are removed after the new zip is uploaded because the zip is not byte-reproducible. Signing and provenance remain best effort: failures produce warnings and a run summary, and release completion alone does not prove either is present. Instructions for consumers are in [DEPLOYMENT.md](DEPLOYMENT.md#5-install-the-plugin).

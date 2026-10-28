@@ -87,6 +87,20 @@ cosign verify-blob \
 
 `Verified OK` means the zip is byte-identical to the one that workflow signed for that tag. A release with no `.sigstore.json` asset is unsigned: every release before 0.2.7, and any release whose signing step failed (the step is deliberately fail-open, so a Sigstore outage can't stop a release from publishing). If a release's zip was re-published by a dispatch from `main` (not from the tag), the signature's identity ends in `@refs/heads/main` instead of `@refs/tags/vX.Y.Z` and the command above fails with `none of the expected identities matched`; verify such a release by replacing the `--certificate-identity` line with `--certificate-identity-regexp "^https://github\.com/solarssk/wp-critical-css/\.github/workflows/publish-plugin\.yml@refs/(tags/v${VERSION//./\\.}|heads/main)\$"`. Keyless verification needs network access to the Sigstore TUF mirror (or `--trusted-root`).
 
+**Build provenance (from 0.2.11).** The plugin workflow also creates a signed SLSA provenance attestation for the zip. Download `wp-critical-css-X.Y.Z.zip.attestation.json` from the same release and verify it with the GitHub CLI:
+
+```bash
+VERSION=X.Y.Z   # the version you downloaded
+gh attestation verify "wp-critical-css-${VERSION}.zip" \
+  --repo solarssk/wp-critical-css \
+  --bundle "wp-critical-css-${VERSION}.zip.attestation.json" \
+  --signer-workflow solarssk/wp-critical-css/.github/workflows/publish-plugin.yml \
+  --source-ref "refs/tags/v${VERSION}" \
+  --deny-self-hosted-runners
+```
+
+The verification checks the zip's digest, the signing workflow, the source tag and the GitHub-hosted runner. The companion `wp-critical-css-X.Y.Z.zip.intoto.jsonl` contains the same signed in-toto DSSE envelope; the `.attestation.json` bundle also carries the certificate and transparency-log proof required by the command above. Provenance is separate from the existing cosign signature. Both are best effort: missing provenance assets mean that provenance was not attached, even if publication succeeded. A retry must run the workflow **from the tag**, with the same tag as its `ref` input. The workflow refuses to attest a checkout whose commit differs from the workflow revision.
+
 If `WPCC_SHARED_SECRET` isn't defined yet (step 2 above), an admin notice says so - it's harmless, the plugin just won't do anything until it's set.
 
 ## 6. Backfill existing content
@@ -316,8 +330,8 @@ Releases are cut by merging a `release: vX.Y.Z` PR to `main` - nothing further i
 
 Merging that PR is the entire trigger. `.github/workflows/release.yml` fires on the resulting push to `main`, detects the `release: vX.Y.Z` commit, verifies everything above is present and in lockstep, creates the tag and GitHub Release, and dispatches both publish workflows:
 
-- `.github/workflows/publish-container.yml` builds the image (the ten packages the Dockerfile upgrades in place are re-upgraded to the current Debian version on every run; a fix for any other package still needs that list extended, and only a fixable CRITICAL stops a publish), scans it with Trivy (a full SARIF report goes to the Security tab, and a hard gate blocks the push on any fixable CRITICAL finding), renders a real page with it, then pushes the same layers (the push build reuses the scan build's) to both `ghcr.io/solarssk/wp-critical-css` and `docker.io/solarssk/wp-critical-css`. Signed build provenance is attached to the GHCR copy (see the workflow's own comment on that step for why not both).
-- `.github/workflows/publish-plugin.yml` re-verifies the plugin's own `Version:` header and `readme.txt` Stable tag against the tag (fails the build if either was somehow still wrong), then zips `wordpress-plugin/wp-critical-css/`, attaches the zip to the release, and signs it keylessly with cosign (attached as `wp-critical-css-X.Y.Z.zip.sigstore.json`; these steps run after the zip is published and are `continue-on-error`, so a signing problem shows up as a warning in the run, never as a missing release).
+- `.github/workflows/publish-container.yml` builds the image (the eleven packages the Dockerfile upgrades in place are re-upgraded to the current Debian version on every run; a fix for any other package still needs that list extended, and only a fixable CRITICAL stops a publish), scans it with Trivy (a full SARIF report goes to the Security tab, and a hard gate blocks the push on any fixable CRITICAL finding), renders a real page with it, then pushes the same layers (the push build reuses the scan build's) to both `ghcr.io/solarssk/wp-critical-css` and `docker.io/solarssk/wp-critical-css`. Signed build provenance is attached to the GHCR copy (see the workflow's own comment on that step for why not both).
+- `.github/workflows/publish-plugin.yml` re-verifies the plugin's own `Version:` header and `readme.txt` Stable tag against the tag (fails the build if either was somehow still wrong), then zips `wordpress-plugin/wp-critical-css/`, attaches the zip to the release, and signs it keylessly with cosign (attached as `wp-critical-css-X.Y.Z.zip.sigstore.json`; these steps run after the zip is published and are `continue-on-error`, so a signing problem shows up as a warning in the run, never as a missing release). From 0.2.11 it also creates, self-verifies and attaches the zip's signed build provenance (`.attestation.json` and `.intoto.jsonl`) on the same best-effort basis; a failure is reported in the run summary and annotations.
 
 Whichever of the two finishes first attaches its own asset (the SBOM, or the plugin zip) to the GitHub Release `release.yml` already created (titled via `scripts/release-display-title.sh`: `vX.Y.Z — tagline`, read from the `.title` file above); the other just uploads alongside it. See [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md) for the full CI/CD control list.
 
