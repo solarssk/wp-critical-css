@@ -178,7 +178,7 @@ investigation behind each one.
 
 ### Scorecard authentication
 
-The Scorecard workflow reads classic branch protection with a short-lived GitHub App installation token, scoped to this repository and explicitly reduced to `Administration: read` and `Contents: read`. Its GitHub API writes (SARIF upload and result publication) retain the workflow's own `GITHUB_TOKEN` and OIDC permissions. Configure `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY` as repository secrets and install that App on this repository with those read permissions. This follows the existing Admitto workflow; no personal access token is required. Missing App configuration fails the Scorecard job rather than silently publishing an incomplete result.
+The Scorecard workflow reads classic branch protection with a short-lived GitHub App installation token, scoped to this repository and explicitly reduced to `Administration: read` and `Contents: read`. Its GitHub API writes (SARIF upload and result publication) retain the workflow's own `GITHUB_TOKEN` and OIDC permissions. Configure `SCORECARD_APP_CLIENT_ID` and `SCORECARD_APP_PRIVATE_KEY` as repository secrets and install that App on this repository with those read permissions. Use a separate App for each repository, installed only on its own repository; do not share the App or private key with other projects. No personal access token is required. Missing App configuration fails the Scorecard job rather than silently publishing an incomplete result.
 
 ### Plugin build provenance
 
