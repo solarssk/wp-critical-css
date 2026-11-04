@@ -65,7 +65,7 @@ sides, so it's treated like any other credential throughout.
 | Build provenance | every published image | `publish-container.yml` (`actions/attest-build-provenance`, signed) |
 | Plugin release tagged without bumping its own version | every version tag | `.github/workflows/publish-plugin.yml` - fails the build if `wp-critical-css.php`'s `Version:` header doesn't match the pushed tag, instead of silently shipping a mismatched zip |
 | GitHub Release creation | every `release: vX.Y.Z` commit merged to `main` | `.github/workflows/release.yml` creates the tag and the Release from the curated `.github/release-notes/vX.Y.Z.{title,md}` (`gh release create --notes-file`); `publish-container.yml` then attaches the SBOM and `publish-plugin.yml` the plugin zip. If a tag is pushed by hand instead (the documented fallback), whichever of the two publish workflows finishes first creates the Release from the same notes and the other uploads its asset to it |
-| Dependency/base-image/action/Semgrep-toolchain updates | weekly | `.github/dependabot.yml` (npm, docker, github-actions, pip - the last one tracks Semgrep's own version, pinned in `.github/semgrep/requirements.txt` rather than inline in the workflow) |
+| Dependency/base-image/action/toolchain updates | weekly; Semgrep version updates temporarily manual | `.github/dependabot.yml` (npm, docker, github-actions, pip). Only Semgrep's routine version updates are ignored while its MCP/OpenTelemetry ranges exclude the patched versions; security updates remain enabled. Semgrep's hash lock is regenerated with `scripts/update-semgrep.sh` and explicit security overrides |
 | Third-party action supply chain | every workflow | every `uses:` is pinned to a full commit SHA, never a mutable tag |
 | Workflow correctness and security | every PR + push to `main` | `.github/workflows/lint-workflows.yml` - actionlint (expression and input errors, ShellCheck on every `run:` block) and zizmor (shell injection through `${{ }}` interpolation, action pins whose version comment doesn't match the SHA, excessive permissions); any finding at `low` or above fails the job |
 | Repository security posture | push to `main`, branch-protection changes, weekly | `.github/workflows/scorecard.yml` - OpenSSF Scorecard; a report (Security tab + the public Scorecard API), not a merge gate |
@@ -76,6 +76,38 @@ Every finding these tools have surfaced so far - a CVE in npm's own bundled
 injection, a job-level secret exposed to an unrelated CI step - was fixed
 for real, not suppressed; see the closed PRs on this repo for the specific
 investigation behind each one.
+
+### Maintaining the Semgrep lock
+
+Edit the Semgrep pin in `.github/semgrep/requirements.in`, then run
+`bash scripts/update-semgrep.sh` with `uv` installed. It resolves for Linux
+x86_64/Python 3.11 and regenerates the hash-locked `requirements.txt`, applying
+the reviewed MCP/OpenTelemetry exceptions in `.github/semgrep/overrides.txt`.
+Unlike `pip-compile`, it can represent these overrides without hand-editing
+distribution hashes. Existing pins are retained where compatible; use uv's
+`--upgrade-package` option in the compile command when deliberately refreshing
+a transitive dependency.
+
+Install the resulting lock with the same `--only-binary=:all: --require-hashes
+--no-deps` flags as `semgrep.yml`, then run the workflow's real JavaScript/PHP
+scan. Do not remove `--no-deps` while overrides are needed. PyJWT now fits
+Semgrep's upstream range and has a minimum in `requirements.in`; MCP and the
+OpenTelemetry family still need overrides. Remove each exception only after
+upstream accepts the patched line, and restore Dependabot's Semgrep version
+updates once all those conflicts are gone. The CI security-floor checks remain
+enabled throughout.
+
+### Reproducing the service smoke test
+
+After building the image, run `bash scripts/check-service-smoke.sh IMAGE`.
+The real `/generate` route fetches and renders `https://example.com/` with
+the production guards and must deliver non-empty CSS for both viewports.
+The test receiver runs on loopback inside the same container, checks the
+delivery secret and has its readiness checked before work is queued.
+This avoids the intermittent runner-host gateway delivery failure without
+relaxing the page fetcher's or Chrome's private-address protections. The
+test prints service logs and container state on failure and removes its
+container on exit. The public page still requires working internet access.
 
 ---
 

@@ -1,26 +1,5 @@
-# setuptools isn't listed here deliberately - unlike on 1.136.0 (this
-# file's previous pin), semgrep 1.176.0's dependency chain no longer needs
-# pkg_resources at all, so nothing pulls setuptools in as a runtime
-# dependency any more (verified directly: a full --require-hashes install
-# and a real `semgrep scan` against this repo both succeed with no
-# setuptools installed whatsoever). This bump also resolves two open
-# Dependabot alerts along the way: the setuptools MANIFEST.in/Unicode CVE
-# (moot now - setuptools isn't installed) and a HIGH-severity protobuf
-# JSON-recursion CVE (the newer OpenTelemetry line this semgrep release
-# pulls in allows protobuf>=6, resolving to a version past the fix).
+# Regenerate with bash scripts/update-semgrep.sh, not pip-compile: overrides.txt
+# records the patched MCP/OpenTelemetry versions outside Semgrep's own ranges.
+# setuptools is deliberately absent; the scanner no longer needs pkg_resources.
 semgrep==1.180.0
-# NOTE: requirements.txt hand-pins pyjwt==2.15.0 (security fixes), outside semgrep's own
-# `pyjwt~=2.13.0` range (semgrep/semgrep#11925). Regenerating with pip-compile reverts it to
-# 2.13.0 until semgrep relaxes that range - see the --no-deps note in
-# .github/workflows/semgrep.yml before regenerating.
-# NOTE: requirements.txt also hand-pins mcp==1.30.0 (fixes GHSA-84m7-p3x7-pcfv, unbounded
-# session accumulation in the StreamableHTTP transport), outside semgrep's own `mcp==1.29.0`
-# pin. 1.30.0 declares the same dependencies as 1.29.0. Regenerating with pip-compile reverts
-# it until semgrep ships a release that pins mcp>=1.30.0 - see the --no-deps note in
-# .github/workflows/semgrep.yml before regenerating.
-# NOTE: requirements.txt also hand-pins the whole OpenTelemetry family (api/sdk/proto/exporters
-# 1.45.1, semantic-conventions/instrumentation 0.66b1; fixes GHSA-xcq7-p3pf-p88h, quadratic
-# tracestate parsing in opentelemetry-api <= 1.45.0), outside semgrep's own `~=1.37.0` / `~=0.58b0`
-# ranges. The family moves together because the SDK subclasses the API and each release pins its
-# siblings exactly. Regenerating with pip-compile reverts it until semgrep widens those ranges - see
-# the --no-deps note in .github/workflows/semgrep.yml before regenerating.
+pyjwt[crypto]>=2.15.0

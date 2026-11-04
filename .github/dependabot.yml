@@ -39,16 +39,28 @@ updates:
         patterns:
           - "github/codeql-action/*"
 
-  # Exception while semgrep still declares pyjwt~=2.13.0 (semgrep/semgrep#11925): requirements.txt
-  # hand-pins pyjwt 2.15.0 for security fixes, and any regeneration reverts it to 2.13.0. Such a PR
-  # fails the "Guard PyJWT security floor" step in semgrep.yml (a required check); re-apply the
-  # pin on the PR branch (see the notes in semgrep.yml) before merging.
+  # Semgrep's MCP/OpenTelemetry ranges still exclude our patched versions.
+  # Dependabot's pip resolver cannot apply overrides.txt: its weekly Semgrep
+  # update fails with dependency_file_not_resolvable. Only that version update
+  # is paused; security updates and updates of the remaining packages stay on.
+  # Update Semgrep with scripts/update-semgrep.sh until upstream accepts the
+  # patched ranges, then remove this ignore.
   - package-ecosystem: "pip"
     directory: "/.github/semgrep"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
+    ignore:
+      - dependency-name: "semgrep"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+    groups:
+      opentelemetry:
+        patterns:
+          - "opentelemetry-*"
 
   - package-ecosystem: "composer"
     directory: "/wordpress-plugin/wp-critical-css-tests"
