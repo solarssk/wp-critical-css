@@ -76,6 +76,8 @@ ENV UV_THREADPOOL_SIZE=16
 # upgrading in place is the standard low-risk way to close a CVE on a
 # package that's staying installed - verified with a real page render
 # afterward regardless, not just trusted on policy. Why each one stays:
+#   apt, libapt-pkg6.0 - package management used by this build;
+#                  CVE-2026-109518 is fixed in 2.6.2
 #   libbrotli1   - libfreetype6 (Chrome's font rendering) depends on it;
 #                  CVE-2026-111497 is fixed in 1.0.9-2+deb12u1
 #   libexpat1    - libfontconfig1/libgbm1 (Chrome's rendering) depend on it
@@ -170,7 +172,7 @@ ENV UV_THREADPOOL_SIZE=16
 ARG APT_REFRESH
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends --only-upgrade \
-		ca-certificates libbrotli1 libexpat1 liblzma5 \
+		apt ca-certificates libapt-pkg6.0 libbrotli1 libexpat1 liblzma5 \
 		libpcre2-8-0 libpng16-16 libsasl2-2 libsasl2-modules-db \
 		libssl3 openssl \
 		perl-base tzdata xz-utils \
