@@ -51,6 +51,8 @@ The service loads your pages in headless Chrome. The Chrome build is **pinned** 
 
 The weekly container scan checks the **published `latest` image**, not a fresh build of `main`. A security fix merged to `main` does not repair that image: the alert remains valid until a new release is published. Then pull and recreate your service; an already-running container does not update itself.
 
+The fix planned for 0.2.12 adds `apt` and `libapt-pkg6.0` to the targeted build-time upgrades for CVE-2026-109518 (fixed in Debian version `2.6.2`). The published 0.2.11 image still contains `2.6.1`; merging the fix alone does not update that image.
+
 ## Roll back
 
 Deactivate (or delete) the plugin in wp-admin and remove the container with `docker compose down` (with both `-f` flags if you use egress filtering; the example compose file sets `restart: always`, so a container that is only stopped comes back after a reboot). Nothing else depends on this pipeline: stylesheets simply go back to loading render-blocking, exactly as before the plugin existed. The stored CSS stays in your database, unused.
