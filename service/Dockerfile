@@ -171,8 +171,8 @@ ARG APT_REFRESH
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends --only-upgrade \
 		ca-certificates libbrotli1 libexpat1 liblzma5 \
-		libpcre2-8-0 libpng16-16 libssl3 openssl \
-		libsasl2-2 libsasl2-modules-db \
+		libpcre2-8-0 libpng16-16 libsasl2-2 libsasl2-modules-db \
+		libssl3 openssl \
 		perl-base tzdata xz-utils \
 	&& apt-get purge -y --auto-remove \
 		libpq5 libpq-dev libexpat1-dev \
