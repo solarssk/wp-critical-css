@@ -39,7 +39,7 @@ jobs:
         # Keep the security floor even though Semgrep now accepts this patched
         # line: regenerating the lock must never restore the vulnerable version.
         run: |
-          version=$(sed -n 's/^pyjwt\[crypto\]==\([0-9.]*\).*/\1/p' .github/semgrep/requirements.txt)
+          version=$(sed -nE 's/^pyjwt(\[crypto\])?==([0-9.]+).*/\2/p' .github/semgrep/requirements.txt)
           if [ -z "$version" ] || [ "$(printf '%s\n2.15.0\n' "$version" | sort -V | head -n1)" != "2.15.0" ]; then
             echo "::error file=.github/semgrep/requirements.txt::pyjwt is '${version:-missing}', expected >= 2.15.0. Check requirements.in and regenerate with bash scripts/update-semgrep.sh."
             exit 1
