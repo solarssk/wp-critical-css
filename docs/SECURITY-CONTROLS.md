@@ -178,7 +178,7 @@ investigation behind each one.
 
 ### Scorecard authentication
 
-The Scorecard workflow reads classic branch protection with a short-lived GitHub App installation token, scoped to this repository and explicitly reduced to `Administration: read` and `Contents: read`. Its GitHub API writes (SARIF upload and result publication) retain the workflow's own `GITHUB_TOKEN` and OIDC permissions. Configure `SCORECARD_APP_CLIENT_ID` and `SCORECARD_APP_PRIVATE_KEY` as repository secrets and install that App on this repository with those read permissions. Use a separate App for each repository, installed only on its own repository; do not share the App or private key with other projects. No personal access token is required. Missing App configuration fails the Scorecard job rather than silently publishing an incomplete result.
+The Scorecard publishing job uses its default `GITHUB_TOKEN` with `Contents: read`, plus the job-scoped `Actions: read`, `Security events: write` and `id-token: write` permissions. The pinned Scorecard action only accepts a restricted list of actions in its publishing job; `actions/create-github-app-token` is not allowed there, so the App token cannot be minted in that job. Publishing remains enabled through the action's OIDC permission. The default token cannot read classic branch protection, so Scorecard may not report that part of the repository's configuration accurately. Do not pass an App token through job outputs or artifacts to work around the restriction; ask the Scorecard maintainers to support this authentication pattern before reintroducing App authentication.
 
 ### Plugin build provenance
 
