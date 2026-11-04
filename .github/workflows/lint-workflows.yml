@@ -48,6 +48,9 @@ jobs:
       - name: actionlint
         run: actionlint .github/workflows/*.yml
 
+      - name: ShellCheck smoke and dependency-update scripts
+        run: shellcheck scripts/check-service-smoke.sh scripts/update-semgrep.sh
+
       # version: pinned, because the default is `latest` - a floating reference inside
       # an otherwise SHA-pinned step. advanced-security: false keeps this job at
       # contents: read (no SARIF upload, so no security-events: write); findings show

@@ -36,64 +36,46 @@ jobs:
           python-version: '3.11'
 
       - name: Guard PyJWT security floor
-        # .github/semgrep/requirements.txt hand-pins pyjwt above semgrep's own range (see the
-        # Install Semgrep step below), and a routine pip-compile regeneration - for example a
-        # Dependabot bump of semgrep - silently restores 2.13.0, which has open advisories.
-        # Fail here with the fix spelled out. A floor rather than an exact match, so it stays
-        # correct (and can simply be left in place) once semgrep allows a newer pyjwt.
+        # Keep the security floor even though Semgrep now accepts this patched
+        # line: regenerating the lock must never restore the vulnerable version.
         run: |
-          version=$(sed -n 's/^pyjwt\[crypto\]==\([0-9.]*\).*/\1/p' .github/semgrep/requirements.txt)
+          version=$(sed -nE 's/^pyjwt(\[crypto\])?==([0-9.]+).*/\2/p' .github/semgrep/requirements.txt)
           if [ -z "$version" ] || [ "$(printf '%s\n2.15.0\n' "$version" | sort -V | head -n1)" != "2.15.0" ]; then
-            echo "::error file=.github/semgrep/requirements.txt::pyjwt is '${version:-missing}', expected >= 2.15.0. A pip-compile regeneration reverted the hand-pin: re-apply pyjwt[crypto]==2.15.0 with its hashes (see the Install Semgrep comment below), or update this floor once semgrep allows a newer pyjwt."
+            echo "::error file=.github/semgrep/requirements.txt::pyjwt is '${version:-missing}', expected >= 2.15.0. Check requirements.in and regenerate with bash scripts/update-semgrep.sh."
             exit 1
           fi
 
       - name: Guard mcp security floor
-        # Same reasoning as the PyJWT guard above: requirements.txt hand-pins mcp above
-        # semgrep's own pin (1.29.0, which has GHSA-84m7-p3x7-pcfv), and a pip-compile
-        # regeneration silently restores it. A floor, so it can stay once semgrep catches up.
+        # overrides.txt raises MCP above Semgrep's pin (1.29.0, which has
+        # GHSA-84m7-p3x7-pcfv). Do not lose that exception during regeneration.
         run: |
           version=$(sed -n 's/^mcp==\([0-9.]*\).*/\1/p' .github/semgrep/requirements.txt)
           if [ -z "$version" ] || [ "$(printf '%s\n1.30.0\n' "$version" | sort -V | head -n1)" != "1.30.0" ]; then
-            echo "::error file=.github/semgrep/requirements.txt::mcp is '${version:-missing}', expected >= 1.30.0. A pip-compile regeneration reverted the hand-pin: re-apply mcp==1.30.0 with its hashes, or update this floor once semgrep allows a newer mcp."
+            echo "::error file=.github/semgrep/requirements.txt::mcp is '${version:-missing}', expected >= 1.30.0. Check overrides.txt and regenerate with bash scripts/update-semgrep.sh."
             exit 1
           fi
 
       - name: Guard OpenTelemetry security floor
-        # Same reasoning as the guards above: requirements.txt hand-pins the OpenTelemetry
+        # Same reasoning as the guards above: overrides.txt pins the OpenTelemetry
         # family above semgrep's own range (`opentelemetry-api~=1.37.0`, which has
-        # GHSA-xcq7-p3pf-p88h, patched in 1.45.1), and a pip-compile regeneration silently
-        # restores it. A floor, so it can stay once semgrep catches up.
+        # GHSA-xcq7-p3pf-p88h, patched in 1.45.1). A floor, so it can stay
+        # once Semgrep catches up.
         run: |
           version=$(sed -n 's/^opentelemetry-api==\([0-9.]*\).*/\1/p' .github/semgrep/requirements.txt)
           if [ -z "$version" ] || [ "$(printf '%s\n1.45.1\n' "$version" | sort -V | head -n1)" != "1.45.1" ]; then
-            echo "::error file=.github/semgrep/requirements.txt::opentelemetry-api is '${version:-missing}', expected >= 1.45.1. A pip-compile regeneration reverted the hand-pin: re-apply the OpenTelemetry family (api/sdk/proto/exporter 1.45.1, semantic-conventions/instrumentation 0.66b1) with its hashes, or update this floor once semgrep allows a newer opentelemetry."
+            echo "::error file=.github/semgrep/requirements.txt::opentelemetry-api is '${version:-missing}', expected >= 1.45.1. Check overrides.txt and regenerate with bash scripts/update-semgrep.sh."
             exit 1
           fi
 
       - name: Install Semgrep
-        # Fully hash-locked (.github/semgrep/requirements.txt, compiled via
-        # pip-compile --generate-hashes from requirements.in) - --require-hashes
-        # makes pip refuse to install anything, including a transitive
-        # dependency, that doesn't match a pinned hash exactly, closing off
-        # a compromised/substituted package on PyPI even if its version
-        # number matches what's pinned. A pip Dependabot entry
-        # (.github/dependabot.yml) watches this pair of files and proposes
-        # bump PRs (recompiling hashes for the new versions) the same way
-        # it already does for npm/docker/github-actions, so this doesn't
-        # go stale indefinitely either.
-        #
-        # --no-deps: the closure above is already complete and hash-pinned, so pip has
-        # nothing left to resolve. It is needed because pyjwt is hand-pinned to 2.15.0 in
-        # that file (fixes the 2.13.0 advisories, including the critical GHSA-ffc3-869f-jxw9,
-        # and GHSA-42vr-xj54-vc7v, which 2.14.0 still has)
-        # while semgrep 1.178.0, the newest release, still declares
-        # `pyjwt[crypto]~=2.13.0`, so a resolving install fails with ResolutionImpossible.
-        # Semgrep only imports jwt in its `semgrep mcp` server
-        # (semgrep/mcp/utilities/token_verifier.py); this job runs `semgrep scan`, which
-        # never loads it. Upstream tracks the too-tight range in semgrep/semgrep#11925.
-        # Once a semgrep release allows pyjwt>=2.15, regenerate the requirements with
-        # pip-compile (which drops the hand-pin) and remove --no-deps.
+        # Hash-locked for Linux/Python 3.11 by scripts/update-semgrep.sh.
+        # --no-deps is still needed: overrides.txt deliberately raises MCP and
+        # OpenTelemetry above Semgrep's declared ranges. The resolver applies
+        # those exceptions when generating the complete closure, not at install
+        # time. PyJWT no longer needs an override; Semgrep 1.180.0 accepts >=2.15.
+        # Remove each exception only after upstream accepts its patched line.
+        # Dependabot's Semgrep version updates alone are paused until then;
+        # security updates and the other dependency updates remain enabled.
         run: |
           pip install --break-system-packages --only-binary=:all: --require-hashes --no-deps -r .github/semgrep/requirements.txt
 

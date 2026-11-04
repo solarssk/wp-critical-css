@@ -308,49 +308,12 @@ jobs:
       # proxy (ssrf-proxy.js) - nor through its own wiring of the page fetcher.
       # A broken flag or argument there would only show in
       # production, so drive a real /generate through the running container
-      # and check the CSS arrives at a receiver on the runner.
+      # and check the CSS arrives at a receiver in the same container. Delivery
+      # uses loopback, not the runner's host gateway (which intermittently failed
+      # with "fetch failed"). The script checks receiver readiness before enqueueing.
       - name: Smoke test - real /generate through the service's own browser
-        run: |
-          cat > /tmp/wpcc-receiver.mjs <<'EOF'
-          import http from 'node:http';
-          import fs from 'node:fs';
-          http.createServer((req, res) => {
-            let body = '';
-            req.on('data', (chunk) => (body += chunk));
-            req.on('end', () => {
-              fs.writeFileSync('/tmp/wpcc-delivery.json', body);
-              res.end('{}');
-            });
-          }).listen(18081, '0.0.0.0');
-          EOF
-          node /tmp/wpcc-receiver.mjs &
-          RECEIVER_PID=$!
-          cleanup() { docker rm -f wpcc-e2e >/dev/null 2>&1 || true; kill "$RECEIVER_PID" 2>/dev/null || true; }
-          trap cleanup EXIT
-          docker run -d --rm --name wpcc-e2e --add-host=host.docker.internal:host-gateway -p 3941:3939 \
-            -e SHARED_SECRET=ci-e2e-test \
-            -e WP_RECEIVER_URL=http://host.docker.internal:18081/receiver \
-            -e ALLOWED_HOSTNAME=example.com \
-            -e SWEEP_ENABLED=false \
-            wp-critical-css:ci
-          for _ in $(seq 1 30); do
-            if curl -sf http://localhost:3941/health >/dev/null; then break; fi
-            sleep 1
-          done
-          curl -sf -X POST http://localhost:3941/generate \
-            -H 'Content-Type: application/json' -H 'X-WPCC-Secret: ci-e2e-test' \
-            -d '{"url":"https://example.com/"}'
-          echo
-          for _ in $(seq 1 90); do
-            if [ -s /tmp/wpcc-delivery.json ]; then break; fi
-            sleep 1
-          done
-          if [ ! -s /tmp/wpcc-delivery.json ]; then
-            echo "::error::no CSS was delivered to the receiver within 90 s"
-            docker logs wpcc-e2e
-            exit 1
-          fi
-          node -e "const d = JSON.parse(require('fs').readFileSync('/tmp/wpcc-delivery.json', 'utf8')); if (!d.css_mobile || !d.css_desktop) { console.error('empty CSS delivered'); process.exit(1); } console.log('delivered', d.url, d.css_mobile.length + ' B mobile,', d.css_desktop.length + ' B desktop');"
+        timeout-minutes: 3
+        run: bash scripts/check-service-smoke.sh wp-critical-css:ci
 
   # Moved here from the former php-tests.yml (a separate workflow file) so
   # sonarcloud-scan below can `needs:` this job directly and download its

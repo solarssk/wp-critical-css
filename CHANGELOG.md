@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.11] - 2026-11-04
+
+### Security
+
+- **Chrome is pinned to Stable 157.0.8103.38.** The daily freshness check found the previous pin more than seven days behind a newer Stable build. Puppeteer and its base image are now both 25.16.0.
+- **The container upgrades `libbrotli1` to Debian's patched version at build time**, fixing CVE-2026-111497 (fixed in `1.0.9-2+deb12u1`), which the weekly scan found in the published 0.2.10 image.
+- **The container also upgrades `libsasl2-2` and `libsasl2-modules-db`**, fixing CVE-2026-107161 (fixed in `2.1.28+dfsg-10+deb12u1`), found when scanning the rebuilt image.
+- **Updated service dependencies include the patched `body-parser`, `undici`, `zod` and `qs` lockfile versions** already merged since 0.2.10, together with the current PostCSS and Puppeteer updates.
+- **The plugin zip gains signed build provenance**, verified against the archive, publishing workflow and source revision before export. Releases attach `.zip.attestation.json` and `.zip.intoto.jsonl` alongside the existing Sigstore signature. These steps remain best effort: check the assets and verify them before relying on provenance.
+
+### Deploy
+
+- Container image: `ghcr.io/solarssk/wp-critical-css:0.2.11` (rolling `:latest`, `:0.2`), also published to `docker.io/solarssk/wp-critical-css:0.2.11`.
+- WordPress plugin: `wp-critical-css-0.2.11.zip`, attached to this release. The plugin itself is unchanged; its version moves only to stay in lockstep with the service.
+- No migration steps and no new setting. Pull the new image and restart; a fix merged to `main` does not update an already-published image.
+
 ## [0.2.10] - 2026-10-21
 
 ### Security
