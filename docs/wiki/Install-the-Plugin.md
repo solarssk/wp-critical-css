@@ -37,4 +37,18 @@ cosign verify-blob \
 - If the command fails with `none of the expected identities matched`, the zip was re-published from `main` instead of from the tag. The [deployment guide](https://github.com/solarssk/wp-critical-css/blob/main/docs/DEPLOYMENT.md#5-install-the-plugin) has the identity pattern for that case.
 - Verification needs network access to the Sigstore trust root.
 
-The container image has signed build provenance instead (attached to its `ghcr.io` copy, which has the same digest as the Docker Hub one); the tags themselves are not signed.
+From 0.2.11 the plugin zip also has signed build provenance. Download its `wp-critical-css-X.Y.Z.zip.attestation.json` asset and verify it with the GitHub CLI:
+
+```bash
+VERSION=X.Y.Z
+gh attestation verify "wp-critical-css-${VERSION}.zip" \
+  --repo solarssk/wp-critical-css \
+  --bundle "wp-critical-css-${VERSION}.zip.attestation.json" \
+  --signer-workflow solarssk/wp-critical-css/.github/workflows/publish-plugin.yml \
+  --source-ref "refs/tags/v${VERSION}" \
+  --deny-self-hosted-runners
+```
+
+This verifies the artifact digest, the workflow, the source tag and the GitHub-hosted runner. The companion `.zip.intoto.jsonl` asset contains the same signed in-toto DSSE envelope; use the full `.attestation.json` bundle for the command above. Provenance is best effort, like signing: if the assets are absent, the release has no attached provenance. See the [deployment guide](https://github.com/solarssk/wp-critical-css/blob/main/docs/DEPLOYMENT.md#5-install-the-plugin) for retry constraints.
+
+The container image has signed build provenance (attached to its `ghcr.io` copy, which has the same digest as the Docker Hub one); the tags themselves are not signed.

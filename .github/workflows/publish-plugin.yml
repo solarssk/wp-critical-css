@@ -43,13 +43,13 @@ concurrency:
 jobs:
   build-zip:
     runs-on: ubuntu-latest
-    # 10 min was the whole budget before signing (the job itself takes seconds). The fail-open signing steps can use
-    # 14 more in the worst case (2+2+3+3+2+2), and a job-level timeout is NOT absorbed by continue-on-error, so this
-    # limit has to cover both: 10 + 14, plus a minute of margin.
-    timeout-minutes: 25
+    # Allow 10 minutes for packaging, 14 for signing and 9 for provenance,
+    # plus margin. A job timeout is not absorbed by continue-on-error.
+    timeout-minutes: 35
     permissions:
       contents: write
-      id-token: write # OIDC token for keyless Sigstore signing (cosign)
+      id-token: write # OIDC for keyless signatures and build provenance
+      attestations: write # register the plugin zip provenance with GitHub
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -158,14 +158,15 @@ jobs:
 
       # ---- Keyless Sigstore signature for the plugin zip ---------------------------------------
       # Runs AFTER the zip is already on the GitHub Release (step above): a Sigstore outage or a bug
-      # in these steps can never stop the zip from being published. Every step is continue-on-error
+      # in these steps can never stop the zip from being published. Provenance uses the same best-effort contract.
+      # Every verification step is continue-on-error
       # with its own timeout-minutes (a job-level timeout is not caught by continue-on-error), so the
       # run stays green - release.yml waits on this run with `gh run watch --exit-status` and would
       # otherwise leave the milestone open and push the maintainer towards re-dispatching BOTH publish
       # workflows for what is only a missing signature. "Report signing status" makes any failure
       # loud (::warning:: + run summary). Signing also runs on publish=false dispatches so a dry run
       # exercises cosign + OIDC + Fulcio + Rekor for real; only attaching needs publish=true.
-      - name: Drop a signature left by an earlier run of this tag
+      - name: Drop verification assets left by an earlier run of this tag
         id: drop
         if: steps.resolve.outputs.publish == 'true'
         continue-on-error: true
@@ -173,16 +174,83 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.resolve.outputs.tag }}
-          SIG_NAME: wp-critical-css-${{ steps.resolve.outputs.version }}.zip.sigstore.json
+          ZIP_NAME: wp-critical-css-${{ steps.resolve.outputs.version }}.zip
         run: |
           set -euo pipefail
           # The zip is not byte-reproducible and the step above re-uploads it with --clobber on a
-          # re-publish, so a signature from an earlier run would no longer verify against it.
+          # re-publish, so verification assets from an earlier run would no longer verify against it.
           # Captured first, not piped into grep -q: under pipefail grep's early exit can SIGPIPE gh.
           EXISTING="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
-          if grep -qxF "$SIG_NAME" <<<"$EXISTING"; then
-            gh release delete-asset "$TAG" "$SIG_NAME" --repo "$GITHUB_REPOSITORY" --yes
-          fi
+          for suffix in sigstore.json attestation.json intoto.jsonl; do
+            ASSET="${ZIP_NAME}.${suffix}"
+            if grep -qxF "$ASSET" <<<"$EXISTING"; then
+              gh release delete-asset "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --yes
+            fi
+          done
+
+      # GitHub provenance describes the workflow revision, not an arbitrary ref
+      # checked out through inputs.ref. Refuse to attest a different source tree.
+      - name: Check provenance source matches the workflow revision
+        id: provenance-source
+        continue-on-error: true
+        timeout-minutes: 1
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Attest plugin build provenance
+        id: provenance
+        if: steps.provenance-source.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: wordpress-plugin/wp-critical-css-${{ steps.resolve.outputs.version }}.zip
+
+      - name: Verify and export plugin provenance
+        id: provenance-export
+        if: steps.provenance.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+          ZIP: wordpress-plugin/wp-critical-css-${{ steps.resolve.outputs.version }}.zip
+        run: |
+          set -euo pipefail
+          gh attestation verify "$ZIP" --repo "$GITHUB_REPOSITORY" \
+            --bundle "$BUNDLE_PATH" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish-plugin.yml" \
+            --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" \
+            --deny-self-hosted-runners
+          cp "$BUNDLE_PATH" "${ZIP}.attestation.json"
+          # Export the original signed DSSE envelope as one JSON line, not a
+          # fabricated statement or a Sigstore bundle renamed to .intoto.jsonl.
+          # The companion bundle preserves the certificate and transparency proof.
+          jq -ce '.dsseEnvelope | select(.payloadType == "application/vnd.in-toto+json")
+            | select((.payload | type) == "string")
+            | select((.signatures | length) > 0)' "$BUNDLE_PATH" > "${ZIP}.intoto.jsonl"
+
+      - name: Attach plugin provenance to the GitHub Release
+        id: provenance-attach
+        if: steps.resolve.outputs.publish == 'true' && steps.provenance-export.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          ZIP: wordpress-plugin/wp-critical-css-${{ steps.resolve.outputs.version }}.zip
+        run: gh release upload "$TAG" "${ZIP}.attestation.json" "${ZIP}.intoto.jsonl" --repo "$GITHUB_REPOSITORY" --clobber
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && steps.provenance-export.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          name: wp-critical-css-plugin-provenance
+          path: |
+            wordpress-plugin/wp-critical-css-*.zip.attestation.json
+            wordpress-plugin/wp-critical-css-*.zip.intoto.jsonl
+          if-no-files-found: warn
+          retention-days: 90
 
       - name: Install cosign
         id: cosign
@@ -230,7 +298,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
-      - name: Report signing status
+      - name: Report signing and provenance status
         if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 2
@@ -242,14 +310,20 @@ jobs:
           COSIGN_OUTCOME: ${{ steps.cosign.outcome }}
           SIGN_OUTCOME: ${{ steps.sign.outcome }}
           ATTACH_OUTCOME: ${{ steps.attach.outcome }}
+          PROVENANCE_SOURCE: ${{ steps.provenance-source.outcome }}
+          PROVENANCE_EXPORT: ${{ steps.provenance-export.outcome }}
+          PROVENANCE_ATTACH: ${{ steps.provenance-attach.outcome }}
         run: |
           {
-            echo "### Plugin zip signing"
+            echo "### Plugin zip signing and provenance"
             echo ""
             echo "| Step | Outcome |"
             echo "|---|---|"
             echo "| Publish the zip to the Release | ${RELEASE_OUTCOME} |"
-            echo "| Drop a stale signature | ${DROP_OUTCOME} |"
+            echo "| Drop stale verification assets | ${DROP_OUTCOME} |"
+            echo "| Provenance source matches workflow | ${PROVENANCE_SOURCE} |"
+            echo "| Verify + export provenance | ${PROVENANCE_EXPORT} |"
+            echo "| Attach provenance to Release | ${PROVENANCE_ATTACH} |"
             echo "| Install cosign | ${COSIGN_OUTCOME} |"
             echo "| Sign + self-verify zip | ${SIGN_OUTCOME} |"
             echo "| Attach to Release | ${ATTACH_OUTCOME} |"
@@ -258,9 +332,14 @@ jobs:
             if [ "$RELEASE_OUTCOME" = success ] && [ "$ATTACH_OUTCOME" != success ]; then
               echo "::warning title=Plugin zip on the Release is UNSIGNED::${TAG}'s zip was published but its signature was not attached (drop=${DROP_OUTCOME}, cosign=${COSIGN_OUTCOME}, sign=${SIGN_OUTCOME}, attach=${ATTACH_OUTCOME}). Retry with: gh workflow run publish-plugin.yml --ref ${TAG} -f ref=${TAG} (the form release.yml uses, so the signature identity stays @refs/tags/${TAG}; a dispatch from main signs as @refs/heads/main, which the DEPLOYMENT.md verify command rejects)."
             fi
-            if [ "$DROP_OUTCOME" = failure ] && [ "$ATTACH_OUTCOME" != success ]; then
-              echo "::warning title=A stale signature may still be on the Release::Dropping the signature of an earlier run of ${TAG} failed and no new one was attached, so a wp-critical-css-*.zip.sigstore.json from that earlier run may still be there and will not verify against this zip. Check: gh release view ${TAG} --json assets --jq '.assets[].name'; delete the .sigstore.json asset if it is present."
+            if [ "$DROP_OUTCOME" = failure ]; then
+              echo "::warning title=Check for stale verification assets::Removing verification assets from an earlier run of ${TAG} failed. A signature or provenance asset not replaced in this run may describe the previous zip and fail verification. Check the signing and provenance outcomes above and verify the assets against the published zip."
             fi
           elif [ "$SIGN_OUTCOME" != success ]; then
             echo "::warning title=Signing dry run did not sign::cosign=${COSIGN_OUTCOME}, sign=${SIGN_OUTCOME}. Nothing was published or attached (publish=false)."
+          fi
+          if [ "$PUBLISH" = true ] && [ "$RELEASE_OUTCOME" = success ] && [ "$PROVENANCE_ATTACH" != success ]; then
+            echo "::warning title=Plugin zip has no new build provenance::${TAG}'s zip was published but verified provenance was not attached (source=${PROVENANCE_SOURCE}, export=${PROVENANCE_EXPORT}, attach=${PROVENANCE_ATTACH}). Retry from the tag, not main: gh workflow run publish-plugin.yml --ref ${TAG} -f ref=${TAG}."
+          elif [ "$PUBLISH" != true ] && [ "$PROVENANCE_EXPORT" != success ]; then
+            echo "::warning title=Provenance dry run did not attest::source=${PROVENANCE_SOURCE}, export=${PROVENANCE_EXPORT}. Nothing was attached to a release."
           fi

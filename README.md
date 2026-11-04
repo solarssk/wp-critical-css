@@ -104,6 +104,7 @@ Two independent triggers feed the same queue - editing a post regenerates just t
 | 🚀 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Full setup, verification, memory sizing, upgrading from 0.2.8, releases, rollback |
 | 🛡️ [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) | Threat model, CI/CD security controls, conscious exclusions |
 | 🐛 [SECURITY.md](SECURITY.md) | Vulnerability reporting |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Bug reports, feature requests, contribution requirements and tests |
 | 📋 [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 | 🤖 [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | Conventions for AI coding agents working in this repo |
 
