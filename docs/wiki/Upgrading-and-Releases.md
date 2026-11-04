@@ -49,6 +49,8 @@ After upgrading, run a sweep ([Getting Started](Getting-Started#6-backfill-exist
 
 The service loads your pages in headless Chrome. The Chrome build is **pinned** in the image to a recent Stable release, and a fix for a Chrome vulnerability reaches you only inside a new release. The project checks the pin against Chrome's current Stable build every day and flags a pin that has fallen more than 7 days behind, but you still have to pull the release.
 
+The weekly container scan checks the **published `latest` image**, not a fresh build of `main`. A security fix merged to `main` does not repair that image: the alert remains valid until a new release is published. Then pull and recreate your service; an already-running container does not update itself.
+
 ## Roll back
 
 Deactivate (or delete) the plugin in wp-admin and remove the container with `docker compose down` (with both `-f` flags if you use egress filtering; the example compose file sets `restart: always`, so a container that is only stopped comes back after a reboot). Nothing else depends on this pipeline: stylesheets simply go back to loading render-blocking, exactly as before the plugin existed. The stored CSS stays in your database, unused.

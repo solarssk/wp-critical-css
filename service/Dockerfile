@@ -86,6 +86,8 @@ ENV UV_THREADPOOL_SIZE=16
 #                  wget itself links GnuTLS, not OpenSSL.
 #   openssl      - ca-certificates Depends on it
 #   libpcre2-8-0 - wget, grep and libglib2.0-0 (-> Chrome) depend on it
+#   libsasl2-2, libsasl2-modules-db - libldap (-> dirmngr) depends on them;
+#                  CVE-2026-107161 is fixed in 2.1.28+dfsg-10+deb12u1
 #   liblzma5     - mapped into the running Chrome; libsystemd0/dpkg/libxml2
 #                  depend on it
 #   perl-base    - Essential: dpkg and the base system need it, so it can
@@ -100,7 +102,7 @@ ENV UV_THREADPOOL_SIZE=16
 # cached copy of this layer stops being complete the day Debian ships its
 # next fix: see APT_REFRESH below). If a future scan flags another package
 # that stays installed, add it here; if this list ever grows long, that
-# (not today's 10 names) is the point where a blanket security-only upgrade
+# (not the current short list) is the point where a blanket security-only upgrade
 # becomes the lower-maintenance choice.
 #
 # Second, purge everything that only exists to compile or fetch source.
@@ -170,6 +172,7 @@ RUN apt-get update \
 	&& apt-get install -y --no-install-recommends --only-upgrade \
 		ca-certificates libbrotli1 libexpat1 liblzma5 \
 		libpcre2-8-0 libpng16-16 libssl3 openssl \
+		libsasl2-2 libsasl2-modules-db \
 		perl-base tzdata xz-utils \
 	&& apt-get purge -y --auto-remove \
 		libpq5 libpq-dev libexpat1-dev \
@@ -214,7 +217,7 @@ RUN apt-get update \
 # fails the build instead of being ignored: builds need egress to Chrome for
 # Testing's storage (every publish downloads it again), and a transient
 # failure is fixed by re-running.
-ENV PUPPETEER_CHROME_VERSION=156.0.8078.47
+ENV PUPPETEER_CHROME_VERSION=157.0.8103.38
 ENV PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer \
 	PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD=true
 
