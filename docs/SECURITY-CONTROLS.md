@@ -207,3 +207,11 @@ container on exit. The public page still requires working internet access.
   `minor-and-patch` PRs aren't severity-gated, so most such issues get
   fixed via routine dependency updates regardless of the audit-level
   threshold.
+
+### Scorecard authentication
+
+The Scorecard publishing job uses its default `GITHUB_TOKEN` with `Contents: read`, plus the job-scoped `Actions: read`, `Security events: write` and `id-token: write` permissions. The pinned Scorecard action only accepts a restricted list of actions in its publishing job; `actions/create-github-app-token` is not allowed there, so the App token cannot be minted in that job. Publishing remains enabled through the action's OIDC permission. The default token cannot read classic branch protection, so Scorecard may not report that part of the repository's configuration accurately. Do not pass an App token through job outputs or artifacts to work around the restriction; ask the Scorecard maintainers to support this authentication pattern before reintroducing App authentication.
+
+### Plugin build provenance
+
+From 0.2.11, the plugin publisher registers a signed SLSA provenance attestation for the zip with GitHub, verifies it against the zip digest, this workflow, its source commit/ref and a GitHub-hosted runner, then attaches the full Sigstore bundle (`.zip.attestation.json`) and its signed DSSE envelope (`.zip.intoto.jsonl`) to the release. A checkout at a different commit from the workflow revision is refused for provenance. Verification assets from a previous publication attempt are removed after the new zip is uploaded because the zip is not byte-reproducible. Signing and provenance remain best effort: failures produce warnings and a run summary, and release completion alone does not prove either is present. Instructions for consumers are in [DEPLOYMENT.md](DEPLOYMENT.md#5-install-the-plugin).
