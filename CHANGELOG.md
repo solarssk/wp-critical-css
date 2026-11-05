@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.12] - 2026-11-05
+
+### Security
+
+- **The container upgrades `apt` and `libapt-pkg6.0` to Debian's patched version at build time**, fixing CVE-2026-109518 (fixed in `2.6.2`). Releasing the rebuilt image delivers the fix already merged to `main` to container users.
+
+### Deploy
+
+- Container image: `ghcr.io/solarssk/wp-critical-css:0.2.12` (rolling `:latest`, `:0.2`), also published to `docker.io/solarssk/wp-critical-css:0.2.12`.
+- WordPress plugin: `wp-critical-css-0.2.12.zip`, attached to this release. The plugin itself is unchanged; its version moves only to stay in lockstep with the service.
+- No migration steps and no new setting. Pull the new image and restart.
+
 ## [0.2.11] - 2026-11-04
 
 ### Security
