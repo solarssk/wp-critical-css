@@ -1,6 +1,6 @@
 {
   "name": "wp-critical-css",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "Self-hosted critical CSS generator for WordPress, using a real headless browser (penthouse on Puppeteer).",
   "private": true,
   "type": "module",
