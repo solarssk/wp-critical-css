@@ -14,7 +14,7 @@
     "css-mediaquery": "^0.1.2",
     "express": "^5.3.0",
     "node-cron": "^4.6.0",
-    "parse5": "^8.0.1",
+    "parse5": "^8.1.0",
     "penthouse-esm": "^3.0.0",
     "postcss": "^8.5.32",
     "postcss-url": "^10.1.4",
