@@ -58,7 +58,7 @@ jobs:
       # suggestions from failing the job while every real finding still does. A
       # finding is a fix, not a suppression: if a `zizmor: ignore` is ever
       # unavoidable, the reason goes in the same comment.
-      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
         with:
           version: v1.30.1
           advanced-security: false
