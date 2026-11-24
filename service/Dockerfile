@@ -219,7 +219,7 @@ RUN apt-get update \
 # fails the build instead of being ignored: builds need egress to Chrome for
 # Testing's storage (every publish downloads it again), and a transient
 # failure is fixed by re-running.
-ENV PUPPETEER_CHROME_VERSION=157.0.8103.38
+ENV PUPPETEER_CHROME_VERSION=158.0.8127.88
 ENV PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer \
 	PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD=true
 
