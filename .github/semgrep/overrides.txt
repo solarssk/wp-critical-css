@@ -1,7 +1,7 @@
 # Security exceptions to Semgrep's upstream dependency ranges. Remove each
 # override once upstream accepts the patched line; regenerate with
 # bash scripts/update-semgrep.sh, then run the real scan.
-mcp==2.3.0
+mcp==1.30.0
 opentelemetry-api==1.45.2
 opentelemetry-sdk==1.45.2
 opentelemetry-proto==1.45.2
@@ -12,3 +12,5 @@ opentelemetry-instrumentation==0.66b2
 opentelemetry-instrumentation-requests==0.66b2
 opentelemetry-instrumentation-threading==0.66b2
 opentelemetry-util-http==0.66b2
+
+wcmatch==11.2
