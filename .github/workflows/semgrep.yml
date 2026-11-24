@@ -58,12 +58,21 @@ jobs:
       - name: Guard OpenTelemetry security floor
         # Same reasoning as the guards above: overrides.txt pins the OpenTelemetry
         # family above semgrep's own range (`opentelemetry-api~=1.37.0`, which has
-        # GHSA-xcq7-p3pf-p88h, patched in 1.45.1). A floor, so it can stay
+        # GHSA-mf5v-w3w3-f6cg, patched in 1.45.2). A floor, so it can stay
         # once Semgrep catches up.
         run: |
           version=$(sed -n 's/^opentelemetry-api==\([0-9.]*\).*/\1/p' .github/semgrep/requirements.txt)
-          if [ -z "$version" ] || [ "$(printf '%s\n1.45.1\n' "$version" | sort -V | head -n1)" != "1.45.1" ]; then
-            echo "::error file=.github/semgrep/requirements.txt::opentelemetry-api is '${version:-missing}', expected >= 1.45.1. Check overrides.txt and regenerate with bash scripts/update-semgrep.sh."
+          if [ -z "$version" ] || [ "$(printf '%s\n1.45.2\n' "$version" | sort -V | head -n1)" != "1.45.2" ]; then
+            echo "::error file=.github/semgrep/requirements.txt::opentelemetry-api is '${version:-missing}', expected >= 1.45.2. Check overrides.txt and regenerate with bash scripts/update-semgrep.sh."
+            exit 1
+          fi
+
+      - name: Guard wcmatch security floor
+        # Keep the GHSA-53pm-wgxf-c6qf fix when the lockfile is regenerated.
+        run: |
+          version=$(sed -n 's/^wcmatch==\([0-9.]*\).*/\1/p' .github/semgrep/requirements.txt)
+          if [ -z "$version" ] || [ "$(printf '%s\n11.2\n' "$version" | sort -V | head -n1)" != "11.2" ]; then
+            echo "::error file=.github/semgrep/requirements.txt::wcmatch is '${version:-missing}', expected >= 11.2. Check overrides.txt and regenerate with bash scripts/update-semgrep.sh."
             exit 1
           fi
 
