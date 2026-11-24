@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.13] - 2026-11-25
+
+### Security
+
+- The service image now ships Chrome for Testing Stable `158.0.8127.88`.
+
+### Deploy
+
+- Container image: `ghcr.io/solarssk/wp-critical-css:0.2.13`, also published to `docker.io/solarssk/wp-critical-css:0.2.13`.
+- WordPress plugin: `wp-critical-css-0.2.13.zip`, attached to the release.
+- Pull the new image and restart the service. No migration or configuration changes are required.
+
 ## [0.2.12] - 2026-11-05
 
 ### Security
