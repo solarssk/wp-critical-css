@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.14] - 2026-11-25
+
+### Changed
+
+- Update Puppeteer and its container base image together to 25.18.1.
+- Update PostCSS to 8.5.33.
+
+### Deploy
+
+- Container image: `ghcr.io/solarssk/wp-critical-css:0.2.14`, also published to `docker.io/solarssk/wp-critical-css:0.2.14`.
+- WordPress plugin: `wp-critical-css-0.2.14.zip`, attached to the release.
+- Pull the new image and restart the service. No migration or configuration changes are required.
+
 ## [0.2.13] - 2026-11-25
 
 ### Security
