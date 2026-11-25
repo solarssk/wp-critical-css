@@ -539,7 +539,7 @@ jobs:
       # App still posts its status on PRs that were analysed; it just isn't required.
       # sonar.host.url is also passed with -D (which outranks anything in the
       # project's own sonar-project.properties), so a PR can't redirect the token.
-      - uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
+      - uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
