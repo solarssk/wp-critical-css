@@ -21,7 +21,7 @@
 # with, which can trail Chrome Stable's security fixes, and Chrome is the
 # one component here that executes untrusted pages' JavaScript with its
 # sandbox off - while Trivy, npm audit and Dependabot cannot see it.
-FROM ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b
+FROM ghcr.io/puppeteer/puppeteer:25.18.1@sha256:e94e5de180f0488aceebda0e8c32404075c089ec2ac8e9f2f4ec47034a049126
 
 USER root
 WORKDIR /app

@@ -1012,9 +1012,9 @@ uvicorn==0.52.4 \
     --hash=sha256:73acfee47a0b133c5de13d219492d62d8a31e935f4fe6e41a232451a15379f86 \
     --hash=sha256:f86e41a149d7d05a9969337e3946a9c171c06a5d42680896daaba624aeac8da1
     # via mcp
-wcmatch==11.2 \
-    --hash=sha256:1605bde546fbde4c063628c7d89eda486909fd4337e51d73a873987fbcb2554c \
-    --hash=sha256:952bab83c75c233836007a69550a3a8753cf06964c1eb3b84ff11ad5bff1c272
+wcmatch==12.0.3 \
+    --hash=sha256:7255aeae27423a2dfe5bbce9bab7e97369ecad16f0d0a5244f85239123daeaa5 \
+    --hash=sha256:ccf83affafadc4286ffb335bc827ca2bffb0547fa5d5587600b585151bce4359
     # via
     #   --override .github/semgrep/overrides.txt
     #   semgrep
